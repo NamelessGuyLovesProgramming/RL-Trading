@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Asset Modal Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .asset-button {
+            color: #26a69a;
+            font-weight: bold;
+            font-size: 14px;
+            padding: 8px 12px;
+            border: 1px solid #26a69a;
+            cursor: pointer;
+            background: white;
+        }
+        .asset-button:hover {
+            background: rgba(38, 166, 154, 0.1);
+        }
+        #symbolModal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+        }
+        .modal-content {
+            background-color: #1e2128;
+            margin: 5% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            color: white;
+        }
+        .symbol-item {
+            padding: 8px;
+            margin: 4px;
+            border: 1px solid #333;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .symbol-item:hover {
+            background: #333;
+        }
+        #symbolSearch {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+        }
+    </style>
+</head>
+<body>
+    <h1>Asset Modal Test</h1>
+
+    <div class="asset-button" onclick="openSymbolModal()">
+        AAPL ▼
+    </div>
+
+    <div id="symbolModal">
+        <div class="modal-content">
+            <h3>🔍 Select Trading Symbol</h3>
+            <span onclick="closeSymbolModal()" style="float: right; font-size: 24px; cursor: pointer;">&times;</span>
+
+            <input type="text" id="symbolSearch" placeholder="Search symbols...">
+
+            <div id="symbolCategories">
+                <h4>🏢 US Stocks</h4>
+                <div class="symbol-item" onclick="selectSymbol('AAPL')">AAPL - Apple Inc.</div>
+                <div class="symbol-item" onclick="selectSymbol('TSLA')">TSLA - Tesla Inc.</div>
+                <div class="symbol-item" onclick="selectSymbol('MSFT')">MSFT - Microsoft</div>
+
+                <h4>💰 Cryptocurrency</h4>
+                <div class="symbol-item" onclick="selectSymbol('BTC-USD')">BTC - Bitcoin</div>
+                <div class="symbol-item" onclick="selectSymbol('ETH-USD')">ETH - Ethereum</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openSymbolModal() {
+            console.log('Opening modal...');
+            document.getElementById('symbolModal').style.display = 'block';
+        }
+
+        function closeSymbolModal() {
+            console.log('Closing modal...');
+            document.getElementById('symbolModal').style.display = 'none';
+        }
+
+        function selectSymbol(symbol) {
+            console.log('Selected symbol:', symbol);
+            alert('Symbol selected: ' + symbol);
+
+            // Update button text
+            document.querySelector('.asset-button').textContent = symbol + ' ▼';
+
+            closeSymbolModal();
+        }
+
+        // Test logging
+        console.log('Modal test loaded');
+        console.log('openSymbolModal function:', typeof openSymbolModal);
+    </script>
+</body>
+</html>
