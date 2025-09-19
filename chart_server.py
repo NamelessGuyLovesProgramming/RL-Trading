@@ -18,14 +18,16 @@ import os
 # Füge src Verzeichnis zum Pfad hinzu
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-# Importiere NQ Data Loader
+# Importiere NQ Data Loader und Timeframe Aggregator
 from data.nq_data_loader import NQDataLoader
+from data.timeframe_aggregator import TimeframeAggregator
 
 # FastAPI App
 app = FastAPI(title="RL Trading Chart Server", version="1.0.0")
 
-# Globaler NQ Data Loader
+# Globaler NQ Data Loader und Timeframe Aggregator
 nq_loader = NQDataLoader()
+timeframe_aggregator = TimeframeAggregator()
 
 # Lade initiale NQ-Daten (letzte 30 Tage)
 print("Lade initiale NQ-1M Daten...")
@@ -35,11 +37,17 @@ try:
     if data_2024 is not None:
         # Letzte 30 Tage (30 * 24 * 60 = 43200 Minuten)
         initial_nq_data = data_2024.tail(30 * 24 * 60)
-        # Konvertiere zu Chart-Format
-        initial_chart_data = nq_loader.convert_to_chart_format(initial_nq_data)
-        print(f"Geladen: {len(initial_chart_data)} NQ-1M Kerzen")
+
+        # Precompute alle Timeframes für bessere Performance
+        print("Starte Precomputing der Timeframes...")
+        timeframe_aggregator.precompute_all_timeframes(initial_nq_data)
+
+        # Konvertiere zu 5m Chart-Daten als Standard
+        initial_chart_data = timeframe_aggregator.get_aggregated_data(initial_nq_data, '5m')
+        print(f"Geladen: {len(initial_chart_data)} NQ-5M Kerzen als Standard")
     else:
         initial_chart_data = []
+        initial_nq_data = None
         print("Fallback: Verwende leere Daten")
 except Exception as e:
     print(f"Fehler beim Laden der NQ-Daten: {e}")
@@ -54,8 +62,10 @@ class ConnectionManager:
         self.chart_state: Dict[str, Any] = {
             'data': initial_chart_data,  # Verwende echte NQ-Daten
             'symbol': 'NQ=F',
-            'interval': '1m',  # 1-Minuten Daten
-            'last_update': datetime.now().isoformat()
+            'interval': '5m',  # 5-Minuten Standard
+            'last_update': datetime.now().isoformat(),
+            'positions': [],
+            'raw_1m_data': initial_nq_data if 'initial_nq_data' in globals() else None  # Speichere Roh-1m-Daten für Aggregation
         }
 
     async def connect(self, websocket: WebSocket):
@@ -147,13 +157,31 @@ async def get_chart():
         .tool-btn:hover { background: #444; }
         .tool-btn.active { background: #089981; }
         .tool-btn:disabled { background: #222; color: #666; cursor: not-allowed; }
+
+        /* Timeframe Styles */
+        .timeframe-group { display: flex; gap: 5px; margin-left: 20px; border-left: 1px solid #444; padding-left: 20px; }
+        .timeframe-btn { background: #2a2a2a; color: #ccc; border: none; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 11px; transition: all 0.2s; min-width: 35px; }
+        .timeframe-btn:hover { background: #3a3a3a; color: #fff; }
+        .timeframe-btn.active { background: #089981; color: #fff; font-weight: bold; }
+        .timeframe-btn:disabled { background: #1a1a1a; color: #555; cursor: not-allowed; }
     </style>
 </head>
 <body>
     <div class="toolbar">
         <button id="positionBoxTool" class="tool-btn">📦 Position Box</button>
         <button id="clearAll" class="tool-btn">🗑️</button>
-        <span style="color: #999; margin-left: 20px;">Click auf Chart um Position Box zu platzieren</span>
+
+        <!-- Timeframe Buttons -->
+        <div class="timeframe-group">
+            <button id="tf-1m" class="timeframe-btn" data-timeframe="1m">1m</button>
+            <button id="tf-2m" class="timeframe-btn" data-timeframe="2m">2m</button>
+            <button id="tf-3m" class="timeframe-btn" data-timeframe="3m">3m</button>
+            <button id="tf-5m" class="timeframe-btn active" data-timeframe="5m">5m</button>
+            <button id="tf-15m" class="timeframe-btn" data-timeframe="15m">15m</button>
+            <button id="tf-30m" class="timeframe-btn" data-timeframe="30m">30m</button>
+            <button id="tf-1h" class="timeframe-btn" data-timeframe="1h">1h</button>
+            <button id="tf-4h" class="timeframe-btn" data-timeframe="4h">4h</button>
+        </div>
     </div>
     <div id="status" class="status disconnected">Disconnected</div>
     <div id="chart_container"></div>
@@ -214,6 +242,9 @@ async def get_chart():
             window.activeSeries = {};
             window.positionBoxMode = false;
             window.currentPositionBox = null;
+
+            // Timeframe State
+            window.currentTimeframe = '5m';
 
             // Responsive Resize
             window.addEventListener('resize', () => {
@@ -374,6 +405,27 @@ async def get_chart():
                     if (isInitialized && message.positions) {
                         syncPositions(message.positions);
                         console.log('🔄 Positions synced:', message.positions.length);
+                    }
+                    break;
+
+                case 'timeframe_changed':
+                    if (isInitialized && message.data) {
+                        // Chart-Daten für neuen Timeframe setzen
+                        const formattedData = message.data.map(item => ({
+                            time: item.time,
+                            open: parseFloat(item.open),
+                            high: parseFloat(item.high),
+                            low: parseFloat(item.low),
+                            close: parseFloat(item.close)
+                        }));
+
+                        candlestickSeries.setData(formattedData);
+                        chart.timeScale().fitContent();
+
+                        // Update current timeframe
+                        window.currentTimeframe = message.timeframe;
+
+                        console.log(`📊 Timeframe changed to ${message.timeframe}:`, formattedData.length, 'candles');
                     }
                     break;
 
@@ -1036,30 +1088,159 @@ async def get_chart():
             }
         }
 
-        // Toolbar Event Handlers
-        document.getElementById('positionBoxTool').addEventListener('click', function() {
+        // ===== GLOBAL FUNCTIONS FOR ONCLICK HANDLERS =====
+        // Test global scope
+        console.log('🌍 Global functions being defined...');
+
+        function togglePositionTool() {
+            console.log('📦 Position Box Tool Button geklickt via onclick');
             window.positionBoxMode = !window.positionBoxMode;
-            this.classList.toggle('active');
+
+            const positionTool = document.getElementById('positionBoxTool');
+            if (!positionTool) {
+                console.error('❌ positionBoxTool Element nicht gefunden!');
+                return;
+            }
 
             if (window.positionBoxMode) {
-                console.log('📦 Position Box Tool aktiviert');
+                // Aktiviere Tool
+                positionTool.classList.add('active');
+                console.log('📦 Position Box Tool AKTIVIERT');
             } else {
-                console.log('📦 Position Box Tool deaktiviert');
+                // Deaktiviere Tool
+                positionTool.classList.remove('active');
+                positionTool.style.background = '#333';
+                positionTool.style.color = '#fff';
+                console.log('📦 Position Box Tool DEAKTIVIERT');
             }
-        });
+        }
 
-        document.getElementById('clearAll').addEventListener('click', function() {
-            console.log('🗑️ Clear All Button geklickt');
-            removeCurrentPositionBox();
+        function clearAllPositions() {
+            console.log('🗑️ Clear All Button geklickt via onclick - FORCE DEAKTIVIERE TOOL');
 
-            // Deaktiviere Position Box Mode
-            window.positionBoxMode = false;
-            document.getElementById('positionBoxTool').classList.remove('active');
-            console.log('✅ Position Box entfernt und Tool deaktiviert');
-        });
+            try {
+                // Deaktiviere Position Box Tool komplett
+                window.positionBoxMode = false;
+                const positionTool = document.getElementById('positionBoxTool');
+                if (positionTool) {
+                    positionTool.classList.remove('active');
+                    positionTool.style.background = '#333';
+                    positionTool.style.color = '#fff';
+                    console.log('✅ Position Tool deaktiviert via onclick');
+                } else {
+                    console.error('❌ positionBoxTool Element nicht gefunden beim Clear!');
+                }
+
+                // Versuche Position Box zu entfernen (falls vorhanden)
+                if (typeof removeCurrentPositionBox === 'function') {
+                    removeCurrentPositionBox();
+                    console.log('✅ Position Box entfernt');
+                } else {
+                    console.log('⚠️ removeCurrentPositionBox function not available yet');
+                }
+            } catch (error) {
+                console.error('❌ Fehler in clearAllPositions:', error);
+            }
+        }
+
+        // ===== TIMEFRAME FUNCTIONS =====
+        // Timeframe Change Function
+        async function changeTimeframe(timeframe) {
+            console.log(`🔄 Wechsle zu Timeframe: ${timeframe}`);
+
+            try {
+                // Update UI sofort (optimistic update)
+                updateTimeframeButtons(timeframe);
+
+                const response = await fetch('/api/chart/change_timeframe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ timeframe: timeframe })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    console.log(`✅ Timeframe erfolgreich gewechselt zu ${timeframe}:`, result.count, 'Kerzen');
+
+                    // Update Chart direkt (falls WebSocket verzögert ist)
+                    if (result.data && result.data.length > 0) {
+                        const formattedData = result.data.map(item => ({
+                            time: item.time,
+                            open: parseFloat(item.open),
+                            high: parseFloat(item.high),
+                            low: parseFloat(item.low),
+                            close: parseFloat(item.close)
+                        }));
+
+                        candlestickSeries.setData(formattedData);
+                        chart.timeScale().fitContent();
+                        window.currentTimeframe = timeframe;
+                    }
+                } else {
+                    console.error('❌ Timeframe-Wechsel fehlgeschlagen:', result.message);
+                    // Revert UI changes
+                    updateTimeframeButtons(window.currentTimeframe);
+                }
+
+            } catch (error) {
+                console.error('❌ Fehler beim Timeframe-Wechsel:', error);
+                // Revert UI changes
+                updateTimeframeButtons(window.currentTimeframe);
+            }
+        }
+
+        // Update Timeframe Button States
+        function updateTimeframeButtons(activeTimeframe) {
+            const timeframeButtons = document.querySelectorAll('.timeframe-btn');
+            timeframeButtons.forEach(btn => {
+                const btnTimeframe = btn.getAttribute('data-timeframe');
+                if (btnTimeframe === activeTimeframe) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
 
         // Warte bis DOM und Script geladen sind
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('🔧 DOM loaded - Registriere Button Event Handlers...');
+
+            // Registriere Button Event Handlers
+            const positionBoxTool = document.getElementById('positionBoxTool');
+            const clearAllBtn = document.getElementById('clearAll');
+
+            if (positionBoxTool) {
+                positionBoxTool.addEventListener('click', togglePositionTool);
+                console.log('✅ Position Box Tool Event Handler registriert');
+            } else {
+                console.error('❌ positionBoxTool Button nicht gefunden');
+            }
+
+            if (clearAllBtn) {
+                clearAllBtn.addEventListener('click', clearAllPositions);
+                console.log('✅ Clear All Button Event Handler registriert');
+            } else {
+                console.error('❌ clearAll Button nicht gefunden');
+            }
+
+            // Registriere Timeframe Button Event Handlers
+            const timeframeButtons = document.querySelectorAll('.timeframe-btn');
+            timeframeButtons.forEach(btn => {
+                const timeframe = btn.getAttribute('data-timeframe');
+                btn.addEventListener('click', () => changeTimeframe(timeframe));
+                console.log(`✅ Timeframe Button ${timeframe} Event Handler registriert`);
+            });
+
+            if (timeframeButtons.length > 0) {
+                console.log(`✅ ${timeframeButtons.length} Timeframe Buttons Event Handler registriert`);
+            } else {
+                console.error('❌ Keine Timeframe Buttons gefunden');
+            }
+
             // Zusätzliche Sicherheit: Prüfe ob LightweightCharts verfügbar ist
             if (typeof LightweightCharts !== 'undefined') {
                 console.log('✅ LightweightCharts library loaded');
@@ -1227,6 +1408,55 @@ async def get_chart_data():
         "interval": manager.chart_state['interval'],
         "count": len(manager.chart_state['data'])
     }
+
+@app.post("/api/chart/change_timeframe")
+async def change_timeframe(request: dict):
+    """Ändert den Timeframe und gibt aggregierte Daten zurück"""
+    timeframe = request.get('timeframe', '1m')
+
+    print(f"Timeframe-Wechsel zu: {timeframe}")
+
+    try:
+        # Prüfe ob Roh-1m-Daten verfügbar sind
+        if manager.chart_state['raw_1m_data'] is None:
+            # Lade neue 1m-Daten falls nicht verfügbar
+            data_2024 = nq_loader.load_year(2024)
+            if data_2024 is not None:
+                manager.chart_state['raw_1m_data'] = data_2024.tail(30 * 24 * 60)  # Letzte 30 Tage
+            else:
+                return {"status": "error", "message": "Keine 1m-Daten verfügbar"}
+
+        # Aggregiere Daten für den gewünschten Timeframe
+        aggregated_data = timeframe_aggregator.get_aggregated_data(
+            manager.chart_state['raw_1m_data'],
+            timeframe
+        )
+
+        # Update Chart State
+        manager.chart_state['data'] = aggregated_data
+        manager.chart_state['interval'] = timeframe
+        manager.chart_state['last_update'] = datetime.now().isoformat()
+
+        # Broadcast an alle Clients
+        await manager.broadcast({
+            'type': 'timeframe_changed',
+            'data': aggregated_data,
+            'timeframe': timeframe,
+            'count': len(aggregated_data)
+        })
+
+        print(f"Timeframe geaendert zu {timeframe} - {len(aggregated_data)} Kerzen")
+
+        return {
+            "status": "success",
+            "timeframe": timeframe,
+            "data": aggregated_data,
+            "count": len(aggregated_data)
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Timeframe-Wechsel: {e}")
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     # Debug Route
