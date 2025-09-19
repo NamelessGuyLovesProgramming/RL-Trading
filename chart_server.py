@@ -1,0 +1,1322 @@
+"""
+FastAPI Chart Server für RL Trading
+Realtime Chart-Updates ohne Streamlit-Limitations
+"""
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+import json
+import asyncio
+from typing import Dict, List, Any
+import uvicorn
+from datetime import datetime
+import logging
+import sys
+import os
+
+# Füge src Verzeichnis zum Pfad hinzu
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+
+# Importiere NQ Data Loader
+from data.nq_data_loader import NQDataLoader
+
+# FastAPI App
+app = FastAPI(title="RL Trading Chart Server", version="1.0.0")
+
+# Globaler NQ Data Loader
+nq_loader = NQDataLoader()
+
+# Lade initiale NQ-Daten (letzte 30 Tage)
+print("Lade initiale NQ-1M Daten...")
+try:
+    # Verwende 2024 Daten (letzte 30 Tage)
+    data_2024 = nq_loader.load_year(2024)
+    if data_2024 is not None:
+        # Letzte 30 Tage (30 * 24 * 60 = 43200 Minuten)
+        initial_nq_data = data_2024.tail(30 * 24 * 60)
+        # Konvertiere zu Chart-Format
+        initial_chart_data = nq_loader.convert_to_chart_format(initial_nq_data)
+        print(f"Geladen: {len(initial_chart_data)} NQ-1M Kerzen")
+    else:
+        initial_chart_data = []
+        print("Fallback: Verwende leere Daten")
+except Exception as e:
+    print(f"Fehler beim Laden der NQ-Daten: {e}")
+    initial_chart_data = []
+
+# WebSocket Connection Manager
+class ConnectionManager:
+    """Verwaltet WebSocket-Verbindungen für Realtime-Updates"""
+
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self.chart_state: Dict[str, Any] = {
+            'data': initial_chart_data,  # Verwende echte NQ-Daten
+            'symbol': 'NQ=F',
+            'interval': '1m',  # 1-Minuten Daten
+            'last_update': datetime.now().isoformat()
+        }
+
+    async def connect(self, websocket: WebSocket):
+        """Neue WebSocket-Verbindung hinzufügen"""
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+        # Sende aktuellen Chart-State an neuen Client
+        await self.send_personal_message({
+            'type': 'initial_data',
+            'data': self.chart_state
+        }, websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        """WebSocket-Verbindung entfernen"""
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: dict, websocket: WebSocket):
+        """Nachricht an spezifischen Client senden"""
+        try:
+            await websocket.send_text(json.dumps(message))
+        except Exception as e:
+            logging.error(f"Error sending message: {e}")
+
+    async def broadcast(self, message: dict):
+        """Nachricht an alle verbundenen Clients senden"""
+        if not self.active_connections:
+            return
+
+        # Sende parallel an alle Clients
+        tasks = []
+        for connection in self.active_connections.copy():
+            tasks.append(self.send_personal_message(message, connection))
+
+        # Warte auf alle Sends (mit Error-Handling)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def update_chart_state(self, update_data: dict):
+        """Chart-State aktualisieren"""
+        if update_data.get('type') == 'set_data':
+            self.chart_state['data'] = update_data.get('data', [])
+            self.chart_state['symbol'] = update_data.get('symbol', 'NQ=F')
+            self.chart_state['interval'] = update_data.get('interval', '5m')
+        elif update_data.get('type') == 'add_candle':
+            # Neue Kerze hinzufügen
+            candle = update_data.get('candle')
+            if candle:
+                self.chart_state['data'].append(candle)
+        elif update_data.get('type') == 'add_position':
+            # Position Overlay hinzufügen
+            if 'positions' not in self.chart_state:
+                self.chart_state['positions'] = []
+            position = update_data.get('position')
+            if position:
+                self.chart_state['positions'].append(position)
+        elif update_data.get('type') == 'remove_position':
+            # Position entfernen
+            position_id = update_data.get('position_id')
+            if position_id and 'positions' in self.chart_state:
+                self.chart_state['positions'] = [
+                    p for p in self.chart_state['positions']
+                    if p.get('id') != position_id
+                ]
+
+        self.chart_state['last_update'] = datetime.now().isoformat()
+
+# Global Connection Manager
+manager = ConnectionManager()
+
+@app.get("/")
+async def get_chart():
+    """Haupt-Chart-Seite"""
+    return HTMLResponse(content="""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RL Trading Chart - Realtime</title>
+    <meta charset="utf-8">
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background: #000; font-family: Arial, sans-serif; }
+        #chart_container { width: 100%; height: calc(100vh - 50px); }
+        .status { position: fixed; top: 10px; right: 10px; color: #fff; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 12px; }
+        .status.connected { color: #089981; }
+        .status.disconnected { color: #f23645; }
+        .toolbar { position: fixed; top: 0; left: 0; right: 0; height: 50px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0 20px; gap: 15px; z-index: 1000; }
+        .tool-btn { background: #333; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+        .tool-btn:hover { background: #444; }
+        .tool-btn.active { background: #089981; }
+        .tool-btn:disabled { background: #222; color: #666; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button id="positionBoxTool" class="tool-btn">📦 Position Box</button>
+        <button id="clearAll" class="tool-btn">🗑️</button>
+        <span style="color: #999; margin-left: 20px;">Click auf Chart um Position Box zu platzieren</span>
+    </div>
+    <div id="status" class="status disconnected">Disconnected</div>
+    <div id="chart_container"></div>
+
+    <script>
+        console.log('🚀 RL Trading Chart - FastAPI Edition');
+
+        let chart;
+        let candlestickSeries;
+        let ws;
+        let isInitialized = false;
+
+        // Chart initialisieren
+        function initChart() {
+            console.log('🔧 initChart() aufgerufen');
+
+            const chartContainer = document.getElementById('chart_container');
+            console.log('🔧 Chart Container:', chartContainer);
+
+            if (!chartContainer) {
+                console.error('❌ Chart Container nicht gefunden!');
+                return;
+            }
+
+            console.log('🔧 LightweightCharts verfügbar:', typeof LightweightCharts);
+
+            chart = LightweightCharts.createChart(chartContainer, {
+                width: window.innerWidth,
+                height: window.innerHeight,
+                layout: {
+                    backgroundColor: '#000000',
+                    textColor: '#d9d9d9'
+                },
+                timeScale: {
+                    timeVisible: true,
+                    secondsVisible: false,
+                    borderColor: '#485c7b'
+                },
+                grid: {
+                    vertLines: { visible: false },
+                    horzLines: { visible: false }
+                }
+            });
+
+            candlestickSeries = chart.addCandlestickSeries({
+                upColor: '#089981',
+                downColor: '#f23645',
+                borderUpColor: '#089981',
+                borderDownColor: '#f23645',
+                wickUpColor: '#089981',
+                wickDownColor: '#f23645'
+            });
+
+            console.log('🔧 CandlestickSeries erstellt:', candlestickSeries);
+
+            // Position Lines Container
+            window.positionLines = {};
+            window.activeSeries = {};
+            window.positionBoxMode = false;
+            window.currentPositionBox = null;
+
+            // Responsive Resize
+            window.addEventListener('resize', () => {
+                chart.applyOptions({
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                });
+            });
+
+            // LADE ECHTE NQ-DATEN über WebSocket
+            console.log('🔄 Lade echte NQ-Daten...');
+
+            // Initialer Request für Chart-Daten
+            setTimeout(() => {
+                loadInitialData();
+            }, 1000);
+
+            // Chart Click Handler für Position Box Tool
+            chart.subscribeClick((param) => {
+                console.log('🖱️ Chart geklickt:', param);
+                console.log('📦 Position Box Mode:', window.positionBoxMode);
+
+                if (window.positionBoxMode && param.point && param.time) {
+                    const price = candlestickSeries.coordinateToPrice(param.point.y);
+                    console.log('📦 Erstelle Position Box bei Preis:', price);
+                    createPositionBox(param.time, price);
+                } else {
+                    console.log('❌ Position Box Mode nicht aktiv oder ungültiger Klick');
+                }
+            });
+
+            isInitialized = true;
+            console.log('✅ Chart initialisiert, lade NQ-Daten...');
+        }
+
+        // Lade initiale Chart-Daten vom Server
+        function loadInitialData() {
+            console.log('📊 Lade initiale NQ-Daten...');
+
+            // Prüfe ob Chart und Series verfügbar sind
+            if (!chart || !candlestickSeries) {
+                console.error('❌ Chart oder CandlestickSeries nicht initialisiert!');
+                console.log('Chart:', chart);
+                console.log('CandlestickSeries:', candlestickSeries);
+                return;
+            }
+
+            fetch('/api/chart/status')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('📊 Status:', data);
+                    // Lade Chart-Daten
+                    return fetch('/api/chart/data');
+                })
+                .then(response => response.json())
+                .then(chartData => {
+                    console.log('📊 Chart-Daten erhalten:', chartData.data?.length || 0, 'Kerzen');
+                    if (chartData.data && chartData.data.length > 0) {
+                        // Daten sind bereits im korrekten LightweightCharts Format (Unix-Timestamps)
+                        const formattedData = chartData.data.map(item => ({
+                            time: item.time,  // Bereits Unix-Timestamp, keine Konvertierung nötig
+                            open: parseFloat(item.open),
+                            high: parseFloat(item.high),
+                            low: parseFloat(item.low),
+                            close: parseFloat(item.close)
+                        }));
+
+                        candlestickSeries.setData(formattedData);
+                        chart.timeScale().fitContent();
+                        console.log('✅ NQ-Daten geladen:', formattedData.length, 'Kerzen');
+                    } else {
+                        console.warn('⚠️ Keine Chart-Daten empfangen');
+                    }
+                })
+                .catch(error => {
+                    console.error('❌ Fehler beim Laden der Chart-Daten:', error);
+                });
+        }
+
+        // WebSocket Connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function(event) {
+                console.log('🔗 WebSocket verbunden');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'status connected';
+            };
+
+            ws.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                handleMessage(message);
+            };
+
+            ws.onclose = function(event) {
+                console.log('❌ WebSocket getrennt');
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'status disconnected';
+
+                // Reconnect nach 2 Sekunden
+                setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = function(error) {
+                console.error('❌ WebSocket Error:', error);
+            };
+        }
+
+        // Message Handler
+        function handleMessage(message) {
+            console.log('📨 Message received:', message.type);
+
+            switch(message.type) {
+                case 'initial_data':
+                    if (!isInitialized) initChart();
+
+                    const data = message.data.data;
+                    if (data && data.length > 0) {
+                        candlestickSeries.setData(data);
+                        chart.timeScale().fitContent();
+                        console.log('📊 Initial data loaded:', data.length, 'candles');
+                    }
+                    break;
+
+                case 'set_data':
+                    if (!isInitialized) initChart();
+
+                    candlestickSeries.setData(message.data);
+                    chart.timeScale().fitContent();
+                    console.log('📊 Data updated:', message.data.length, 'candles');
+                    break;
+
+                case 'add_candle':
+                    if (isInitialized && message.candle) {
+                        candlestickSeries.update(message.candle);
+                        console.log('➡️ Candle added:', message.candle);
+                    }
+                    break;
+
+                case 'add_position':
+                    if (isInitialized && message.position) {
+                        addPositionOverlay(message.position);
+                        console.log('🎯 Position added:', message.position);
+                    }
+                    break;
+
+                case 'remove_position':
+                    if (isInitialized && message.position_id) {
+                        removePositionOverlay(message.position_id);
+                        console.log('❌ Position removed:', message.position_id);
+                    }
+                    break;
+
+                case 'positions_sync':
+                    if (isInitialized && message.positions) {
+                        syncPositions(message.positions);
+                        console.log('🔄 Positions synced:', message.positions.length);
+                    }
+                    break;
+
+                default:
+                    console.log('❓ Unknown message type:', message.type);
+            }
+        }
+
+        // Position Overlay Functions
+        function addPositionOverlay(position) {
+            const positionId = position.id;
+
+            // Entry Line (grün für Long, rot für Short)
+            const entryColor = position.type === 'LONG' ? '#089981' : '#f23645';
+            const entrySeries = chart.addLineSeries({
+                color: entryColor,
+                lineWidth: 2,
+                lineStyle: 0, // Solid
+                title: `Entry ${positionId}`
+            });
+            entrySeries.setData([{time: 0, value: position.entry_price}]);
+
+            // Stop Loss Line (rot)
+            let stopLossSeries = null;
+            if (position.stop_loss) {
+                stopLossSeries = chart.addLineSeries({
+                    color: '#ff4444',
+                    lineWidth: 1,
+                    lineStyle: 1, // Dashed
+                    title: `SL ${positionId}`
+                });
+                stopLossSeries.setData([{time: 0, value: position.stop_loss}]);
+            }
+
+            // Take Profit Line (grün)
+            let takeProfitSeries = null;
+            if (position.take_profit) {
+                takeProfitSeries = chart.addLineSeries({
+                    color: '#44ff44',
+                    lineWidth: 1,
+                    lineStyle: 1, // Dashed
+                    title: `TP ${positionId}`
+                });
+                takeProfitSeries.setData([{time: 0, value: position.take_profit}]);
+            }
+
+            // Position Box (transparente Box zwischen Entry und TP/SL)
+            const boxSeries = chart.addAreaSeries({
+                topColor: position.type === 'LONG' ? 'rgba(8, 153, 129, 0.1)' : 'rgba(242, 54, 69, 0.1)',
+                bottomColor: position.type === 'LONG' ? 'rgba(8, 153, 129, 0.05)' : 'rgba(242, 54, 69, 0.05)',
+                lineColor: 'transparent'
+            });
+
+            // Box-Daten basierend auf Position-Typ
+            const boxTop = position.type === 'LONG' ?
+                (position.take_profit || position.entry_price * 1.02) :
+                position.entry_price;
+            const boxBottom = position.type === 'LONG' ?
+                position.entry_price :
+                (position.take_profit || position.entry_price * 0.98);
+
+            boxSeries.setData([{time: 0, value: boxTop}]);
+
+            // Speichere alle Series für diese Position
+            window.positionLines[positionId] = {
+                entry: entrySeries,
+                stopLoss: stopLossSeries,
+                takeProfit: takeProfitSeries,
+                box: boxSeries,
+                position: position
+            };
+
+            console.log(`✅ Position overlay added: ${positionId} ${position.type}`);
+        }
+
+        function removePositionOverlay(positionId) {
+            const positionData = window.positionLines[positionId];
+            if (positionData) {
+                // Entferne alle Series
+                chart.removeSeries(positionData.entry);
+                if (positionData.stopLoss) chart.removeSeries(positionData.stopLoss);
+                if (positionData.takeProfit) chart.removeSeries(positionData.takeProfit);
+                chart.removeSeries(positionData.box);
+
+                // Lösche aus Container
+                delete window.positionLines[positionId];
+                console.log(`❌ Position overlay removed: ${positionId}`);
+            }
+        }
+
+        function syncPositions(positions) {
+            // Lösche alle existierenden Overlays
+            for (const positionId in window.positionLines) {
+                removePositionOverlay(positionId);
+            }
+
+            // Füge alle aktiven Positionen hinzu
+            positions.forEach(position => {
+                if (position.status === 'OPEN') {
+                    addPositionOverlay(position);
+                }
+            });
+        }
+
+        // Position Box Functions - NEUE IMPLEMENTIERUNG MIT ECHTEN RECHTECKEN
+        function createPositionBox(time, entryPrice) {
+            // Entferne alte Position Box falls vorhanden
+            if (window.currentPositionBox) {
+                removeCurrentPositionBox();
+            }
+
+            // Kleinere SL/TP für bessere Sichtbarkeit (0.25% Risk, 0.5% Reward)
+            const riskPercent = 0.0025; // 0.25%
+            const rewardPercent = 0.005; // 0.5%
+
+            const stopLoss = entryPrice * (1 - riskPercent);
+            const takeProfit = entryPrice * (1 + rewardPercent);
+
+            console.log('💰 Preise:', {entry: entryPrice, sl: stopLoss, tp: takeProfit});
+
+            // Box Dimensionen
+            const currentTime = Math.floor(Date.now() / 1000);
+            const boxWidth = 7200; // 2 Stunden für bessere Sichtbarkeit
+            const timeEnd = currentTime + boxWidth;
+
+            // Position Box Object erstellen
+            window.currentPositionBox = {
+                id: 'POS_' + Date.now(),
+                entryPrice: entryPrice,
+                stopLoss: stopLoss,
+                takeProfit: takeProfit,
+                time: currentTime,
+                timeEnd: timeEnd,
+                width: boxWidth,
+                isResizing: false,
+                resizeHandle: null,
+                // NEUE X-Koordinaten für horizontale Resize - SEHR KLEIN
+                x1Percent: 0.45,  // Startet bei 45% vom linken Rand
+                x2Percent: 0.55,  // Endet bei 55% der Breite (nur 10% Breite)
+                // DIREKTE Y-KOORDINATEN FÜR SOFORTIGE UPDATES
+                entryY: null,
+                slY: null,
+                tpY: null
+            };
+
+            // Zeichne die Box mit Canvas Overlay (echte Rechtecke)
+            createCanvasOverlay();
+            drawPositionBox();
+
+            // Erstelle Price Lines auf der Y-Achse (DEAKTIVIERT für Positionseröffnungstool)
+            // createPriceLines(entryPrice, stopLoss, takeProfit);
+
+            console.log('📦 Neue Position Box erstellt:', window.currentPositionBox);
+        }
+
+        function createCanvasOverlay() {
+            // Entferne alte Canvas falls vorhanden
+            const oldCanvas = document.getElementById('position-canvas');
+            if (oldCanvas) oldCanvas.remove();
+
+            const chartContainer = document.getElementById('chart_container');
+            const canvas = document.createElement('canvas');
+            canvas.id = 'position-canvas';
+            canvas.style.position = 'absolute';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            canvas.style.pointerEvents = 'auto';
+            canvas.style.zIndex = '1000';
+            canvas.width = chartContainer.clientWidth;
+            canvas.height = chartContainer.clientHeight;
+
+            chartContainer.style.position = 'relative';
+            chartContainer.appendChild(canvas);
+
+            const ctx = canvas.getContext('2d');
+            window.positionCanvas = canvas;
+            window.positionCtx = ctx;
+
+            // Mouse Events für Resize
+            canvas.addEventListener('mousedown', onCanvasMouseDown);
+            canvas.addEventListener('mousemove', onCanvasMouseMove);
+            canvas.addEventListener('mouseup', onCanvasMouseUp);
+        }
+
+        function drawPositionBox() {
+            const box = window.currentPositionBox;
+            const ctx = window.positionCtx;
+            const canvas = window.positionCanvas;
+
+            if (!box || !ctx || !canvas) {
+                console.warn('❌ drawPositionBox: Missing box, context, or canvas');
+                return;
+            }
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            try {
+                // SICHERE API AUFRUFE - Prüfe ob Chart bereit ist
+                if (!chart || !candlestickSeries) {
+                    console.warn('❌ Chart or series not ready');
+                    return;
+                }
+
+                // Verwende dynamische oder Fallback Koordinaten
+                const chartWidth = canvas.width;
+                const chartHeight = canvas.height;
+
+                // X-Position: Dynamische Werte aus Box-Objektt, sonst Fallback
+                const x1 = chartWidth * (box.x1Percent || 0.1);
+                const x2 = chartWidth * (box.x2Percent || 0.9);
+
+                // Y-Koordinaten: VERWENDE GESPEICHERTE ODER BERECHNE NEU
+                let entryY, slY, tpY;
+
+                // EINZELNE KOORDINATEN-CACHE-PRÜFUNG
+                // Verwende gecachte Koordinate wenn vorhanden, sonst berechne neu
+                try {
+                    entryY = (box.entryY !== null) ? box.entryY : candlestickSeries.priceToCoordinate(box.entryPrice);
+                    slY = (box.slY !== null) ? box.slY : candlestickSeries.priceToCoordinate(box.stopLoss);
+                    tpY = (box.tpY !== null) ? box.tpY : candlestickSeries.priceToCoordinate(box.takeProfit);
+
+                    // Validiere Koordinaten
+                    if (isNaN(entryY) || isNaN(slY) || isNaN(tpY) ||
+                        entryY < 0 || slY < 0 || tpY < 0 ||
+                        entryY > chartHeight || slY > chartHeight || tpY > chartHeight) {
+                        throw new Error('Invalid coordinates from API');
+                    }
+
+                    // Aktualisiere Cache nur für neu berechnete Werte
+                    if (box.entryY === null) box.entryY = entryY;
+                    if (box.slY === null) box.slY = slY;
+                    if (box.tpY === null) box.tpY = tpY;
+
+                    console.log('📍 Using mixed cached/calculated coordinates:', {
+                        entryY: box.entryY === entryY ? 'cached' : 'calculated',
+                        slY: box.slY === slY ? 'cached' : 'calculated',
+                        tpY: box.tpY === tpY ? 'cached' : 'calculated'
+                    });
+
+                } catch (apiError) {
+                        console.warn('❌ API Error, using fallback coordinates:', apiError);
+                        // Fallback: Verwende prozentuale Positionen
+                        entryY = chartHeight * 0.5;  // Mitte
+                        slY = chartHeight * 0.7;     // 70% (unten)
+                        tpY = chartHeight * 0.3;     // 30% (oben)
+
+                        // Speichere auch Fallback-Koordinaten
+                        box.entryY = entryY;
+                        box.slY = slY;
+                        box.tpY = tpY;
+                    }
+
+                console.log('📊 Drawing at coordinates:', {entryY, slY, tpY, x1, x2});
+
+                // Zeichne Stop Loss Box (rot)
+                ctx.fillStyle = 'rgba(242, 54, 69, 0.2)';
+                ctx.strokeStyle = '#f23645';
+                ctx.lineWidth = 2;
+                const slHeight = Math.abs(entryY - slY);
+                const slTop = Math.min(entryY, slY);
+
+                if (slHeight > 0) {
+                    ctx.fillRect(x1, slTop, x2 - x1, slHeight);
+                    ctx.strokeRect(x1, slTop, x2 - x1, slHeight);
+                }
+
+                // Zeichne Take Profit Box (grün)
+                ctx.fillStyle = 'rgba(8, 153, 129, 0.2)';
+                ctx.strokeStyle = '#089981';
+                ctx.lineWidth = 2;
+                const tpHeight = Math.abs(entryY - tpY);
+                const tpTop = Math.min(entryY, tpY);
+
+                if (tpHeight > 0) {
+                    ctx.fillRect(x1, tpTop, x2 - x1, tpHeight);
+                    ctx.strokeRect(x1, tpTop, x2 - x1, tpHeight);
+                }
+
+                // Zeichne Entry Line (weiß)
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(x1, entryY);
+                ctx.lineTo(x2, entryY);
+                ctx.stroke();
+
+                // Zeichne Resize Handles in den Ecken
+                drawResizeHandles(x1, x2, slTop, tpTop, slHeight, tpHeight);
+
+                // Speichere Koordinaten für Interaktion
+                window.boxCoordinates = {
+                    x1, x2, entryY, slY, tpY,
+                    slTop, tpTop, slHeight, tpHeight
+                };
+
+                console.log('✅ Position Box gezeichnet erfolgreich');
+
+            } catch (error) {
+                console.error('❌ Kritischer Fehler beim Zeichnen der Position Box:', error);
+                console.error('Error Stack:', error.stack);
+            }
+        }
+
+        function drawResizeHandles(x1, x2, slTop, tpTop, slHeight, tpHeight) {
+            const ctx = window.positionCtx;
+            const handleSize = 8;
+
+            // Nur äußere Handles - KEINE auf der Entry-Linie
+            const slBottom = slTop + slHeight;
+            // SL Box Handles (rot) - nur Bottom (weit unten)
+            drawHandle(ctx, x1, slBottom, '#f23645', 'SL-BL'); // Bottom-Left
+            drawHandle(ctx, x2, slBottom, '#f23645', 'SL-BR'); // Bottom-Right
+
+            // TP Box Handles (grün) - nur Top (weit oben)
+            drawHandle(ctx, x1, tpTop, '#089981', 'TP-TL'); // Top-Left
+            drawHandle(ctx, x2, tpTop, '#089981', 'TP-TR'); // Top-Right
+
+            // DEAKTIVIERT: Mittlere Handles für Box-Breite
+            // const middleY = (slTop + tpBottom) / 2;
+            // drawHandle(ctx, x1, middleY, '#007bff', 'WIDTH-L');
+            // drawHandle(ctx, x2, middleY, '#007bff', 'WIDTH-R');
+
+            // Speichere Handle-Positionen - nur äußere Handles
+            window.resizeHandles = {
+                'SL-BL': {x: x1, y: slBottom, type: 'sl'},
+                'SL-BR': {x: x2, y: slBottom, type: 'sl'},
+                'TP-TL': {x: x1, y: tpTop, type: 'tp'},
+                'TP-TR': {x: x2, y: tpTop, type: 'tp'}
+            };
+        }
+
+        function drawHandle(ctx, x, y, color, id) {
+            const size = 8;
+            ctx.fillStyle = color;
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+
+            ctx.fillRect(x - size/2, y - size/2, size, size);
+            ctx.strokeRect(x - size/2, y - size/2, size, size);
+        }
+
+        // NEUE MOUSE EVENT HANDLERS FÜR BOX-INTERNE RESIZE
+        let isDragging = false;
+        let dragHandle = null;
+
+        function onCanvasMouseDown(e) {
+            const rect = e.target.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // Check if mouse is over any resize handle
+            for (const [id, handle] of Object.entries(window.resizeHandles || {})) {
+                const distance = Math.sqrt(
+                    Math.pow(mouseX - handle.x, 2) + Math.pow(mouseY - handle.y, 2)
+                );
+
+                if (distance <= 12) { // 12px click tolerance
+                    isDragging = true;
+                    dragHandle = id;
+                    // Cursor für Eckhandles
+                    e.target.style.cursor = 'nw-resize'; // Diagonal resize für Eckhandles
+                    console.log('🎯 Resize gestartet:', id);
+                    return;
+                }
+            }
+
+            // Check if mouse is over Entry-Linie (weiße Linie)
+            if (window.boxCoordinates && window.currentPositionBox) {
+                const coords = window.boxCoordinates;
+                const entryY = coords.entryY;
+                const x1 = coords.x1;
+                const x2 = coords.x2;
+
+                // Prüfe ob Klick auf Entry-Linie (Y-Koordinate ±10px, X zwischen x1 und x2)
+                if (Math.abs(mouseY - entryY) <= 10 && mouseX >= x1 && mouseX <= x2) {
+                    isDragging = true;
+                    dragHandle = 'ENTRY-LINE';
+                    e.target.style.cursor = 'ns-resize';
+                    console.log('🎯 Entry-Linie Drag gestartet');
+                }
+            }
+        }
+
+        function onCanvasMouseMove(e) {
+            const rect = e.target.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            if (!isDragging) {
+                // Update cursor based on hover over handles
+                let cursorType = 'default';
+                for (const [id, handle] of Object.entries(window.resizeHandles || {})) {
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - handle.x, 2) + Math.pow(mouseY - handle.y, 2)
+                    );
+                    if (distance <= 12) {
+                        cursorType = 'nw-resize'; // Diagonal für Eckhandles
+                        break;
+                    }
+                }
+
+                // Check hover over Entry-Linie
+                if (cursorType === 'default' && window.boxCoordinates && window.currentPositionBox) {
+                    const coords = window.boxCoordinates;
+                    const entryY = coords.entryY;
+                    const x1 = coords.x1;
+                    const x2 = coords.x2;
+
+                    if (Math.abs(mouseY - entryY) <= 10 && mouseX >= x1 && mouseX <= x2) {
+                        cursorType = 'ns-resize'; // Vertikal für Entry-Linie
+                    }
+                }
+
+                e.target.style.cursor = cursorType;
+                return;
+            }
+
+            // Dragging logic - resize the box (HORIZONTAL + VERTIKAL)
+            try {
+                // SICHERE API AUFRUFE für Coordinate Conversion
+                if (!chart || !candlestickSeries) {
+                    console.warn('❌ Chart not ready for coordinate conversion');
+                    return;
+                }
+
+                // Vertical Price änderung
+                const newPrice = candlestickSeries.coordinateToPrice(mouseY);
+
+                // Horizontal Time/Width änderung
+                const canvas = window.positionCanvas;
+                const chartWidth = canvas.width;
+
+                // Berechne neue X-Position als Prozent der Chart-Breite
+                const newXPercent = mouseX / chartWidth;
+
+                if (!isNaN(newPrice) && newPrice > 0 && newXPercent >= 0 && newXPercent <= 1) {
+                    updateBoxFromHandle(dragHandle, newPrice, newXPercent, mouseX);
+                } else {
+                    console.warn('❌ Invalid values:', {price: newPrice, xPercent: newXPercent});
+                }
+            } catch (error) {
+                console.error('❌ Fehler beim Box Resize:', error);
+                // Fallback: Stoppe Dragging bei Fehler
+                isDragging = false;
+                dragHandle = null;
+                e.target.style.cursor = 'default';
+            }
+        }
+
+        function onCanvasMouseUp(e) {
+            if (isDragging) {
+                console.log('🎯 Box Resize beendet:', dragHandle);
+                isDragging = false;
+                dragHandle = null;
+                e.target.style.cursor = 'default';
+            }
+        }
+
+        function updateBoxFromHandle(handleId, newPrice, newXPercent, mouseX) {
+            const box = window.currentPositionBox;
+            if (!box) return;
+
+            // ENTRY-LINIE: Verschieben nur Entry-Preis vertikal
+            if (handleId === 'ENTRY-LINE') {
+                box.entryPrice = newPrice;
+
+                // SOFORTIGE KOORDINATEN-CACHE AKTUALISIERUNG
+                box.entryY = candlestickSeries.priceToCoordinate(newPrice);
+                console.log('🎯 ENTRY-Koordinate sofort cached:', box.entryY);
+
+                // Update Price Lines mit neuem Entry-Preis
+                if (window.positionPriceLines && window.positionPriceLines.entry) {
+                    candlestickSeries.removePriceLine(window.positionPriceLines.entry);
+                    window.positionPriceLines.entry = candlestickSeries.createPriceLine({
+                        price: newPrice,
+                        color: '#ffffff',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Solid,
+                        axisLabelVisible: true,
+                        title: 'Entry'
+                    });
+                }
+
+                console.log('📊 ENTRY-LINIE VERSCHOBEN:', {
+                    newEntry: newPrice,
+                    SL: box.stopLoss,
+                    TP: box.takeProfit
+                });
+            } else {
+                // ECKHANDLES: Sowohl Preise als auch Breite ändern
+
+                // Update prices based on which handle was dragged
+                if (handleId.includes('SL')) {
+                    // BEGRENZUNG: SL darf nicht über Entry-Preis gezogen werden
+                    if (newPrice >= box.entryPrice) {
+                        console.warn('⚠️ SL darf nicht über Entry-Preis! Entry:', box.entryPrice, 'SL Versuch:', newPrice);
+                        newPrice = box.entryPrice - 1; // 1 Punkt unter Entry
+                    }
+                    box.stopLoss = newPrice;
+
+                    // SOFORTIGE KOORDINATEN-CACHE AKTUALISIERUNG
+                    box.slY = candlestickSeries.priceToCoordinate(newPrice);
+                    console.log('🎯 SL-Koordinate sofort cached:', box.slY);
+
+                    // Update SL Price Line
+                    if (window.positionPriceLines && window.positionPriceLines.stopLoss) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.stopLoss);
+                        window.positionPriceLines.stopLoss = candlestickSeries.createPriceLine({
+                            price: newPrice,
+                            color: '#f23645',
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Solid,
+                            axisLabelVisible: true,
+                            title: 'SL'
+                        });
+                    }
+
+                    console.log('📉 SL aktualisiert:', newPrice);
+                } else if (handleId.includes('TP')) {
+                    // BEGRENZUNG: TP darf nicht unter Entry-Preis gezogen werden
+                    if (newPrice <= box.entryPrice) {
+                        console.warn('⚠️ TP darf nicht unter Entry-Preis! Entry:', box.entryPrice, 'TP Versuch:', newPrice);
+                        newPrice = box.entryPrice + 1; // 1 Punkt über Entry
+                    }
+                    box.takeProfit = newPrice;
+
+                    // SOFORTIGE KOORDINATEN-CACHE AKTUALISIERUNG
+                    box.tpY = candlestickSeries.priceToCoordinate(newPrice);
+                    console.log('🎯 TP-Koordinate sofort cached:', box.tpY);
+
+                    // Update TP Price Line
+                    if (window.positionPriceLines && window.positionPriceLines.takeProfit) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.takeProfit);
+                        window.positionPriceLines.takeProfit = candlestickSeries.createPriceLine({
+                            price: newPrice,
+                            color: '#089981',
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Solid,
+                            axisLabelVisible: true,
+                            title: 'TP'
+                        });
+                    }
+
+                    console.log('📈 TP aktualisiert:', newPrice);
+                }
+
+                // Horizontale Resize für Eckhandles
+                const isLeftHandle = handleId.includes('-TL') || handleId.includes('-BL');
+                const isRightHandle = handleId.includes('-TR') || handleId.includes('-BR');
+
+                if (isLeftHandle) {
+                    box.x1Percent = newXPercent;
+                    console.log('↔️ ECK: Links Handle bewegt zu X:', mouseX);
+                } else if (isRightHandle) {
+                    box.x2Percent = newXPercent;
+                    console.log('↔️ ECK: Rechts Handle bewegt zu X:', mouseX);
+                }
+            }
+
+            // Stelle sicher dass x1 < x2
+            if (box.x1Percent && box.x2Percent && box.x1Percent > box.x2Percent) {
+                const temp = box.x1Percent;
+                box.x1Percent = box.x2Percent;
+                box.x2Percent = temp;
+                console.log('🔄 Box-Seiten getauscht');
+            }
+
+            // Redraw the entire position box
+            drawPositionBox();
+        }
+
+        // VERALTETE FUNKTIONEN ENTFERNT - NUR NOCH CANVAS-BASIERT
+
+        function createPriceLines(entryPrice, stopLoss, takeProfit) {
+            // Entferne alte Price Lines falls vorhanden
+            removePriceLines();
+
+            // Speichere Price Lines in globaler Variable für späteres Entfernen
+            window.positionPriceLines = {};
+
+            try {
+                // Entry Price Line (weiß)
+                window.positionPriceLines.entry = candlestickSeries.createPriceLine({
+                    price: entryPrice,
+                    color: '#ffffff',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'Entry'
+                });
+
+                // Stop Loss Price Line (rot)
+                window.positionPriceLines.stopLoss = candlestickSeries.createPriceLine({
+                    price: stopLoss,
+                    color: '#f23645',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'SL'
+                });
+
+                // Take Profit Price Line (grün)
+                window.positionPriceLines.takeProfit = candlestickSeries.createPriceLine({
+                    price: takeProfit,
+                    color: '#089981',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'TP'
+                });
+
+                console.log('📊 Price Lines erstellt:', {entry: entryPrice, sl: stopLoss, tp: takeProfit});
+            } catch (error) {
+                console.error('❌ Fehler beim Erstellen der Price Lines:', error);
+            }
+        }
+
+        function removePriceLines() {
+            // Entferne alle vorhandenen Price Lines
+            if (window.positionPriceLines) {
+                try {
+                    if (window.positionPriceLines.entry) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.entry);
+                    }
+                    if (window.positionPriceLines.stopLoss) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.stopLoss);
+                    }
+                    if (window.positionPriceLines.takeProfit) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.takeProfit);
+                    }
+                } catch (error) {
+                    console.warn('⚠️ Fehler beim Entfernen der Price Lines:', error);
+                }
+                window.positionPriceLines = null;
+            }
+        }
+
+        function removeCurrentPositionBox() {
+            if (window.currentPositionBox) {
+                // Entferne Canvas Overlay
+                const canvas = document.getElementById('position-canvas');
+                if (canvas) {
+                    canvas.remove();
+                }
+
+                // Entferne Price Lines (DEAKTIVIERT da Price Lines deaktiviert)
+                // removePriceLines();
+
+                // Lösche Box Object und globale Variablen
+                window.currentPositionBox = null;
+                window.positionCanvas = null;
+                window.positionCtx = null;
+                window.boxCoordinates = null;
+                window.resizeHandles = null;
+
+                console.log('🗑️ Position Box entfernt');
+            }
+        }
+
+        // Toolbar Event Handlers
+        document.getElementById('positionBoxTool').addEventListener('click', function() {
+            window.positionBoxMode = !window.positionBoxMode;
+            this.classList.toggle('active');
+
+            if (window.positionBoxMode) {
+                console.log('📦 Position Box Tool aktiviert');
+            } else {
+                console.log('📦 Position Box Tool deaktiviert');
+            }
+        });
+
+        document.getElementById('clearAll').addEventListener('click', function() {
+            console.log('🗑️ Clear All Button geklickt');
+            removeCurrentPositionBox();
+
+            // Deaktiviere Position Box Mode
+            window.positionBoxMode = false;
+            document.getElementById('positionBoxTool').classList.remove('active');
+            console.log('✅ Position Box entfernt und Tool deaktiviert');
+        });
+
+        // Warte bis DOM und Script geladen sind
+        document.addEventListener('DOMContentLoaded', function() {
+            // Zusätzliche Sicherheit: Prüfe ob LightweightCharts verfügbar ist
+            if (typeof LightweightCharts !== 'undefined') {
+                console.log('✅ LightweightCharts library loaded');
+                initChart();
+                connectWebSocket();
+            } else {
+                console.error('❌ LightweightCharts library not loaded');
+                // Fallback: Versuche nochmal nach kurzer Wartezeit
+                setTimeout(() => {
+                    if (typeof LightweightCharts !== 'undefined') {
+                        console.log('✅ LightweightCharts library loaded (delayed)');
+                        initChart();
+                        connectWebSocket();
+                    } else {
+                        console.error('❌ LightweightCharts library failed to load');
+                    }
+                }, 1000);
+            }
+        });
+    </script>
+</body>
+</html>
+    """)
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket Endpoint für Realtime-Communication"""
+    await manager.connect(websocket)
+
+    try:
+        while True:
+            # Warte auf Nachrichten vom Client (falls nötig)
+            data = await websocket.receive_text()
+            # Hier könnten Client-Nachrichten verarbeitet werden
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        print("Client disconnected")
+
+@app.post("/api/chart/set_data")
+async def set_chart_data(data: dict):
+    """API Endpoint um Chart-Daten zu setzen"""
+
+    # Update Chart State
+    manager.update_chart_state({
+        'type': 'set_data',
+        'data': data.get('data', []),
+        'symbol': data.get('symbol', 'NQ=F'),
+        'interval': data.get('interval', '5m')
+    })
+
+    # Broadcast an alle Clients
+    await manager.broadcast({
+        'type': 'set_data',
+        'data': data.get('data', []),
+        'symbol': data.get('symbol', 'NQ=F'),
+        'interval': data.get('interval', '5m')
+    })
+
+    return {"status": "success", "message": "Chart data updated"}
+
+@app.post("/api/chart/add_candle")
+async def add_candle(candle_data: dict):
+    """API Endpoint um neue Kerze hinzuzufügen"""
+
+    candle = candle_data.get('candle')
+    if not candle:
+        return {"status": "error", "message": "No candle data provided"}
+
+    # Update Chart State
+    manager.update_chart_state({
+        'type': 'add_candle',
+        'candle': candle
+    })
+
+    # Broadcast an alle Clients
+    await manager.broadcast({
+        'type': 'add_candle',
+        'candle': candle
+    })
+
+    return {"status": "success", "message": "Candle added"}
+
+@app.post("/api/chart/add_position")
+async def add_position(position_data: dict):
+    """API Endpoint um Position Overlay hinzuzufügen"""
+
+    position = position_data.get('position')
+    if not position:
+        return {"status": "error", "message": "No position data provided"}
+
+    # Update Chart State
+    manager.update_chart_state({
+        'type': 'add_position',
+        'position': position
+    })
+
+    # Broadcast an alle Clients
+    await manager.broadcast({
+        'type': 'add_position',
+        'position': position
+    })
+
+    return {"status": "success", "message": "Position overlay added"}
+
+@app.post("/api/chart/remove_position")
+async def remove_position(position_data: dict):
+    """API Endpoint um Position Overlay zu entfernen"""
+
+    position_id = position_data.get('position_id')
+    if not position_id:
+        return {"status": "error", "message": "No position_id provided"}
+
+    # Update Chart State
+    manager.update_chart_state({
+        'type': 'remove_position',
+        'position_id': position_id
+    })
+
+    # Broadcast an alle Clients
+    await manager.broadcast({
+        'type': 'remove_position',
+        'position_id': position_id
+    })
+
+    return {"status": "success", "message": "Position overlay removed"}
+
+@app.post("/api/chart/sync_positions")
+async def sync_positions(positions_data: dict):
+    """API Endpoint um alle Positionen zu synchronisieren"""
+
+    positions = positions_data.get('positions', [])
+
+    # Update Chart State
+    manager.chart_state['positions'] = positions
+
+    # Broadcast an alle Clients
+    await manager.broadcast({
+        'type': 'positions_sync',
+        'positions': positions
+    })
+
+    return {"status": "success", "message": f"Synchronized {len(positions)} positions"}
+
+@app.get("/api/chart/status")
+async def get_chart_status():
+    """Chart Status und Verbindungsinfo"""
+    return {
+        "status": "running",
+        "connections": len(manager.active_connections),
+        "chart_state": {
+            "symbol": manager.chart_state['symbol'],
+            "interval": manager.chart_state['interval'],
+            "candles_count": len(manager.chart_state['data']),
+            "last_update": manager.chart_state['last_update']
+        }
+    }
+
+@app.get("/api/chart/data")
+async def get_chart_data():
+    """Aktuelle Chart-Daten zurückgeben"""
+    return {
+        "data": manager.chart_state['data'],
+        "symbol": manager.chart_state['symbol'],
+        "interval": manager.chart_state['interval'],
+        "count": len(manager.chart_state['data'])
+    }
+
+if __name__ == "__main__":
+    # Debug Route
+    @app.get("/debug")
+    async def debug_chart():
+        """Debug Chart Page"""
+        html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Chart</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        #chart { width: 100%; height: 600px; }
+        .status { margin: 10px; padding: 10px; background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Debug Chart - Teste NQ Daten</h1>
+    <div class="status" id="status">Status: Initialisiere...</div>
+    <div id="chart"></div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+
+        function updateStatus(message) {
+            statusDiv.innerHTML = `Status: ${message}`;
+            console.log(message);
+        }
+
+        async function loadChart() {
+            try {
+                updateStatus('Erstelle Chart...');
+
+                const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+                    width: document.getElementById('chart').clientWidth,
+                    height: 600,
+                    timeScale: { timeVisible: true },
+                    grid: { vertLines: { color: '#e1e1e1' }, horzLines: { color: '#e1e1e1' } }
+                });
+
+                const candlestickSeries = chart.addCandlestickSeries();
+
+                updateStatus('Lade Daten von Server...');
+
+                const response = await fetch('/api/chart/data');
+                const chartData = await response.json();
+
+                updateStatus(`Daten erhalten: ${chartData.data?.length || 0} Kerzen`);
+
+                if (chartData.data && chartData.data.length > 0) {
+                    const formattedData = chartData.data.map(item => ({
+                        time: Math.floor(new Date(item.time).getTime() / 1000),
+                        open: parseFloat(item.open),
+                        high: parseFloat(item.high),
+                        low: parseFloat(item.low),
+                        close: parseFloat(item.close)
+                    }));
+
+                    candlestickSeries.setData(formattedData);
+                    chart.timeScale().fitContent();
+
+                    updateStatus(`✅ SUCCESS: ${formattedData.length} NQ-Kerzen geladen!`);
+                } else {
+                    updateStatus('❌ FEHLER: Keine Daten empfangen');
+                }
+
+            } catch (error) {
+                updateStatus(`❌ FEHLER: ${error.message}`);
+                console.error('Chart Error:', error);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadChart);
+    </script>
+</body>
+</html>
+"""
+        return HTMLResponse(content=html_content)
+
+    print("Starting RL Trading Chart Server...")
+    print("Chart: http://localhost:8002")
+    print("Debug: http://localhost:8002/debug")
+    print("WebSocket: ws://localhost:8002/ws")
+    print("API: http://localhost:8002/docs")
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8002,
+        log_level="info",
+        reload=False  # Disable reload for production
+    )

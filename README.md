@@ -1,6 +1,27 @@
 # RL Trading System mit Human-in-the-Loop Feedback
 
-Ein interaktives Reinforcement Learning Trading System, inspiriert vom Trackmania Beispiel, wo gezieltes Human Feedback verwendet wird, um der KI spezifische Trading-Patterns beizubringen.
+Ein interaktives Reinforcement Learning Trading System mit **modularisierter Streamlit Trading App**, inspiriert vom Trackmania Beispiel, wo gezieltes Human Feedback verwendet wird, um der KI spezifische Trading-Patterns beizubringen.
+
+## 🚀 Zwei Modi verfügbar:
+
+### 1. **Streamlit Trading App** (Neu - Modularisiert)
+```bash
+# Neue modularisierte Trading App starten
+py -m streamlit run src/app.py --server.port 8504 --server.headless true
+```
+- TradingView Lightweight Charts
+- NQ=F Standard-Asset, UTC+2 Zeitzone
+- Debug-Modus mit historischer Simulation
+- Modularisierte, erweiterbare Architektur
+
+### 2. **RL Training System** (Original)
+```bash
+# RL Training mit Human Feedback
+python src/main.py --mode demo --episodes 3
+```
+- Human-in-the-Loop Training
+- Pattern Detection (FVG, Order Blocks)
+- Live Data Integration
 
 ## 🎯 Kern-Features
 
@@ -85,21 +106,32 @@ python src/main.py --mode eval --model models/trading_agent_20231201_143022 --ep
 
 ```
 RL-Trading/
-├── src/
-│   ├── env.py              # Trading Environment mit Reward Shaping
-│   ├── rewards.py          # Modulare Reward-Komponenten
-│   ├── patterns.py         # Pattern Detection (FVG, Order Blocks)
-│   ├── agent.py            # PPO Agent mit Custom Features
-│   ├── data_feed.py        # Binance API Integration
-│   └── main.py             # Main Entry Point
-├── data/                   # Daten-Storage
-├── models/                 # Gespeicherte Modelle
-├── configs/                # Konfigurationsdateien
-├── notebooks/              # Jupyter Notebooks für Analyse
-├── tests/                  # Unit Tests
-├── requirements.txt        # Python Dependencies
-├── .env.template          # Environment Template
-└── README.md              # Diese Datei
+├── .claude/                    # Claude Code Settings
+├── .claude-preferences.md      # Entwickler Preferences & Standards
+├── src/                        # Hauptquellcode (modularisiert)
+│   ├── app.py                  # Streamlit Trading App (NEU)
+│   ├── main.py                 # RL Training Entry Point
+│   ├── config/                 # Konfigurationsdateien
+│   │   └── settings.py         # App-weite Einstellungen
+│   ├── components/             # UI Components (NEU)
+│   │   ├── chart.py           # TradingView Chart Komponente
+│   │   ├── sidebar.py         # Sidebar mit Einstellungen
+│   │   └── trading_panel.py   # Trading Panel & Controls
+│   ├── data/                   # Datenverarbeitung
+│   │   └── yahoo_finance.py   # Yahoo Finance API Integration
+│   ├── utils/                  # Hilfsfunktionen
+│   │   └── constants.py       # Asset-Definitionen & Konstanten
+│   ├── env.py                  # Trading Environment mit Reward Shaping
+│   ├── rewards.py              # Modulare Reward-Komponenten
+│   ├── patterns.py             # Pattern Detection (FVG, Order Blocks)
+│   ├── agent.py                # PPO Agent mit Custom Features
+│   └── data_feed.py            # Binance API Integration
+├── tests/                      # Tests (zukünftig)
+├── backup_20250917/            # Backup der alten Struktur
+├── models/                     # Gespeicherte Modelle
+├── requirements.txt            # Python Dependencies
+├── .env.template              # Environment Template
+└── README.md                  # Diese Datei
 ```
 
 ## 🎮 Wie das Human Feedback funktioniert

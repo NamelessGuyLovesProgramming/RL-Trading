@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Chart Debug</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        #chart { width: 100%; height: 600px; }
+        .status { margin: 10px; padding: 10px; background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>Chart Debug - Einfacher Test</h1>
+    <div class="status" id="status">Status: Initialisiere...</div>
+    <div id="chart"></div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+
+        function updateStatus(message) {
+            statusDiv.innerHTML = `Status: ${message}`;
+            console.log(message);
+        }
+
+        async function loadChart() {
+            try {
+                updateStatus('Erstelle Chart...');
+
+                // Chart erstellen
+                const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+                    width: document.getElementById('chart').clientWidth,
+                    height: 600,
+                    timeScale: { timeVisible: true },
+                    grid: { vertLines: { color: '#e1e1e1' }, horzLines: { color: '#e1e1e1' } }
+                });
+
+                const candlestickSeries = chart.addCandlestickSeries();
+
+                updateStatus('Lade Daten von Server...');
+
+                // Daten vom Server laden
+                const response = await fetch('/api/chart/data');
+                const chartData = await response.json();
+
+                updateStatus(`Daten erhalten: ${chartData.data?.length || 0} Kerzen`);
+
+                if (chartData.data && chartData.data.length > 0) {
+                    // Konvertiere zu LightweightCharts Format
+                    const formattedData = chartData.data.map(item => ({
+                        time: Math.floor(new Date(item.time).getTime() / 1000),
+                        open: parseFloat(item.open),
+                        high: parseFloat(item.high),
+                        low: parseFloat(item.low),
+                        close: parseFloat(item.close)
+                    }));
+
+                    candlestickSeries.setData(formattedData);
+                    chart.timeScale().fitContent();
+
+                    updateStatus(`✅ SUCCESS: ${formattedData.length} NQ-Kerzen geladen!`);
+                } else {
+                    updateStatus('❌ FEHLER: Keine Daten empfangen');
+                }
+
+            } catch (error) {
+                updateStatus(`❌ FEHLER: ${error.message}`);
+                console.error('Chart Error:', error);
+            }
+        }
+
+        // Chart laden wenn Seite bereit ist
+        document.addEventListener('DOMContentLoaded', loadChart);
+    </script>
+</body>
+</html>

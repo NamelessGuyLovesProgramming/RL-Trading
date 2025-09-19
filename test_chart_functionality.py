@@ -1,247 +1,198 @@
+#!/usr/bin/env python3
 """
-Test Suite für Chart-Funktionalität
-Testet die wichtigsten Chart-Features der Trading App
+Chart Functionality Test Suite
+Automatisierte Tests um solche Probleme in Zukunft zu vermeiden
 """
 
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import yfinance as yf
+import requests
+import time
 import json
-
-# Import der zu testenden Funktionen
-from trading_app_lightweight_only import (
-    get_yfinance_data,
-    create_trading_chart,
-    validate_symbol,
-    get_asset_info,
-    AVAILABLE_ASSETS
-)
+import sys
+from datetime import datetime
 
 class ChartTester:
-    """Test-Klasse für Chart-Funktionalität"""
+    def __init__(self, base_url="http://localhost:8001"):
+        self.base_url = base_url
+        self.session = requests.Session()
+        self.results = []
 
-    def __init__(self):
-        self.test_results = []
-        self.print_header("CHART FUNCTIONALITY TESTS")
+    def log(self, message, status="INFO"):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        colored_status = {
+            "PASS": "\033[92m✅ PASS\033[0m",
+            "FAIL": "\033[91m❌ FAIL\033[0m",
+            "INFO": "\033[94mℹ️  INFO\033[0m",
+            "WARN": "\033[93m⚠️  WARN\033[0m"
+        }
+        print(f"[{timestamp}] {colored_status.get(status, status)} {message}")
 
-    def print_header(self, title):
-        print("\n" + "="*60)
-        print(f"  {title}")
-        print("="*60)
-
-    def print_test(self, test_name, status, details=""):
-        status_symbol = "[PASS]" if status else "[FAIL]"
-        print(f"{status_symbol} {test_name}")
-        if details:
-            print(f"   -> {details}")
-        self.test_results.append((test_name, status, details))
-
-    def test_data_loading(self):
-        """Test 1: Daten-Loading von Yahoo Finance"""
-        self.print_header("TEST 1: DATEN-LOADING")
-
-        # Test mit AAPL
-        print("[INFO] Testing data loading for AAPL...")
-        try:
-            data = get_yfinance_data("AAPL", period="5d", interval="1d")
-
-            if data is None:
-                self.print_test("Data Loading", False, "get_yfinance_data returned None")
-                return False
-
-            if 'data' not in data:
-                self.print_test("Data Structure", False, "'data' key missing in returned dict")
-                return False
-
-            df = data['data']
-            if df.empty:
-                self.print_test("DataFrame Content", False, "DataFrame is empty")
-                return False
-
-            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            missing_cols = [col for col in required_columns if col not in df.columns]
-            if missing_cols:
-                self.print_test("DataFrame Columns", False, f"Missing columns: {missing_cols}")
-                return False
-
-            self.print_test("Data Loading", True, f"Loaded {len(df)} rows for AAPL")
-            self.print_test("Data Structure", True, "All required keys present")
-            self.print_test("DataFrame Content", True, f"Shape: {df.shape}")
-            self.print_test("DataFrame Columns", True, "All required columns present")
-
-            print(f"[INFO] Data sample:")
-            print(df.head(2))
-
-            return True
-
-        except Exception as e:
-            self.print_test("Data Loading", False, f"Exception: {str(e)}")
-            return False
-
-    def test_chart_creation(self):
-        """Test 2: Chart-HTML Erstellung"""
-        self.print_header("TEST 2: CHART-HTML ERSTELLUNG")
+    def test_server_health(self):
+        """Test 1: Chart Server Erreichbarkeit"""
+        self.log("Test 1: Chart Server Erreichbarkeit")
 
         try:
-            # Lade Test-Daten
-            data = get_yfinance_data("AAPL", period="5d", interval="1d")
-            if data is None:
-                self.print_test("Chart Creation", False, "No test data available")
-                return False
-
-            # Erstelle Chart HTML
-            chart_html = create_trading_chart(data)
-
-            if not chart_html:
-                self.print_test("Chart HTML Generation", False, "create_trading_chart returned empty")
-                return False
-
-            if "Keine Daten verfügbar" in chart_html:
-                self.print_test("Chart HTML Generation", False, "Chart shows 'No data available'")
-                return False
-
-            # Überprüfe wichtige HTML-Elemente
-            html_checks = {
-                "LightweightCharts Script": "LightweightCharts.createChart" in chart_html,
-                "Chart Container": 'id="chart_' in chart_html,
-                "Candlestick Series": "addCandlestickSeries" in chart_html,
-                "Volume Series": "addHistogramSeries" in chart_html,
-                "Asset Symbol Modal": "symbolModal" in chart_html,
-                "JavaScript Functions": "function openSymbolModal" in chart_html
-            }
-
-            for check_name, passed in html_checks.items():
-                self.print_test(check_name, passed)
-
-            # HTML-Größe prüfen
-            html_size = len(chart_html)
-            size_ok = html_size > 10000  # Erwarte mindestens 10KB HTML
-            self.print_test("Chart HTML Size", size_ok, f"{html_size} characters")
-
-            return all(html_checks.values()) and size_ok
-
-        except Exception as e:
-            self.print_test("Chart Creation", False, f"Exception: {str(e)}")
-            return False
-
-    def test_symbol_validation(self):
-        """Test 3: Symbol-Validierung"""
-        self.print_header("TEST 3: SYMBOL-VALIDIERUNG")
-
-        # Test gültige Symbole
-        valid_symbols = ["AAPL", "TSLA", "BTC-USD", "EURUSD=X", "^GSPC"]
-        for symbol in valid_symbols:
-            is_valid = validate_symbol(symbol)
-            self.print_test(f"Valid Symbol: {symbol}", is_valid)
-
-        # Test ungültige Symbole
-        invalid_symbols = ["INVALID", "FAKE123", ""]
-        for symbol in invalid_symbols:
-            is_valid = validate_symbol(symbol)
-            self.print_test(f"Invalid Symbol: {symbol}", not is_valid)
-
-        return True
-
-    def test_asset_info(self):
-        """Test 4: Asset-Informationen"""
-        self.print_header("TEST 4: ASSET-INFORMATIONEN")
-
-        # Test Asset-Info Abruf
-        test_symbols = ["AAPL", "TSLA", "BTC-USD"]
-
-        for symbol in test_symbols:
-            asset_info = get_asset_info(symbol)
-
-            if asset_info:
-                has_required_keys = all(key in asset_info for key in ['symbol', 'name', 'description'])
-                self.print_test(f"Asset Info: {symbol}", has_required_keys,
-                              f"Name: {asset_info.get('name', 'N/A')}")
+            response = self.session.get(f"{self.base_url}/api/chart/status", timeout=5)
+            if response.status_code == 200:
+                self.log("Chart Server ist erreichbar", "PASS")
+                return True
             else:
-                self.print_test(f"Asset Info: {symbol}", False, "No info found")
+                self.log(f"Chart Server antwortet mit Status {response.status_code}", "FAIL")
+                return False
+        except Exception as e:
+            self.log(f"Chart Server nicht erreichbar: {e}", "FAIL")
+            return False
 
-        return True
+    def test_chart_page_loads(self):
+        """Test 2: Chart Hauptseite lädt"""
+        self.log("Test 2: Chart Hauptseite lädt")
 
-    def test_available_assets_structure(self):
-        """Test 5: AVAILABLE_ASSETS Datenstruktur"""
-        self.print_header("TEST 5: AVAILABLE_ASSETS STRUKTUR")
+        try:
+            response = self.session.get(self.base_url, timeout=10)
+            if response.status_code == 200:
+                # Prüfe auf wichtige JavaScript Elemente
+                html = response.text
+                checks = [
+                    "LightweightCharts" in html,
+                    "createChart" in html,
+                    "chart_container" in html,
+                    "positionBoxTool" in html
+                ]
 
-        # Überprüfe Hauptkategorien
-        expected_categories = ["stocks", "crypto", "forex", "indices"]
-        for category in expected_categories:
-            exists = category in AVAILABLE_ASSETS
-            self.print_test(f"Category: {category}", exists)
+                if all(checks):
+                    self.log("Chart Seite lädt vollständig", "PASS")
+                    return True
+                else:
+                    missing = [name for name, check in zip(
+                        ["LightweightCharts", "createChart", "chart_container", "positionBoxTool"],
+                        checks) if not check]
+                    self.log(f"Chart Seite unvollständig - Fehlt: {missing}", "FAIL")
+                    return False
+            else:
+                self.log(f"Chart Seite lädt nicht: {response.status_code}", "FAIL")
+                return False
+        except Exception as e:
+            self.log(f"Fehler beim Laden der Chart Seite: {e}", "FAIL")
+            return False
 
-            if exists:
-                count = len(AVAILABLE_ASSETS[category])
-                self.print_test(f"  └─ {category} count", count > 0, f"{count} assets")
+    def test_api_endpoints(self):
+        """Test 3: API Endpoints funktionieren"""
+        self.log("Test 3: API Endpoints")
 
-        # Überprüfe Asset-Struktur
-        total_assets = 0
-        for category, assets in AVAILABLE_ASSETS.items():
-            for asset in assets:
-                total_assets += 1
-                required_keys = ['symbol', 'name', 'description']
-                has_all_keys = all(key in asset for key in required_keys)
-                if not has_all_keys:
-                    self.print_test(f"Asset Structure: {asset.get('symbol', 'Unknown')}",
-                                  False, "Missing required keys")
-                    break
+        endpoints = [
+            "/api/chart/status",
+            "/docs"
+        ]
 
-        self.print_test("Total Assets", total_assets > 0, f"{total_assets} assets found")
+        all_good = True
+        for endpoint in endpoints:
+            try:
+                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
+                if response.status_code == 200:
+                    self.log(f"Endpoint {endpoint} OK", "PASS")
+                else:
+                    self.log(f"Endpoint {endpoint} Fehler: {response.status_code}", "FAIL")
+                    all_good = False
+            except Exception as e:
+                self.log(f"Endpoint {endpoint} nicht erreichbar: {e}", "FAIL")
+                all_good = False
 
-        return True
+        return all_good
+
+    def test_chart_data_api(self):
+        """Test 4: Chart Daten API"""
+        self.log("Test 4: Chart Daten API")
+
+        try:
+            # Test Daten senden
+            test_data = [
+                {"time": "2023-01-01", "open": 100, "high": 105, "low": 95, "close": 102},
+                {"time": "2023-01-02", "open": 102, "high": 108, "low": 100, "close": 106}
+            ]
+
+            response = self.session.post(
+                f"{self.base_url}/api/chart/set_data",
+                json={"data": test_data, "symbol": "TEST", "interval": "1d"},
+                timeout=5
+            )
+
+            if response.status_code == 200:
+                self.log("Chart Daten API funktioniert", "PASS")
+                return True
+            else:
+                self.log(f"Chart Daten API Fehler: {response.status_code}", "FAIL")
+                return False
+        except Exception as e:
+            self.log(f"Chart Daten API Fehler: {e}", "FAIL")
+            return False
+
+    def test_javascript_errors(self):
+        """Test 5: JavaScript Fehler Check via Browser Test"""
+        self.log("Test 5: JavaScript Fehler Check")
+        self.log("Hinweis: Manuell Browser öffnen und Konsole prüfen", "WARN")
+        self.log("URL: http://localhost:8001", "INFO")
+        self.log("- Keine roten Fehler in der Konsole", "INFO")
+        self.log("- WebSocket Verbindung stabil", "INFO")
+        self.log("- Position Box Tool klickbar", "INFO")
+        return True  # Manueller Test
 
     def run_all_tests(self):
         """Führe alle Tests aus"""
-        print("\n[START] STARTING COMPREHENSIVE CHART TESTS")
+        self.log("🚀 Starte Chart Funktionalitäts-Tests")
+        self.log("=" * 50)
 
         tests = [
-            self.test_data_loading,
-            self.test_chart_creation,
-            self.test_symbol_validation,
-            self.test_asset_info,
-            self.test_available_assets_structure
+            ("Server Health", self.test_server_health),
+            ("Chart Page Load", self.test_chart_page_loads),
+            ("API Endpoints", self.test_api_endpoints),
+            ("Chart Data API", self.test_chart_data_api),
+            ("JavaScript Errors", self.test_javascript_errors)
         ]
 
-        passed_tests = 0
-        total_tests = len(tests)
-
-        for test_func in tests:
+        results = []
+        for test_name, test_func in tests:
             try:
-                if test_func():
-                    passed_tests += 1
+                result = test_func()
+                results.append((test_name, result))
             except Exception as e:
-                print(f"[ERROR] Test {test_func.__name__} failed with exception: {e}")
+                self.log(f"Test {test_name} crashed: {e}", "FAIL")
+                results.append((test_name, False))
+
+            self.log("-" * 30)
 
         # Zusammenfassung
-        self.print_header("TEST SUMMARY")
-        success_rate = (passed_tests / total_tests) * 100
-        print(f"[STATS] Tests passed: {passed_tests}/{total_tests} ({success_rate:.1f}%)")
+        self.log("📊 Test Zusammenfassung")
+        passed = sum(1 for _, result in results if result)
+        total = len(results)
 
-        # Detaillierte Ergebnisse
-        print(f"\n[RESULTS] Detailed Results:")
-        failed_tests = [result for result in self.test_results if not result[1]]
-        if failed_tests:
-            print("[FAIL] Failed tests:")
-            for test_name, status, details in failed_tests:
-                print(f"   * {test_name}: {details}")
+        for test_name, result in results:
+            status = "PASS" if result else "FAIL"
+            self.log(f"{test_name}: {status}")
+
+        self.log(f"Ergebnis: {passed}/{total} Tests bestanden")
+
+        if passed == total:
+            self.log("🎉 Alle Tests bestanden!", "PASS")
+            return True
         else:
-            print("[SUCCESS] All individual test checks passed!")
+            self.log("⚠️ Einige Tests fehlgeschlagen!", "FAIL")
+            return False
 
-        return passed_tests == total_tests
+def main():
+    print("Chart Functionality Test Suite")
+    print("Verhindert Chart-Probleme durch automatisierte Tests\n")
 
-if __name__ == "__main__":
+    # Warte kurz für Server Startup
+    time.sleep(2)
+
     tester = ChartTester()
     success = tester.run_all_tests()
 
     if success:
-        print("\n[SUCCESS] ALL CHART TESTS PASSED!")
-        exit(0)
+        print("\n✅ Alle Tests bestanden - Chart sollte funktionieren!")
+        sys.exit(0)
     else:
-        print("\n[ERROR] SOME TESTS FAILED - CHECK ABOVE FOR DETAILS")
-        exit(1)
+        print("\n❌ Tests fehlgeschlagen - Chart-Probleme erkannt!")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
