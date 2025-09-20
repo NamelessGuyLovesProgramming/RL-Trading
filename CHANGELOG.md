@@ -6,6 +6,36 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/) 
 
 ## [Unreleased]
 
+### 2025-09-20 - Smart Chart Positioning System
+
+#### Smart Positioning - 50 Kerzen Standard mit 20% Freiraum
+- [ADDED] SmartChartPositioning Klasse für optimales Chart-Verhalten
+  - Standard-Zoom: Immer 50 Kerzen sichtbar bei Initialisierung und Timeframe-Wechsel
+  - 20% rechter Freiraum für neue Kerzen - automatisch berechnet basierend auf Zeitspanne
+  - setVisibleRange() statt fitContent() für präzise Positionierung
+  - resetToStandardPosition() bei jedem Timeframe-Wechsel
+- [IMPROVED] Chart User Experience Optimierungen
+  - Bei Timeframe-Wechsel: Automatischer Reset zu 50-Kerzen Standard-Ansicht
+  - Zoom-out erlaubt mehr als 50 Kerzen (flexibel per User-Interaktion)
+  - Drag nach links möglich ohne Freiraum-Einschränkung
+  - Konsistente Chart-Darstellung über alle Timeframes hinweg
+- [ENHANCED] Backend-Integration für Standard-Zoom
+  - Initial load: 50 Kerzen statt 200 für schnelleren Start
+  - API default: visible_candles=50 für Timeframe-Endpoints
+  - CSV-basierte Datenladung optimiert für 50-Kerzen Standard
+- [ADDED] Comprehensive Test Framework für Chart Positioning
+  - `src/tests/test_smart_chart_positioning.py` - 8 detaillierte Test Cases
+  - Tests für Standard-Konfiguration, Zeitbereich-Berechnung, große/kleine Datasets
+  - Edge Case Tests (einzelne Kerze, zwei Kerzen, Freiraum-Berechnung)
+  - Integration Tests für Backend-Kompatibilität
+
+#### Technical Implementation Details
+- **JavaScript Positioning:** SmartChartPositioning Klasse mit mathematischer Freiraum-Berechnung
+- **Zeitbereich-Logik:** `timeSpan * (0.2 / 0.8)` für präzise 20% Margin-Berechnung
+- **Fallback-Sicherheit:** Edge Cases für <50 Kerzen und einzelne Kerzen abgedeckt
+- **Performance:** Keine zusätzliche API-Calls - nutzt vorhandene Daten intelligent
+- **User Experience:** Predictable Behavior - jeder Timeframe startet mit gleicher Ansicht
+
 ### 2025-09-19 - High-Performance Chart System
 
 #### Performance Optimierungen - Massive Geschwindigkeitsverbesserungen

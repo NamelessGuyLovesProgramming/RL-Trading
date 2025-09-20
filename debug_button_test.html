@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Button Debug Test</title>
+    <style>
+        .toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50px;
+            background: #1e1e1e;
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 15px;
+            z-index: 1000;
+        }
+        .tool-btn {
+            background: #333;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        .tool-btn:hover { background: #444; }
+        .tool-btn.active { background: #089981; }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button id="positionBoxTool" class="tool-btn" onclick="togglePositionTool()">📦 Position Box</button>
+        <button id="clearAll" class="tool-btn" onclick="clearAllPositions()">🗑️</button>
+        <span style="color: #fff; margin-left: 20px;">Debug Test - Öffne Console (F12)</span>
+    </div>
+
+    <div style="margin-top: 80px; padding: 20px; color: #fff; background: #000;">
+        <h2>Debug Test</h2>
+        <p>1. Öffne die Browser-Konsole (F12)</p>
+        <p>2. Klicke auf die Buttons oben</p>
+        <p>3. Schau dir die Console-Logs an</p>
+        <p>4. Prüfe ob Fehler angezeigt werden</p>
+    </div>
+
+    <script>
+        // Initialize
+        window.positionBoxMode = false;
+
+        function togglePositionTool() {
+            console.log('📦 Position Box Tool Button geklickt via onclick - TEST');
+            window.positionBoxMode = !window.positionBoxMode;
+
+            const positionTool = document.getElementById('positionBoxTool');
+            if (!positionTool) {
+                console.error('❌ positionBoxTool Element nicht gefunden!');
+                return;
+            }
+
+            console.log('🔧 positionBoxMode now:', window.positionBoxMode);
+
+            if (window.positionBoxMode) {
+                positionTool.classList.add('active');
+                console.log('📦 Position Box Tool AKTIVIERT');
+            } else {
+                positionTool.classList.remove('active');
+                positionTool.style.background = '#333';
+                positionTool.style.color = '#fff';
+                console.log('📦 Position Box Tool DEAKTIVIERT');
+            }
+        }
+
+        function clearAllPositions() {
+            console.log('🗑️ Clear All Button geklickt via onclick - TEST');
+
+            // Reset mode
+            window.positionBoxMode = false;
+            const positionTool = document.getElementById('positionBoxTool');
+            if (positionTool) {
+                positionTool.classList.remove('active');
+                positionTool.style.background = '#333';
+                positionTool.style.color = '#fff';
+                console.log('✅ Position Tool deaktiviert via onclick TEST');
+            } else {
+                console.error('❌ positionBoxTool Element nicht gefunden beim Clear!');
+            }
+        }
+
+        // Test when page loads
+        console.log('🚀 Debug Test Page loaded');
+        console.log('📄 positionBoxTool element:', document.getElementById('positionBoxTool'));
+        console.log('📄 clearAll element:', document.getElementById('clearAll'));
+    </script>
+</body>
+</html>

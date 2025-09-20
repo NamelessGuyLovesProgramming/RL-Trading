@@ -38,7 +38,7 @@ try:
     csv_path = Path("src/data/aggregated/5m/nq-2024.csv")
     if csv_path.exists():
         df = pd.read_csv(csv_path)
-        result_df = df.tail(200)  # Letzte 200 Kerzen für initial load
+        result_df = df.tail(200)  # Letzte 200 Kerzen als Puffer
 
         initial_chart_data = []
         for _, row in result_df.iterrows():
@@ -223,6 +223,106 @@ async def get_chart():
         let isInitialized = false;
 
         // Chart initialisieren
+        // EINFACHE CHART POSITIONING FUNKTION
+        function setChartWith20PercentMargin(chartData) {
+            console.log('MARGIN: Setze 20% Freiraum für', chartData.length, 'Kerzen');
+
+            if (!chartData || chartData.length < 2) {
+                console.log('MARGIN: Fallback zu fitContent (zu wenig Daten)');
+                chart.timeScale().fitContent();
+                return;
+            }
+
+            // Hole erste und letzte Zeit
+            const firstTime = chartData[0].time;
+            const lastTime = chartData[chartData.length - 1].time;
+
+            // Berechne 20% Freiraum rechts
+            const dataTimeSpan = lastTime - firstTime;
+            const marginTime = dataTimeSpan * 0.25; // 25% der Daten = 20% der Gesamt-Chart
+
+            console.log('MARGIN: Daten-Zeitspanne:', dataTimeSpan, 'Freiraum:', marginTime);
+            console.log('MARGIN: Chart von', firstTime, 'bis', lastTime + marginTime);
+
+            // Setze sichtbaren Bereich
+            chart.timeScale().setVisibleRange({
+                from: firstTime,
+                to: lastTime + marginTime
+            });
+
+            console.log('MARGIN: 20% Freiraum gesetzt');
+        }
+
+        // Smart Chart Positioning System - 50 Kerzen Standard mit 20% Freiraum
+        class SmartChartPositioning {
+            constructor(chart, candlestickSeries) {
+                this.chart = chart;
+                this.candlestickSeries = candlestickSeries;
+                this.standardCandleCount = 50; // Standard: 50 Kerzen sichtbar
+                this.rightMarginPercent = 0.2; // 20% rechter Freiraum
+
+                console.log(`📊 Smart Positioning: ${this.standardCandleCount} Kerzen Standard mit ${this.rightMarginPercent * 100}% Freiraum`);
+            }
+
+            // Setze Chart auf Standard-Position: 50 Kerzen + 20% Freiraum
+            setStandardPosition(data) {
+                if (!data || data.length === 0) {
+                    console.warn('🚫 Keine Daten für Standard Position');
+                    return;
+                }
+
+                const dataLength = data.length;
+                const visibleCandles = Math.min(this.standardCandleCount, dataLength);
+
+                // Berechne Zeitbereich für sichtbare Kerzen
+                const startIndex = Math.max(0, dataLength - visibleCandles);
+                const endIndex = dataLength - 1;
+
+                if (startIndex === endIndex) {
+                    console.warn('🚫 Nicht genug Daten für Standard Position');
+                    this.chart.timeScale().fitContent();
+                    return;
+                }
+
+                // Zeitstempel der ersten und letzten sichtbaren Kerze
+                const startTime = data[startIndex].time;
+                const endTime = data[endIndex].time;
+
+                // RICHTIGE FREIRAUM-BERECHNUNG:
+                // 50 Kerzen sollen 4/5 (80%) der Chart-Breite links einnehmen
+                // 1/5 (20%) rechts soll frei bleiben für neue Kerzen
+
+                const dataTimeSpan = endTime - startTime;
+
+                // Wenn Daten 80% der Chart einnehmen sollen, dann:
+                // Gesamt-Chart-Breite = Daten-Breite / 0.8
+                const totalChartTimeSpan = dataTimeSpan / 0.8;
+
+                // Rechter Freiraum = 20% der Gesamt-Chart-Breite
+                const rightMarginTime = totalChartTimeSpan * 0.2;
+
+                // Chart beginnt bei den Daten, endet mit Freiraum
+                const chartStartTime = startTime;
+                const chartEndTime = endTime + rightMarginTime;
+
+                console.log(`📍 Smart Position: ${visibleCandles} Kerzen (${startIndex}-${endIndex})`);
+                console.log(`📍 Daten nehmen 80% ein: ${startTime} bis ${endTime}`);
+                console.log(`📍 Chart-Bereich: ${chartStartTime} bis ${chartEndTime} (20% Freiraum: ${rightMarginTime})`);
+
+                // Setze sichtbaren Bereich: Daten links 80%, Freiraum rechts 20%
+                this.chart.timeScale().setVisibleRange({
+                    from: chartStartTime,
+                    to: chartEndTime
+                });
+            }
+
+            // Nach Timeframe-Wechsel: Immer zurück zur Standard-Position
+            resetToStandardPosition(newData) {
+                console.log(`🔄 Reset zu Standard-Position nach Timeframe-Wechsel`);
+                this.setStandardPosition(newData);
+            }
+        }
+
         // Intelligent Zoom System Class
         class IntelligentZoomSystem {
             constructor(chart, candlestickSeries, currentTimeframe = '5m') {
@@ -389,7 +489,41 @@ async def get_chart():
                 wickDownColor: '#f23645'
             });
 
-            console.log('🔧 CandlestickSeries erstellt:', candlestickSeries);
+            // Smart Positioning System initialisieren
+            try {
+                window.smartPositioning = new SmartChartPositioning(chart, candlestickSeries);
+                console.log('INIT: Smart Positioning System initialisiert');
+
+                // SOFORTIGER TEST der Smart Positioning
+                window.testSmartPositioning = function() {
+                    console.log('DIRECT TEST: Smart Positioning wird getestet...');
+                    if (window.smartPositioning) {
+                        // Erstelle Test-Daten
+                        const testData = [];
+                        const baseTime = Math.floor(Date.now() / 1000);
+                        for (let i = 0; i < 50; i++) {
+                            testData.push({
+                                time: baseTime + (i * 300), // 5-Minuten Intervall
+                                open: 100 + i,
+                                high: 105 + i,
+                                low: 95 + i,
+                                close: 102 + i
+                            });
+                        }
+                        console.log('DIRECT TEST: Test-Daten erstellt, rufe setStandardPosition auf...');
+                        window.smartPositioning.setStandardPosition(testData);
+                        console.log('DIRECT TEST: setStandardPosition aufgerufen');
+                    } else {
+                        console.error('DIRECT TEST: Smart Positioning nicht verfügbar');
+                    }
+                };
+
+            } catch (error) {
+                console.error('INIT ERROR: Fehler bei Smart Positioning Initialisierung:', error);
+                window.smartPositioning = null;
+            }
+
+            console.log('🔧 CandlestickSeries und Smart Positioning erstellt:', candlestickSeries);
 
             // Position Lines Container
             window.positionLines = {};
@@ -401,6 +535,9 @@ async def get_chart():
             window.currentTimeframe = '5m';
             window.timeframeCache = new Map();  // Browser-side caching
             window.isTimeframeChanging = false;  // Prevent double-requests
+
+            // Smart Chart Positioning System - 50 Kerzen + 20% Freiraum
+            window.smartPositioning = null;  // Wird nach Chart-Init initialisiert
 
             // Intelligent Zoom System - Garantiert sichtbare Kerzen beim Auszoomen
             window.intelligentZoom = null;  // Wird nach Daten-Load initialisiert
@@ -461,6 +598,7 @@ async def get_chart():
                 .then(response => response.json())
                 .then(chartData => {
                     console.log('📊 Chart-Daten erhalten:', chartData.data?.length || 0, 'Kerzen');
+                    console.log('DRASTIC: SOFORT nach Chart-Daten Log - 20% Freiraum wird ERZWUNGEN!');
                     if (chartData.data && chartData.data.length > 0) {
                         // Daten sind bereits im korrekten LightweightCharts Format (Unix-Timestamps)
                         const formattedData = chartData.data.map(item => ({
@@ -472,8 +610,60 @@ async def get_chart():
                         }));
 
                         candlestickSeries.setData(formattedData);
-                        chart.timeScale().fitContent();
-                        console.log('✅ NQ-Daten geladen:', formattedData.length, 'Kerzen');
+
+                        // DRASTISCHE SOFORT-LÖSUNG: 20% Freiraum GARANTIERT
+                        console.log('DRASTIC-EXEC: Setze 20% Freiraum SOFORT nach setData()');
+                        const firstTime = formattedData[0].time;
+                        const lastTime = formattedData[formattedData.length - 1].time;
+                        const span = lastTime - firstTime;
+                        const margin = span * 0.25;
+                        chart.timeScale().setVisibleRange({
+                            from: firstTime,
+                            to: lastTime + margin
+                        });
+                        console.log('DRASTIC-EXEC: Freiraum gesetzt von', firstTime, 'bis', lastTime + margin);
+
+                        // FINALE DIREKTE LÖSUNG: 20% Freiraum OHNE Bedingungen
+                        console.log('FINAL: Setze GARANTIERT 20% Freiraum für', formattedData.length, 'Kerzen');
+
+                        if (formattedData.length >= 2) {
+                            const firstTime = formattedData[0].time;
+                            const lastTime = formattedData[formattedData.length - 1].time;
+                            const dataSpan = lastTime - firstTime;
+                            const margin = dataSpan * 0.25; // 25% = 20% der Gesamt-Chart
+
+                            console.log('FINAL: Zeitspanne:', dataSpan, 'Margin:', margin);
+                            console.log('FINAL: Von', firstTime, 'bis', lastTime + margin);
+
+                            chart.timeScale().setVisibleRange({
+                                from: firstTime,
+                                to: lastTime + margin
+                            });
+
+                            console.log('FINAL: Chart-Position GESETZT');
+                        } else {
+                            console.log('FINAL: Zu wenig Daten - verwende fitContent');
+                            chart.timeScale().fitContent();
+                        }
+
+                        // ZUSÄTZLICHER SCHUTZ: Nochmal nach 100ms setzen
+                        setTimeout(() => {
+                            if (formattedData.length >= 2) {
+                                const firstTime = formattedData[0].time;
+                                const lastTime = formattedData[formattedData.length - 1].time;
+                                const dataSpan = lastTime - firstTime;
+                                const margin = dataSpan * 0.25;
+
+                                chart.timeScale().setVisibleRange({
+                                    from: firstTime,
+                                    to: lastTime + margin
+                                });
+
+                                console.log('DELAYED: 20% Freiraum nochmal gesetzt nach 100ms');
+                            }
+                        }, 100);
+
+                        console.log('✅ NQ-Daten geladen:', formattedData.length, 'Kerzen, Smart Positioning angewandt');
 
                         // ZOOM SYSTEM KOMPLETT DEAKTIVIERT für Timeframe-Fix
                         console.log('🚫 Zoom System komplett deaktiviert');
@@ -493,6 +683,43 @@ async def get_chart():
             const wsUrl = `${protocol}//${window.location.host}/ws`;
 
             ws = new WebSocket(wsUrl);
+
+            // TEST: Direkter Smart Positioning Test nach 3 Sekunden
+            setTimeout(() => {
+                console.log('AUTO TEST: Smart Positioning nach 3 Sekunden...');
+                if (window.testSmartPositioning) {
+                    window.testSmartPositioning();
+                } else {
+                    console.error('AUTO TEST: testSmartPositioning Funktion nicht verfügbar');
+                }
+            }, 3000);
+
+            // TEST: API-basierter Test nach 6 Sekunden
+            setTimeout(() => {
+                console.log('API TEST: Smart Positioning mit echten Daten...');
+                if (window.smartPositioning && candlestickSeries) {
+                    try {
+                        // Hole aktuelle Daten von der Chart API
+                        fetch('/api/chart/data')
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.data && data.data.length > 0) {
+                                    console.log('API TEST: Gefunden', data.data.length, 'Kerzen, wende Smart Positioning an');
+                                    window.smartPositioning.setStandardPosition(data.data);
+                                } else {
+                                    console.error('API TEST: Keine Daten erhalten');
+                                }
+                            })
+                            .catch(error => console.error('API TEST Fehler:', error));
+                    } catch (error) {
+                        console.error('API TEST Smart Positioning Fehler:', error);
+                    }
+                } else {
+                    console.warn('API TEST: Smart Positioning oder CandlestickSeries nicht verfügbar');
+                    console.log('API TEST window.smartPositioning:', window.smartPositioning);
+                    console.log('API TEST candlestickSeries:', candlestickSeries);
+                }
+            }, 6000);
 
             ws.onopen = function(event) {
                 console.log('🔗 WebSocket verbunden');
@@ -530,8 +757,29 @@ async def get_chart():
                     const data = message.data.data;
                     if (data && data.length > 0) {
                         candlestickSeries.setData(data);
-                        chart.timeScale().fitContent();
-                        console.log('📊 Initial data loaded:', data.length, 'candles');
+
+                        // NEUE LOGIK: Zeige nur letzten 50 Kerzen mit 80/20 Aufteilung
+                        console.log(`📊 Initial: ${data.length} Kerzen geladen, zeige letzten 50 mit 80/20 Aufteilung`);
+                        document.title = `Chart: ${data.length} Kerzen verfügbar, 50 sichtbar (${message.data.interval})`;
+
+                        // Berechne die letzten 50 Kerzen
+                        const totalCandles = data.length;
+                        const visibleCandles = Math.min(50, totalCandles);
+                        const startIndex = Math.max(0, totalCandles - visibleCandles);
+
+                        const firstVisibleTime = data[startIndex].time;
+                        const lastVisibleTime = data[totalCandles - 1].time;
+                        const visibleSpan = lastVisibleTime - firstVisibleTime;
+
+                        // 20% Freiraum rechts hinzufügen: 50 Kerzen sind 80%, also 20% zusätzlich
+                        const margin = visibleSpan / 4; // visibleSpan / 4 = 20% von den 80%
+
+                        chart.timeScale().setVisibleRange({
+                            from: firstVisibleTime,
+                            to: lastVisibleTime + margin
+                        });
+
+                        console.log(`✅ Standard-Zoom: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
                     }
                     break;
 
@@ -539,8 +787,13 @@ async def get_chart():
                     if (!isInitialized) initChart();
 
                     candlestickSeries.setData(message.data);
-                    chart.timeScale().fitContent();
-                    console.log('📊 Data updated:', message.data.length, 'candles');
+
+                    // Smart Positioning: 50 Kerzen Standard mit 20% Freiraum
+                    if (window.smartPositioning) {
+                        window.smartPositioning.setStandardPosition(message.data);
+                    }
+
+                    console.log('📊 Data updated:', message.data.length, 'candles mit Smart Positioning');
                     break;
 
                 case 'add_candle':
@@ -573,11 +826,8 @@ async def get_chart():
 
                 case 'timeframe_changed':
                     console.log('DEBUG: timeframe_changed message received:', message);
-                    console.log('DEBUG: isInitialized =', isInitialized);
-                    console.log('DEBUG: message.data exists =', !!message.data);
 
                     if (isInitialized && message.data) {
-                        console.log('DEBUG: Processing timeframe change to', message.timeframe);
                         // Chart-Daten für neuen Timeframe setzen
                         const formattedData = message.data.map(item => ({
                             time: item.time,
@@ -587,21 +837,33 @@ async def get_chart():
                             close: parseFloat(item.close)
                         }));
 
-                        console.log('DEBUG: Formatted data:', formattedData.length, 'candles');
                         candlestickSeries.setData(formattedData);
-                        chart.timeScale().fitContent();
+
+                        // NEUE LOGIK: Zeige nur letzten 50 Kerzen mit 80/20 Aufteilung bei TF-Wechsel
+                        console.log(`📊 Timeframe ${message.timeframe}: ${formattedData.length} Kerzen geladen, zeige letzten 50 mit 80/20 Aufteilung`);
+                        document.title = `Chart: ${formattedData.length} Kerzen verfügbar, 50 sichtbar (${message.timeframe})`;
+
+                        // Berechne die letzten 50 Kerzen
+                        const totalCandles = formattedData.length;
+                        const visibleCandles = Math.min(50, totalCandles);
+                        const startIndex = Math.max(0, totalCandles - visibleCandles);
+
+                        const firstVisibleTime = formattedData[startIndex].time;
+                        const lastVisibleTime = formattedData[totalCandles - 1].time;
+                        const visibleSpan = lastVisibleTime - firstVisibleTime;
+
+                        // 20% Freiraum rechts hinzufügen: 50 Kerzen sind 80%, also 20% zusätzlich
+                        const margin = visibleSpan / 4; // visibleSpan / 4 = 20% von den 80%
+
+                        chart.timeScale().setVisibleRange({
+                            from: firstVisibleTime,
+                            to: lastVisibleTime + margin
+                        });
 
                         // Update current timeframe
                         window.currentTimeframe = message.timeframe;
 
-                        // Zoom System Update deaktiviert
-                        // if (window.intelligentZoom) {
-                        //     window.intelligentZoom.updateTimeframe(message.timeframe, formattedData.length);
-                        // }
-
-                        console.log(`📊 Timeframe changed to ${message.timeframe}:`, formattedData.length, 'candles');
-                    } else {
-                        console.log('DEBUG: Timeframe change SKIPPED - isInitialized:', isInitialized, 'hasData:', !!message.data);
+                        console.log(`✅ TF-Wechsel: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
                     }
                     break;
 
@@ -1337,10 +1599,15 @@ async def get_chart():
                     console.log(`Browser Cache Hit für ${timeframe}`);
                     const cachedData = window.timeframeCache.get(cacheKey);
 
-                    // Instant UI update from cache
+                    // Instant UI update from cache mit Smart Positioning
                     updateTimeframeButtons(timeframe);
                     candlestickSeries.setData(cachedData);
-                    chart.timeScale().fitContent();
+
+                    // Smart Positioning: Nach Cache-Hit zurück zu 50-Kerzen Standard
+                    if (window.smartPositioning) {
+                        window.smartPositioning.resetToStandardPosition(cachedData);
+                    }
+
                     window.currentTimeframe = timeframe;
                     window.isTimeframeChanging = false;
                     return;
@@ -1386,9 +1653,14 @@ async def get_chart():
                         window.timeframeCache.delete(firstKey);
                     }
 
-                    // Fast chart update
+                    // Fast chart update mit Smart Positioning
                     candlestickSeries.setData(formattedData);
-                    chart.timeScale().fitContent();
+
+                    // Smart Positioning: Nach Timeframe-Wechsel zurück zu 50-Kerzen Standard
+                    if (window.smartPositioning) {
+                        window.smartPositioning.resetToStandardPosition(formattedData);
+                    }
+
                     window.currentTimeframe = timeframe;
                 } else {
                     console.error('Timeframe-Wechsel fehlgeschlagen:', result.message);
@@ -1628,7 +1900,7 @@ async def get_chart_data():
 async def change_timeframe(request: dict):
     """Ändert den Timeframe und gibt aggregierte Daten zurück - DIREKT AUS CSV"""
     timeframe = request.get('timeframe', '5m')
-    visible_candles = request.get('visible_candles', 200)  # Default 200
+    visible_candles = request.get('visible_candles', 50)  # Default 50 für Standard-Zoom
 
     print(f"=== API CALL DEBUG ===")
     print(f"Timeframe-Wechsel zu: {timeframe} mit {visible_candles} sichtbaren Kerzen")
@@ -1649,9 +1921,10 @@ async def change_timeframe(request: dict):
         # CSV laden
         df = pd.read_csv(csv_path)
 
-        # Neueste N Kerzen nehmen
-        if len(df) > visible_candles:
-            result_df = df.tail(visible_candles)
+        # Lade 200 Kerzen als Puffer (nicht visible_candles)
+        buffer_candles = 200
+        if len(df) > buffer_candles:
+            result_df = df.tail(buffer_candles)
         else:
             result_df = df
 
@@ -1855,7 +2128,11 @@ if __name__ == "__main__":
                     }));
 
                     candlestickSeries.setData(formattedData);
-                    chart.timeScale().fitContent();
+
+                    // Smart Positioning: 50 Kerzen Standard mit 20% Freiraum
+                    if (window.smartPositioning) {
+                        window.smartPositioning.setStandardPosition(formattedData);
+                    }
 
                     updateStatus(`✅ SUCCESS: ${formattedData.length} NQ-Kerzen geladen!`);
                 } else {
@@ -1876,15 +2153,15 @@ if __name__ == "__main__":
         return HTMLResponse(content=html_content)
 
     print("Starting RL Trading Chart Server...")
-    print("Chart: http://localhost:8002")
-    print("Debug: http://localhost:8002/debug")
-    print("WebSocket: ws://localhost:8002/ws")
-    print("API: http://localhost:8002/docs")
+    print("Chart: http://localhost:8003")
+    print("Debug: http://localhost:8003/debug")
+    print("WebSocket: ws://localhost:8003/ws")
+    print("API: http://localhost:8003/docs")
 
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8002,
+        port=8003,
         log_level="info",
         reload=False  # Disable reload for production
     )

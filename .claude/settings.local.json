@@ -53,7 +53,16 @@
       "Bash(do echo \"Testing $tf...\")",
       "Bash(time curl:*)",
       "Bash(dir:*)",
-      "Bash(start debug_zoom_issue.html)"
+      "Bash(start debug_zoom_issue.html)",
+      "Bash(rm:*)",
+      "Bash(start http://localhost:8003)",
+      "Bash(start http://localhost:8003/?v=123)",
+      "Bash(start http://localhost:8003/?v=456)",
+      "Bash(start http://localhost:8003/?refresh=final)",
+      "Bash(start http://localhost:8003/?drastic=NOW)",
+      "Bash(start http://localhost:8003/?WEBSOCKET=FIXED)",
+      "Bash(start http://localhost:8003/?FINAL-TEST=200-KERZEN)",
+      "Bash(start http://localhost:8003/?MATH-FIXED=FINAL)"
     ],
     "deny": [],
     "ask": []
