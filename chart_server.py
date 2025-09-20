@@ -18,39 +18,44 @@ import os
 # Füge src Verzeichnis zum Pfad hinzu
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-# Importiere NQ Data Loader und Timeframe Aggregator
+# Importiere NQ Data Loader und Performance Aggregator
 from data.nq_data_loader import NQDataLoader
-from data.timeframe_aggregator import TimeframeAggregator
+from data.performance_aggregator import get_performance_aggregator
 
 # FastAPI App
 app = FastAPI(title="RL Trading Chart Server", version="1.0.0")
 
-# Globaler NQ Data Loader und Timeframe Aggregator
+# Globaler NQ Data Loader und Performance Aggregator
 nq_loader = NQDataLoader()
-timeframe_aggregator = TimeframeAggregator()
+performance_aggregator = get_performance_aggregator()
 
-# Lade initiale NQ-Daten (letzte 30 Tage)
-print("Lade initiale NQ-1M Daten...")
+# Lade initiale Chart-Daten aus CSV (schneller Startup)
+print("Lade initiale 5m Chart-Daten aus CSV...")
 try:
-    # Verwende 2024 Daten (letzte 30 Tage)
-    data_2024 = nq_loader.load_year(2024)
-    if data_2024 is not None:
-        # Letzte 30 Tage (30 * 24 * 60 = 43200 Minuten)
-        initial_nq_data = data_2024.tail(30 * 24 * 60)
+    import pandas as pd
+    from pathlib import Path
 
-        # Precompute alle Timeframes für bessere Performance
-        print("Starte Precomputing der Timeframes...")
-        timeframe_aggregator.precompute_all_timeframes(initial_nq_data)
+    csv_path = Path("src/data/aggregated/5m/nq-2024.csv")
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        result_df = df.tail(200)  # Letzte 200 Kerzen für initial load
 
-        # Konvertiere zu 5m Chart-Daten als Standard
-        initial_chart_data = timeframe_aggregator.get_aggregated_data(initial_nq_data, '5m')
-        print(f"Geladen: {len(initial_chart_data)} NQ-5M Kerzen als Standard")
+        initial_chart_data = []
+        for _, row in result_df.iterrows():
+            initial_chart_data.append({
+                'time': int(row['time']),
+                'open': float(row['open']),
+                'high': float(row['high']),
+                'low': float(row['low']),
+                'close': float(row['close']),
+                'volume': int(row['volume'])
+            })
+        print(f"ERFOLG: Geladen: {len(initial_chart_data)} 5m Kerzen aus CSV")
     else:
         initial_chart_data = []
-        initial_nq_data = None
-        print("Fallback: Verwende leere Daten")
+        print("FEHLER: CSV nicht gefunden - verwende leere Daten")
 except Exception as e:
-    print(f"Fehler beim Laden der NQ-Daten: {e}")
+    print(f"FEHLER beim CSV-Laden: {e}")
     initial_chart_data = []
 
 # WebSocket Connection Manager
@@ -65,7 +70,7 @@ class ConnectionManager:
             'interval': '5m',  # 5-Minuten Standard
             'last_update': datetime.now().isoformat(),
             'positions': [],
-            'raw_1m_data': initial_nq_data if 'initial_nq_data' in globals() else None  # Speichere Roh-1m-Daten für Aggregation
+            'raw_1m_data': None  # CSV-basiert, kein raw data needed
         }
 
     async def connect(self, websocket: WebSocket):
@@ -87,13 +92,25 @@ class ConnectionManager:
     async def send_personal_message(self, message: dict, websocket: WebSocket):
         """Nachricht an spezifischen Client senden"""
         try:
+            # Erstelle eine serialisierbare Kopie der Daten ohne DataFrame
+            if 'data' in message and isinstance(message['data'], dict):
+                serializable_data = message['data'].copy()
+                # Entferne nicht-serialisierbare DataFrame-Objekte
+                if 'raw_1m_data' in serializable_data:
+                    del serializable_data['raw_1m_data']
+                message = message.copy()
+                message['data'] = serializable_data
+
             await websocket.send_text(json.dumps(message))
         except Exception as e:
             logging.error(f"Error sending message: {e}")
 
     async def broadcast(self, message: dict):
         """Nachricht an alle verbundenen Clients senden"""
+        print(f"Broadcast: {len(self.active_connections)} aktive Verbindungen, Nachricht: {message.get('type', 'unknown')}")
+
         if not self.active_connections:
+            print("WARNUNG: Keine aktiven WebSocket-Verbindungen für Broadcast!")
             return
 
         # Sende parallel an alle Clients
@@ -103,6 +120,7 @@ class ConnectionManager:
 
         # Warte auf alle Sends (mit Error-Handling)
         await asyncio.gather(*tasks, return_exceptions=True)
+        print(f"Broadcast abgeschlossen an {len(self.active_connections)} Clients")
 
     def update_chart_state(self, update_data: dict):
         """Chart-State aktualisieren"""
@@ -164,6 +182,16 @@ async def get_chart():
         .timeframe-btn:hover { background: #3a3a3a; color: #fff; }
         .timeframe-btn.active { background: #089981; color: #fff; font-weight: bold; }
         .timeframe-btn:disabled { background: #1a1a1a; color: #555; cursor: not-allowed; }
+
+        /* Intelligent Zoom Toast Animations */
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
     </style>
 </head>
 <body>
@@ -195,6 +223,132 @@ async def get_chart():
         let isInitialized = false;
 
         // Chart initialisieren
+        // Intelligent Zoom System Class
+        class IntelligentZoomSystem {
+            constructor(chart, candlestickSeries, currentTimeframe = '5m') {
+                this.chart = chart;
+                this.candlestickSeries = candlestickSeries;
+                this.currentTimeframe = currentTimeframe;
+                this.currentCandles = 200; // Aktuelle Anzahl geladener Kerzen
+                this.minVisibleCandles = 50; // Minimum sichtbare Kerzen
+                this.maxVisibleCandles = 2000; // Maximum für Performance
+                this.isLoading = false;
+                this.lastVisibleRange = null;
+
+                this.setupZoomMonitoring();
+            }
+
+            setupZoomMonitoring() {
+                // Überwache Änderungen der sichtbaren Zeitspanne
+                this.chart.timeScale().subscribeVisibleLogicalRangeChange((newVisibleLogicalRange) => {
+                    if (newVisibleLogicalRange === null) return;
+                    this.handleVisibleRangeChange(newVisibleLogicalRange);
+                });
+
+                console.log('🔍 Intelligent Zoom System aktiviert');
+            }
+
+            handleVisibleRangeChange(visibleLogicalRange) {
+                const { from, to } = visibleLogicalRange;
+                const visibleCandleCount = Math.ceil(to - from);
+
+                console.log(`📊 Sichtbare Kerzen: ${visibleCandleCount}, Geladen: ${this.currentCandles}`);
+
+                // Check if we need more candles (user zoomed out)
+                if (this.shouldLoadMoreCandles(visibleCandleCount)) {
+                    this.loadMoreCandles(visibleCandleCount);
+                }
+
+                this.lastVisibleRange = visibleLogicalRange;
+            }
+
+            shouldLoadMoreCandles(visibleCandleCount) {
+                // TEMPORÄR DEAKTIVIERT - Testing Timeframe Fix
+                console.log('🚫 Zoom System temporär deaktiviert für Timeframe-Fix');
+                return false;
+
+                // Original code (auskommentiert):
+                // const visibilityRatio = visibleCandleCount / this.currentCandles;
+                // return visibilityRatio > 0.7 &&
+                //        this.currentCandles < this.maxVisibleCandles &&
+                //        !this.isLoading;
+            }
+
+            async loadMoreCandles(visibleCandleCount) {
+                if (this.isLoading) return;
+
+                this.isLoading = true;
+                console.log('📈 Lade mehr Kerzen für bessere Zoom-Erfahrung...');
+
+                try {
+                    // Berechne wie viele Kerzen wir brauchen
+                    const targetCandles = Math.min(
+                        Math.max(visibleCandleCount * 2.5, this.currentCandles * 1.5),
+                        this.maxVisibleCandles
+                    );
+
+                    // API-Call für mehr Daten
+                    const response = await fetch('/api/chart/change_timeframe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            timeframe: this.currentTimeframe,
+                            visible_candles: Math.ceil(targetCandles)
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.status === 'success') {
+                        // Update Chart mit mehr Daten
+                        this.candlestickSeries.setData(result.data);
+                        this.currentCandles = result.data.length;
+
+                        console.log(`✅ Mehr Kerzen geladen: ${this.currentCandles}`);
+
+                        // Toast-Benachrichtigung
+                        this.showZoomNotification(`🔍 Zoom erweitert: ${this.currentCandles} Kerzen verfügbar`);
+                    }
+                } catch (error) {
+                    console.error('❌ Fehler beim Laden zusätzlicher Kerzen:', error);
+                } finally {
+                    this.isLoading = false;
+                }
+            }
+
+            updateTimeframe(newTimeframe, newCandleCount) {
+                this.currentTimeframe = newTimeframe;
+                this.currentCandles = newCandleCount || this.currentCandles;
+                console.log(`🔄 Timeframe geändert zu: ${newTimeframe} (${this.currentCandles} Kerzen)`);
+            }
+
+            showZoomNotification(message) {
+                // Erstelle Toast-Benachrichtigung
+                const toast = document.createElement('div');
+                toast.textContent = message;
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 80px;
+                    right: 20px;
+                    background: rgba(8, 153, 129, 0.9);
+                    color: white;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    z-index: 10000;
+                    animation: slideIn 0.3s ease-out;
+                `;
+
+                document.body.appendChild(toast);
+
+                // Auto-remove nach 2 Sekunden
+                setTimeout(() => {
+                    toast.style.animation = 'slideOut 0.3s ease-in';
+                    setTimeout(() => toast.remove(), 300);
+                }, 2000);
+            }
+        }
+
         function initChart() {
             console.log('🔧 initChart() aufgerufen');
 
@@ -243,8 +397,13 @@ async def get_chart():
             window.positionBoxMode = false;
             window.currentPositionBox = null;
 
-            // Timeframe State
+            // Timeframe State mit Performance-Optimierung
             window.currentTimeframe = '5m';
+            window.timeframeCache = new Map();  // Browser-side caching
+            window.isTimeframeChanging = false;  // Prevent double-requests
+
+            // Intelligent Zoom System - Garantiert sichtbare Kerzen beim Auszoomen
+            window.intelligentZoom = null;  // Wird nach Daten-Load initialisiert
 
             // Responsive Resize
             window.addEventListener('resize', () => {
@@ -315,6 +474,10 @@ async def get_chart():
                         candlestickSeries.setData(formattedData);
                         chart.timeScale().fitContent();
                         console.log('✅ NQ-Daten geladen:', formattedData.length, 'Kerzen');
+
+                        // ZOOM SYSTEM KOMPLETT DEAKTIVIERT für Timeframe-Fix
+                        console.log('🚫 Zoom System komplett deaktiviert');
+                        window.intelligentZoom = null;
                     } else {
                         console.warn('⚠️ Keine Chart-Daten empfangen');
                     }
@@ -409,7 +572,12 @@ async def get_chart():
                     break;
 
                 case 'timeframe_changed':
+                    console.log('DEBUG: timeframe_changed message received:', message);
+                    console.log('DEBUG: isInitialized =', isInitialized);
+                    console.log('DEBUG: message.data exists =', !!message.data);
+
                     if (isInitialized && message.data) {
+                        console.log('DEBUG: Processing timeframe change to', message.timeframe);
                         // Chart-Daten für neuen Timeframe setzen
                         const formattedData = message.data.map(item => ({
                             time: item.time,
@@ -419,13 +587,21 @@ async def get_chart():
                             close: parseFloat(item.close)
                         }));
 
+                        console.log('DEBUG: Formatted data:', formattedData.length, 'candles');
                         candlestickSeries.setData(formattedData);
                         chart.timeScale().fitContent();
 
                         // Update current timeframe
                         window.currentTimeframe = message.timeframe;
 
+                        // Zoom System Update deaktiviert
+                        // if (window.intelligentZoom) {
+                        //     window.intelligentZoom.updateTimeframe(message.timeframe, formattedData.length);
+                        // }
+
                         console.log(`📊 Timeframe changed to ${message.timeframe}:`, formattedData.length, 'candles');
+                    } else {
+                        console.log('DEBUG: Timeframe change SKIPPED - isInitialized:', isInitialized, 'hasData:', !!message.data);
                     }
                     break;
 
@@ -1144,51 +1320,90 @@ async def get_chart():
         }
 
         // ===== TIMEFRAME FUNCTIONS =====
-        // Timeframe Change Function
+        // High-Performance Timeframe Change Function
         async function changeTimeframe(timeframe) {
-            console.log(`🔄 Wechsle zu Timeframe: ${timeframe}`);
+            // Prevent double-requests
+            if (window.isTimeframeChanging || timeframe === window.currentTimeframe) {
+                return;
+            }
+
+            console.log(`Wechsle zu Timeframe: ${timeframe}`);
+            window.isTimeframeChanging = true;
 
             try {
-                // Update UI sofort (optimistic update)
+                // Check browser cache first
+                const cacheKey = `tf_${timeframe}`;
+                if (window.timeframeCache.has(cacheKey)) {
+                    console.log(`Browser Cache Hit für ${timeframe}`);
+                    const cachedData = window.timeframeCache.get(cacheKey);
+
+                    // Instant UI update from cache
+                    updateTimeframeButtons(timeframe);
+                    candlestickSeries.setData(cachedData);
+                    chart.timeScale().fitContent();
+                    window.currentTimeframe = timeframe;
+                    window.isTimeframeChanging = false;
+                    return;
+                }
+
+                // Optimistic UI update
                 updateTimeframeButtons(timeframe);
+
+                // Performance-optimized API call
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
 
                 const response = await fetch('/api/chart/change_timeframe', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ timeframe: timeframe })
+                    body: JSON.stringify({ timeframe: timeframe }),
+                    signal: controller.signal
                 });
 
+                clearTimeout(timeoutId);
                 const result = await response.json();
 
-                if (result.status === 'success') {
-                    console.log(`✅ Timeframe erfolgreich gewechselt zu ${timeframe}:`, result.count, 'Kerzen');
+                if (result.status === 'success' && result.data && result.data.length > 0) {
+                    console.log(`Timeframe gewechselt zu ${timeframe}: ${result.count} Kerzen`);
 
-                    // Update Chart direkt (falls WebSocket verzögert ist)
-                    if (result.data && result.data.length > 0) {
-                        const formattedData = result.data.map(item => ({
-                            time: item.time,
-                            open: parseFloat(item.open),
-                            high: parseFloat(item.high),
-                            low: parseFloat(item.low),
-                            close: parseFloat(item.close)
-                        }));
+                    // Optimized data formatting - no unnecessary parsing
+                    const formattedData = result.data.map(item => ({
+                        time: item.time,  // Already correct format
+                        open: item.open,  // Already float
+                        high: item.high,
+                        low: item.low,
+                        close: item.close
+                    }));
 
-                        candlestickSeries.setData(formattedData);
-                        chart.timeScale().fitContent();
-                        window.currentTimeframe = timeframe;
+                    // Cache for instant future access
+                    window.timeframeCache.set(cacheKey, formattedData);
+
+                    // Limit cache size to prevent memory issues
+                    if (window.timeframeCache.size > 8) {
+                        const firstKey = window.timeframeCache.keys().next().value;
+                        window.timeframeCache.delete(firstKey);
                     }
+
+                    // Fast chart update
+                    candlestickSeries.setData(formattedData);
+                    chart.timeScale().fitContent();
+                    window.currentTimeframe = timeframe;
                 } else {
-                    console.error('❌ Timeframe-Wechsel fehlgeschlagen:', result.message);
-                    // Revert UI changes
+                    console.error('Timeframe-Wechsel fehlgeschlagen:', result.message);
                     updateTimeframeButtons(window.currentTimeframe);
                 }
 
             } catch (error) {
-                console.error('❌ Fehler beim Timeframe-Wechsel:', error);
-                // Revert UI changes
+                if (error.name === 'AbortError') {
+                    console.warn('Timeframe request timeout');
+                } else {
+                    console.error('Fehler beim Timeframe-Wechsel:', error);
+                }
                 updateTimeframeButtons(window.currentTimeframe);
+            } finally {
+                window.isTimeframeChanging = false;
             }
         }
 
@@ -1411,26 +1626,48 @@ async def get_chart_data():
 
 @app.post("/api/chart/change_timeframe")
 async def change_timeframe(request: dict):
-    """Ändert den Timeframe und gibt aggregierte Daten zurück"""
-    timeframe = request.get('timeframe', '1m')
+    """Ändert den Timeframe und gibt aggregierte Daten zurück - DIREKT AUS CSV"""
+    timeframe = request.get('timeframe', '5m')
+    visible_candles = request.get('visible_candles', 200)  # Default 200
 
-    print(f"Timeframe-Wechsel zu: {timeframe}")
+    print(f"=== API CALL DEBUG ===")
+    print(f"Timeframe-Wechsel zu: {timeframe} mit {visible_candles} sichtbaren Kerzen")
+    print(f"Vollständiger Request: {request}")
+    print(f"Aktive Connections: {len(manager.active_connections)}")
+    print(f"=== END DEBUG ===")
 
     try:
-        # Prüfe ob Roh-1m-Daten verfügbar sind
-        if manager.chart_state['raw_1m_data'] is None:
-            # Lade neue 1m-Daten falls nicht verfügbar
-            data_2024 = nq_loader.load_year(2024)
-            if data_2024 is not None:
-                manager.chart_state['raw_1m_data'] = data_2024.tail(30 * 24 * 60)  # Letzte 30 Tage
-            else:
-                return {"status": "error", "message": "Keine 1m-Daten verfügbar"}
+        import pandas as pd
+        from pathlib import Path
 
-        # Aggregiere Daten für den gewünschten Timeframe
-        aggregated_data = timeframe_aggregator.get_aggregated_data(
-            manager.chart_state['raw_1m_data'],
-            timeframe
-        )
+        # Direkter CSV-Load (Option 2 Struktur)
+        csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
+
+        if not csv_path.exists():
+            return {"status": "error", "message": f"CSV-Datei für {timeframe} nicht gefunden: {csv_path}"}
+
+        # CSV laden
+        df = pd.read_csv(csv_path)
+
+        # Neueste N Kerzen nehmen
+        if len(df) > visible_candles:
+            result_df = df.tail(visible_candles)
+        else:
+            result_df = df
+
+        # In API-Format konvertieren
+        aggregated_data = []
+        for _, row in result_df.iterrows():
+            aggregated_data.append({
+                'time': int(row['time']),
+                'open': float(row['open']),
+                'high': float(row['high']),
+                'low': float(row['low']),
+                'close': float(row['close']),
+                'volume': int(row['volume'])
+            })
+
+        print(f"CSV geladen: {len(aggregated_data)} {timeframe} Kerzen")
 
         # Update Chart State
         manager.chart_state['data'] = aggregated_data
@@ -1440,22 +1677,123 @@ async def change_timeframe(request: dict):
         # Broadcast an alle Clients
         await manager.broadcast({
             'type': 'timeframe_changed',
-            'data': aggregated_data,
             'timeframe': timeframe,
+            'data': aggregated_data,
             'count': len(aggregated_data)
         })
 
-        print(f"Timeframe geaendert zu {timeframe} - {len(aggregated_data)} Kerzen")
+        print(f"Timeframe geändert zu {timeframe} - {len(aggregated_data)} Kerzen")
 
         return {
             "status": "success",
-            "timeframe": timeframe,
             "data": aggregated_data,
-            "count": len(aggregated_data)
+            "count": len(aggregated_data),
+            "timeframe": timeframe,
+            "message": f"Timeframe zu {timeframe} gewechselt"
         }
 
     except Exception as e:
         print(f"Fehler beim Timeframe-Wechsel: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Fehler beim Laden der {timeframe} Daten: {str(e)}"
+        }
+
+@app.post("/api/chart/load_historical")
+async def load_historical_data(request: dict):
+    """Lädt historische Daten für Lazy Loading mit dynamischen visible_candles"""
+    timeframe = request.get('timeframe', '1m')
+    before_timestamp = request.get('before_timestamp')
+    chunk_size = request.get('chunk_size')
+    visible_candles = request.get('visible_candles')  # Vom Frontend
+
+    if before_timestamp is None:
+        return {"status": "error", "message": "before_timestamp ist erforderlich"}
+
+    print(f"Lade historische Daten für {timeframe} vor Timestamp {before_timestamp}")
+
+    try:
+        # Prüfe ob Roh-1m-Daten verfügbar sind
+        if manager.chart_state['raw_1m_data'] is None:
+            # Lade komplettes Jahr 2024 für historische Daten
+            data_2024 = nq_loader.load_year(2024)
+            if data_2024 is not None:
+                manager.chart_state['raw_1m_data'] = data_2024
+            else:
+                return {"status": "error", "message": "Keine 1m-Daten verfügbar"}
+
+        # Lazy Loading: Lade historischen Datenblock
+        historical_data = performance_aggregator.get_historical_data_lazy(
+            manager.chart_state['raw_1m_data'],
+            timeframe,
+            before_timestamp,
+            chunk_size
+        )
+
+        # Berechne Info für Logs mit dynamischen visible_candles
+        if visible_candles:
+            initial_candles = performance_aggregator.calculate_initial_candles(visible_candles)
+            chunk_info = performance_aggregator.calculate_chunk_size(visible_candles)
+        else:
+            initial_candles = performance_aggregator.calculate_initial_candles(timeframe=timeframe)
+            chunk_info = performance_aggregator.calculate_chunk_size(timeframe=timeframe)
+
+        # Broadcast an alle verbundenen Clients
+        await manager.broadcast({
+            'type': 'historical_data_loaded',
+            'data': historical_data,
+            'timeframe': timeframe,
+            'count': len(historical_data),
+            'before_timestamp': before_timestamp,
+            'lazy_loading_info': {
+                'initial_candles': initial_candles,
+                'chunk_size': chunk_info
+            }
+        })
+
+        print(f"Historische Daten geladen für {timeframe}: {len(historical_data)} Kerzen vor {before_timestamp}")
+
+        return {
+            "status": "success",
+            "timeframe": timeframe,
+            "data": historical_data,
+            "count": len(historical_data),
+            "before_timestamp": before_timestamp,
+            "lazy_loading_info": {
+                'initial_candles': initial_candles,
+                'chunk_size': chunk_info
+            }
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Laden historischer Daten: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/chart/lazy_loading_info")
+async def get_lazy_loading_info():
+    """Gibt Lazy Loading Konfiguration zurück"""
+    try:
+        timeframes_info = {}
+        for timeframe in ['1m', '2m', '3m', '5m', '15m', '30m', '1h', '4h']:
+            initial_candles = performance_aggregator.calculate_initial_candles(timeframe)
+            chunk_size = performance_aggregator.calculate_chunk_size(timeframe)
+            timeframes_info[timeframe] = {
+                'initial_candles': initial_candles,
+                'chunk_size': chunk_size,
+                'visible_candles': performance_aggregator.timeframe_config[timeframe]['visible_candles']
+            }
+
+        return {
+            "status": "success",
+            "lazy_loading_multiplier": performance_aggregator.lazy_loading_multiplier,
+            "chunk_size_multiplier": performance_aggregator.chunk_size_multiplier,
+            "timeframes": timeframes_info
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Abrufen der Lazy Loading Info: {e}")
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":

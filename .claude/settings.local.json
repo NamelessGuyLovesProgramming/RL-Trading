@@ -41,7 +41,19 @@
       "Bash(start debug_chart_simple.html)",
       "Bash(start debug_chart_fix.html)",
       "Bash(start http://localhost:8002)",
-      "Bash(del nul)"
+      "Bash(del nul)",
+      "Bash(git push:*)",
+      "Bash(start debug_button_test.html)",
+      "Bash(wmic process where:*)",
+      "Bash(set PYTHONPATH=%cd%)",
+      "Bash(for tf in \"2m\" \"3m\" \"30m\" \"1h\")",
+      "Bash(do echo \"=== Testing $tf ===\")",
+      "Bash(done)",
+      "Bash(for tf in \"1m\" \"5m\" \"15m\" \"1h\")",
+      "Bash(do echo \"Testing $tf...\")",
+      "Bash(time curl:*)",
+      "Bash(dir:*)",
+      "Bash(start debug_zoom_issue.html)"
     ],
     "deny": [],
     "ask": []

@@ -122,7 +122,7 @@ def run_post_start_tests():
 
 def main():
     """Main startup routine"""
-    print("🎯 RL Trading Chart Server - Startup mit Tests")
+    print("RL Trading Chart Server - Startup mit Tests")
     print("=" * 60)
 
     # Step 1: Pre-Start Tests
