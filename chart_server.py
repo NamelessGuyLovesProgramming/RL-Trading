@@ -166,11 +166,24 @@ async def get_chart():
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         body { margin: 0; padding: 0; background: #000; font-family: Arial, sans-serif; }
-        #chart_container { width: 100%; height: calc(100vh - 50px); }
+        #chart_container { width: calc(100% - 35px); height: calc(100vh - 120px); margin-left: 35px; } /* Angepasst für vier Toolbars */
         .status { position: fixed; top: 10px; right: 10px; color: #fff; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 12px; }
         .status.connected { color: #089981; }
         .status.disconnected { color: #f23645; }
-        .toolbar { position: fixed; top: 0; left: 0; right: 0; height: 50px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0 20px; gap: 15px; z-index: 1000; }
+        /* Erste Chart-Toolbar (leer, oberhalb) */
+        .chart-toolbar-1 { position: fixed; top: 0; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
+
+        /* Zweite Chart-Toolbar (Timeframes, darunter) */
+        .chart-toolbar-2 { position: fixed; top: 40px; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
+
+        /* Legacy toolbar class für Kompatibilität */
+        .toolbar { position: fixed; top: 40px; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
+
+        /* Bottom Chart-Toolbar (unten) */
+        .chart-toolbar-bottom { position: fixed; bottom: 0; left: 35px; right: 0; height: 40px; background: #1e1e1e; border-top: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
+
+        /* Left Chart-Sidebar (links) */
+        .chart-sidebar-left { position: fixed; top: 80px; bottom: 40px; left: 0; width: 35px; background: #1e1e1e; border-right: 1px solid #333; display: flex; flex-direction: column; align-items: center; padding: 0; margin: 0; gap: 10px; z-index: 1000; }
         .tool-btn { background: #333; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
         .tool-btn:hover { background: #444; }
         .tool-btn.active { background: #089981; }
@@ -195,7 +208,13 @@ async def get_chart():
     </style>
 </head>
 <body>
-    <div class="toolbar">
+    <!-- Erste Chart-Toolbar (leer) -->
+    <div class="chart-toolbar-1">
+        <!-- Leer - für zukünftige Funktionen -->
+    </div>
+
+    <!-- Zweite Chart-Toolbar (Timeframes) -->
+    <div class="chart-toolbar-2">
         <button id="positionBoxTool" class="tool-btn">📦 Position Box</button>
         <button id="clearAll" class="tool-btn">🗑️</button>
 
@@ -211,6 +230,17 @@ async def get_chart():
             <button id="tf-4h" class="timeframe-btn" data-timeframe="4h">4h</button>
         </div>
     </div>
+
+    <!-- Left Chart-Sidebar (links) -->
+    <div class="chart-sidebar-left">
+        <!-- Leer - für zukünftige Funktionen -->
+    </div>
+
+    <!-- Bottom Chart-Toolbar (unten) -->
+    <div class="chart-toolbar-bottom">
+        <!-- Leer - für zukünftige Funktionen -->
+    </div>
+
     <div id="status" class="status disconnected">Disconnected</div>
     <div id="chart_container"></div>
 
