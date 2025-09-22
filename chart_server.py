@@ -166,7 +166,7 @@ async def get_chart():
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         body { margin: 0; padding: 0; background: #000; font-family: Arial, sans-serif; }
-        #chart_container { width: calc(100% - 35px); height: calc(100vh - 120px); margin-left: 35px; } /* Angepasst für vier Toolbars */
+        #chart_container { width: calc(100% - 35px); margin-left: 35px; position: fixed; top: 80px; bottom: 40px; } /* Angepasst für vier Toolbars */
         .status { position: fixed; top: 10px; right: 10px; color: #fff; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 12px; }
         .status.connected { color: #089981; }
         .status.disconnected { color: #f23645; }
@@ -183,7 +183,17 @@ async def get_chart():
         .chart-toolbar-bottom { position: fixed; bottom: 0; left: 35px; right: 0; height: 40px; background: #1e1e1e; border-top: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
 
         /* Left Chart-Sidebar (links) */
-        .chart-sidebar-left { position: fixed; top: 80px; bottom: 40px; left: 0; width: 35px; background: #1e1e1e; border-right: 1px solid #333; display: flex; flex-direction: column; align-items: center; padding: 0; margin: 0; gap: 10px; z-index: 1000; }
+        .chart-sidebar-left { position: fixed; top: 80px; bottom: 40px; left: 0; width: 35px; background: #1e1e1e; border-right: 1px solid #333; display: flex; flex-direction: column; align-items: center; padding: 8px 0; margin: 0; gap: 10px; z-index: 1000; }
+        .chart-sidebar-left .tool-btn {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
         .tool-btn { background: #333; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
         .tool-btn:hover { background: #444; }
         .tool-btn.active { background: #089981; }
@@ -215,7 +225,6 @@ async def get_chart():
 
     <!-- Zweite Chart-Toolbar (Timeframes) -->
     <div class="chart-toolbar-2">
-        <button id="positionBoxTool" class="tool-btn">📦 Position Box</button>
         <button id="clearAll" class="tool-btn">🗑️</button>
 
         <!-- Timeframe Buttons -->
@@ -233,7 +242,7 @@ async def get_chart():
 
     <!-- Left Chart-Sidebar (links) -->
     <div class="chart-sidebar-left">
-        <!-- Leer - für zukünftige Funktionen -->
+        <button id="positionBoxTool" class="tool-btn" title="Long Position">📈</button>
     </div>
 
     <!-- Bottom Chart-Toolbar (unten) -->
@@ -493,8 +502,8 @@ async def get_chart():
             console.log('🔧 LightweightCharts verfügbar:', typeof LightweightCharts);
 
             chart = LightweightCharts.createChart(chartContainer, {
-                width: window.innerWidth,
-                height: window.innerHeight,
+                width: chartContainer.clientWidth,
+                height: chartContainer.clientHeight,
                 layout: {
                     backgroundColor: '#000000',
                     textColor: '#d9d9d9'
@@ -575,8 +584,8 @@ async def get_chart():
             // Responsive Resize
             window.addEventListener('resize', () => {
                 chart.applyOptions({
-                    width: window.innerWidth,
-                    height: window.innerHeight
+                    width: chartContainer.clientWidth,
+                    height: chartContainer.clientHeight
                 });
             });
 
