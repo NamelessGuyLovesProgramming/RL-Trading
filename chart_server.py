@@ -593,10 +593,16 @@ async def get_chart():
                 console.log('🖱️ Chart geklickt:', param);
                 console.log('📦 Position Box Mode:', window.positionBoxMode);
 
-                if (window.positionBoxMode && param.point && param.time) {
+                if (window.positionBoxMode && param.point) {
                     const price = candlestickSeries.coordinateToPrice(param.point.y);
-                    console.log('📦 Erstelle Position Box bei Preis:', price);
-                    createPositionBox(param.time, price);
+                    const clickX = param.point.x; // ⭐ Click-X-Koordinate erfassen
+                    const clickY = param.point.y; // ⭐ Click-Y-Koordinate erfassen
+
+                    // Verwende param.time falls vorhanden (Kerzen-Klick), sonst aktuelle Zeit (freier Bereich)
+                    const timeForBox = param.time || Math.floor(Date.now() / 1000);
+
+                    console.log('📦 Erstelle Position Box bei Preis:', price, 'an X-Position:', clickX, 'Y-Position:', clickY, 'Zeit:', timeForBox);
+                    createPositionBox(timeForBox, price, clickX, clickY);
                 } else {
                     console.log('❌ Position Box Mode nicht aktiv oder ungültiger Klick');
                 }
@@ -999,7 +1005,7 @@ async def get_chart():
         }
 
         // Position Box Functions - NEUE IMPLEMENTIERUNG MIT ECHTEN RECHTECKEN
-        function createPositionBox(time, entryPrice) {
+        function createPositionBox(time, entryPrice, clickX, clickY) {
             // Entferne alte Position Box falls vorhanden
             if (window.currentPositionBox) {
                 removeCurrentPositionBox();
@@ -1013,6 +1019,7 @@ async def get_chart():
             const takeProfit = entryPrice * (1 + rewardPercent);
 
             console.log('💰 Preise:', {entry: entryPrice, sl: stopLoss, tp: takeProfit});
+            console.log('📍 Click-Position:', clickX, clickY, 'Container Breite:', document.getElementById('chart_container')?.clientWidth);
 
             // Box Dimensionen
             const currentTime = Math.floor(Date.now() / 1000);
@@ -1030,11 +1037,13 @@ async def get_chart():
                 width: boxWidth,
                 isResizing: false,
                 resizeHandle: null,
-                // NEUE X-Koordinaten für horizontale Resize - SEHR KLEIN
-                x1Percent: 0.45,  // Startet bei 45% vom linken Rand
-                x2Percent: 0.55,  // Endet bei 55% der Breite (nur 10% Breite)
-                // DIREKTE Y-KOORDINATEN FÜR SOFORTIGE UPDATES
-                entryY: null,
+                // NEUE X-Koordinaten basierend auf Click-Position
+                clickX: clickX || null,  // Echte Click-X-Koordinate
+                clickY: clickY || null,  // Echte Click-Y-Koordinate
+                x1Percent: clickX ? Math.max(0, (clickX - 60) / document.getElementById('chart_container').clientWidth) : 0.45,  // 60px links vom Klick
+                x2Percent: clickX ? Math.min(1, (clickX + 60) / document.getElementById('chart_container').clientWidth) : 0.55,  // 60px rechts vom Klick
+                // DIREKTE Y-KOORDINATEN FÜR SOFORTIGE UPDATES - Entry Level an exakter Click-Position
+                entryY: clickY || null,  // ⭐ Verwende Click-Y für Entry Level
                 slY: null,
                 tpY: null
             };
@@ -1186,10 +1195,17 @@ async def get_chart():
                 // Zeichne Resize Handles in den Ecken
                 drawResizeHandles(x1, x2, slTop, tpTop, slHeight, tpHeight);
 
+                // Zeichne Mülleimer-Symbol (Delete Button)
+                drawDeleteButton(x2, Math.min(slTop, tpTop));
+
                 // Speichere Koordinaten für Interaktion
                 window.boxCoordinates = {
                     x1, x2, entryY, slY, tpY,
-                    slTop, tpTop, slHeight, tpHeight
+                    slTop, tpTop, slHeight, tpHeight,
+                    // Delete Button Koordinaten
+                    deleteButtonX: x2,
+                    deleteButtonY: Math.min(slTop, tpTop),
+                    deleteButtonSize: 20
                 };
 
                 console.log('✅ Position Box gezeichnet erfolgreich');
@@ -1238,6 +1254,42 @@ async def get_chart():
             ctx.strokeRect(x - size/2, y - size/2, size, size);
         }
 
+        function drawDeleteButton(x, y) {
+            const ctx = window.positionCtx;
+            const size = 20;
+            const iconSize = 12;
+
+            // Button Position: rechts oben an der Box
+            const buttonX = x + 5;
+            const buttonY = y - 25;
+
+            // Zeichne Button Hintergrund (rot mit Transparenz)
+            ctx.fillStyle = 'rgba(242, 54, 69, 0.8)';
+            ctx.strokeStyle = '#f23645';
+            ctx.lineWidth = 2;
+            ctx.fillRect(buttonX - size/2, buttonY - size/2, size, size);
+            ctx.strokeRect(buttonX - size/2, buttonY - size/2, size, size);
+
+            // Zeichne Mülleimer-Symbol (vereinfacht als "X")
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // X-Symbol
+            ctx.moveTo(buttonX - iconSize/2, buttonY - iconSize/2);
+            ctx.lineTo(buttonX + iconSize/2, buttonY + iconSize/2);
+            ctx.moveTo(buttonX + iconSize/2, buttonY - iconSize/2);
+            ctx.lineTo(buttonX - iconSize/2, buttonY + iconSize/2);
+            ctx.stroke();
+
+            // Speichere Button Koordinaten für Click-Detection
+            if (!window.deleteButtonCoords) window.deleteButtonCoords = {};
+            window.deleteButtonCoords = {
+                x: buttonX,
+                y: buttonY,
+                size: size
+            };
+        }
+
         // NEUE MOUSE EVENT HANDLERS FÜR BOX-INTERNE RESIZE
         let isDragging = false;
         let dragHandle = null;
@@ -1246,6 +1298,21 @@ async def get_chart():
             const rect = e.target.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
             const mouseY = e.clientY - rect.top;
+
+            // Check if mouse is over delete button
+            if (window.deleteButtonCoords && window.currentPositionBox) {
+                const btn = window.deleteButtonCoords;
+                const distance = Math.sqrt(
+                    Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                );
+
+                if (distance <= btn.size/2) {
+                    console.log('🗑️ Delete Button geklickt - lösche Position Box');
+                    removeCurrentPositionBox();
+                    e.preventDefault();
+                    return;
+                }
+            }
 
             // Check if mouse is over any resize handle
             for (const [id, handle] of Object.entries(window.resizeHandles || {})) {
