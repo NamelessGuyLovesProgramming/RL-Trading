@@ -22,6 +22,7 @@ sys.path.append(os.path.join(parent_dir, 'src'))
 # Importiere NQ Data Loader und Performance Aggregator
 from data.nq_data_loader import NQDataLoader
 from data.performance_aggregator import get_performance_aggregator
+from services.account_service import account_service
 
 # FastAPI App
 app = FastAPI(title="RL Trading Chart Server", version="1.0.0")
@@ -180,8 +181,29 @@ async def get_chart():
         /* Legacy toolbar class für Kompatibilität */
         .toolbar { position: fixed; top: 40px; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
 
-        /* Bottom Chart-Toolbar (unten) */
-        .chart-toolbar-bottom { position: fixed; bottom: 0; left: 35px; right: 0; height: 40px; background: #1e1e1e; border-top: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
+        /* Bottom Chart-Toolbar (unten) - Split Design */
+        .chart-toolbar-bottom { position: fixed; bottom: 0; left: 35px; right: 0; height: 40px; background: #1e1e1e; border-top: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; z-index: 1000; }
+
+        /* Account Split Container */
+        .account-split-container { display: flex; width: 100%; height: 100%; }
+
+        /* RL-KI Account (Links) */
+        .account-section-ai { flex: 1; display: flex; align-items: center; padding: 0 15px; background: rgba(8, 153, 129, 0.1); border-right: 2px solid #089981; }
+        .account-section-ai .account-label { color: #089981; font-weight: bold; margin-right: 15px; font-size: 11px; }
+        .account-section-ai .account-values { display: flex; gap: 20px; font-size: 11px; color: #ccc; }
+
+        /* Nutzer Account (Rechts) */
+        .account-section-user { flex: 1; display: flex; align-items: center; padding: 0 15px; background: rgba(242, 54, 69, 0.1); }
+        .account-section-user .account-label { color: #f23645; font-weight: bold; margin-right: 15px; font-size: 11px; }
+        .account-section-user .account-values { display: flex; gap: 20px; font-size: 11px; color: #ccc; }
+
+        /* Account Value Styling */
+        .account-value { display: flex; flex-direction: column; align-items: center; }
+        .account-value-label { font-size: 9px; color: #666; margin-bottom: 1px; }
+        .account-value-amount { font-size: 11px; font-weight: bold; }
+        .positive { color: #089981; }
+        .negative { color: #f23645; }
+        .neutral { color: #ccc; }
 
         /* Left Chart-Sidebar (links) */
         .chart-sidebar-left { position: fixed; top: 80px; bottom: 40px; left: 0; width: 35px; background: #1e1e1e; border-right: 1px solid #333; display: flex; flex-direction: column; align-items: center; padding: 8px 0; margin: 0; gap: 10px; z-index: 1000; }
@@ -247,9 +269,47 @@ async def get_chart():
         <button id="shortPositionTool" class="tool-btn" title="Short Position">📉</button>
     </div>
 
-    <!-- Bottom Chart-Toolbar (unten) -->
+    <!-- Bottom Chart-Toolbar (unten) - Split Account Display -->
     <div class="chart-toolbar-bottom">
-        <!-- Leer - für zukünftige Funktionen -->
+        <div class="account-split-container">
+            <!-- RL-KI Account (Links) -->
+            <div class="account-section-ai">
+                <div class="account-label">🤖 RL-KI</div>
+                <div class="account-values">
+                    <div class="account-value">
+                        <div class="account-value-label">Account Balance</div>
+                        <div class="account-value-amount neutral" id="ai-balance">500.000€</div>
+                    </div>
+                    <div class="account-value">
+                        <div class="account-value-label">Realized PnL</div>
+                        <div class="account-value-amount neutral" id="ai-realized">0€</div>
+                    </div>
+                    <div class="account-value">
+                        <div class="account-value-label">Unrealized PnL</div>
+                        <div class="account-value-amount neutral" id="ai-unrealized">0€</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Nutzer Account (Rechts) -->
+            <div class="account-section-user">
+                <div class="account-label">👤 Nutzer</div>
+                <div class="account-values">
+                    <div class="account-value">
+                        <div class="account-value-label">Account Balance</div>
+                        <div class="account-value-amount neutral" id="user-balance">500.000€</div>
+                    </div>
+                    <div class="account-value">
+                        <div class="account-value-label">Realized PnL</div>
+                        <div class="account-value-amount neutral" id="user-realized">0€</div>
+                    </div>
+                    <div class="account-value">
+                        <div class="account-value-label">Unrealized PnL</div>
+                        <div class="account-value-amount neutral" id="user-unrealized">0€</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="status" class="status disconnected">Disconnected</div>
@@ -794,6 +854,58 @@ async def get_chart():
                 console.error('❌ WebSocket Error:', error);
             };
         }
+
+        // Account Update Functions
+        async function loadAccountData() {
+            // Lädt Account-Daten für beide Accounts und aktualisiert die UI
+            try {
+                const response = await fetch('/api/account/status');
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    updateAccountDisplay('ai', data.ai_account);
+                    updateAccountDisplay('user', data.user_account);
+                }
+            } catch (error) {
+                console.error('❌ Fehler beim Laden der Account-Daten:', error);
+            }
+        }
+
+        function updateAccountDisplay(accountType, accountData) {
+            // Aktualisiert die Account-Anzeige in der UI
+            const prefix = accountType === 'ai' ? 'ai' : 'user';
+
+            // Update Balance
+            const balanceEl = document.getElementById(`${prefix}-balance`);
+            if (balanceEl) {
+                balanceEl.textContent = accountData.balance;
+                balanceEl.className = 'account-value-amount neutral';
+            }
+
+            // Update Realized PnL
+            const realizedEl = document.getElementById(`${prefix}-realized`);
+            if (realizedEl) {
+                realizedEl.textContent = accountData.realized_pnl;
+                realizedEl.className = `account-value-amount ${getPnLClass(accountData.realized_pnl)}`;
+            }
+
+            // Update Unrealized PnL
+            const unrealizedEl = document.getElementById(`${prefix}-unrealized`);
+            if (unrealizedEl) {
+                unrealizedEl.textContent = accountData.unrealized_pnl;
+                unrealizedEl.className = `account-value-amount ${getPnLClass(accountData.unrealized_pnl)}`;
+            }
+        }
+
+        function getPnLClass(pnlString) {
+            // Bestimmt CSS-Klasse basierend auf PnL-Wert
+            if (pnlString.includes('+')) return 'positive';
+            if (pnlString.includes('-')) return 'negative';
+            return 'neutral';
+        }
+
+        // Account Data alle 5 Sekunden laden
+        setInterval(loadAccountData, 5000);
 
         // Message Handler
         function handleMessage(message) {
@@ -1914,6 +2026,7 @@ async def get_chart():
                 console.log('✅ LightweightCharts library loaded');
                 initChart();
                 connectWebSocket();
+                loadAccountData(); // Lade initiale Account-Daten
             } else {
                 console.error('❌ LightweightCharts library not loaded');
                 // Fallback: Versuche nochmal nach kurzer Wartezeit
@@ -1922,6 +2035,7 @@ async def get_chart():
                         console.log('✅ LightweightCharts library loaded (delayed)');
                         initChart();
                         connectWebSocket();
+                        loadAccountData(); // Lade initiale Account-Daten
                     } else {
                         console.error('❌ LightweightCharts library failed to load');
                     }
@@ -2248,6 +2362,54 @@ async def get_lazy_loading_info():
 
     except Exception as e:
         print(f"Fehler beim Abrufen der Lazy Loading Info: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/account/status")
+async def get_account_status():
+    """API Endpunkt für Account Status beider Accounts"""
+    try:
+        ai_summary = account_service.get_ai_account_summary()
+        user_summary = account_service.get_user_account_summary()
+
+        return {
+            "status": "success",
+            "ai_account": ai_summary,
+            "user_account": user_summary
+        }
+    except Exception as e:
+        print(f"Fehler beim Abrufen des Account Status: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/account/update_ai_pnl")
+async def update_ai_pnl(pnl_data: dict):
+    """API Endpunkt für KI PnL Updates"""
+    try:
+        unrealized_pnl = pnl_data.get("unrealized_pnl", 0.0)
+        account_service.update_ai_position(unrealized_pnl)
+
+        return {
+            "status": "success",
+            "message": "KI PnL aktualisiert",
+            "ai_account": account_service.get_ai_account_summary()
+        }
+    except Exception as e:
+        print(f"Fehler beim Aktualisieren der KI PnL: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/account/update_user_pnl")
+async def update_user_pnl(pnl_data: dict):
+    """API Endpunkt für Nutzer PnL Updates"""
+    try:
+        unrealized_pnl = pnl_data.get("unrealized_pnl", 0.0)
+        account_service.update_user_position(unrealized_pnl)
+
+        return {
+            "status": "success",
+            "message": "Nutzer PnL aktualisiert",
+            "user_account": account_service.get_user_account_summary()
+        }
+    except Exception as e:
+        print(f"Fehler beim Aktualisieren der Nutzer PnL: {e}")
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
