@@ -15,8 +15,9 @@ import logging
 import sys
 import os
 
-# Füge src Verzeichnis zum Pfad hinzu
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+# Füge src Verzeichnis zum Pfad hinzu (ein Verzeichnis höher)
+parent_dir = os.path.dirname(os.path.dirname(__file__))
+sys.path.append(os.path.join(parent_dir, 'src'))
 
 # Importiere NQ Data Loader und Performance Aggregator
 from data.nq_data_loader import NQDataLoader
