@@ -62,7 +62,11 @@
       "Bash(start http://localhost:8003/?drastic=NOW)",
       "Bash(start http://localhost:8003/?WEBSOCKET=FIXED)",
       "Bash(start http://localhost:8003/?FINAL-TEST=200-KERZEN)",
-      "Bash(start http://localhost:8003/?MATH-FIXED=FINAL)"
+      "Bash(start http://localhost:8003/?MATH-FIXED=FINAL)",
+      "Read(//c/Users/vgude/Desktop/**)",
+      "Bash(start http://localhost:8003/?FINAL-SHORT-POSITION-TEST=v123456789)",
+      "Bash(start http://localhost:8003/?NEW-SHORT-POSITION-TOOL=active)",
+      "Bash(copy chart_server.py srcchart_server.py)"
     ],
     "deny": [],
     "ask": []
