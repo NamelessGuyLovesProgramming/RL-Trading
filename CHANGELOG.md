@@ -6,6 +6,93 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/) 
 
 ## [Unreleased]
 
+### 2025-09-23 - Debug Menu Implementation & Chart Date Filtering
+
+#### Debug Menu - Upper Toolbar Integration
+- [ADDED] Vollständiges Debug Menu im oberen Toolbar (chart-toolbar-1)
+  - ⏭️ Skip Button für +1 Minute Navigation mit intelligenter Timeframe-Aggregation
+  - ▶️/⏸️ Play/Pause Button für automatisches Vorspulen mit linear einstellbarer Geschwindigkeit
+  - 🎛️ Speed Slider (1x-15x) für präzise Geschwindigkeitskontrolle im Play-Modus
+  - 📊 Timeframe Selector (1m, 5m, 15m, 30m, 1h) mit Timepoint-erhaltender Umschaltung
+- [ENHANCED] CSS-Integration für zentrierte Debug-Controls
+  - Flexbox-Layout mit `justify-content: center` für perfekte Zentrierung
+  - Konsistente Styling mit hover-Effekten und responsive Design
+  - Debug-Controls immer sichtbar (kein Toggle erforderlich)
+- [IMPLEMENTED] TimeframeAggregator Klasse für intelligente Kerzen-Logik
+  - Smart Candle Aggregation: 1min Skip erzeugt timeframe-abhängige Kerzen
+  - Incomplete Candle Handling mit visueller Kennzeichnung (weiße Umrandung)
+  - Timeframe-Switching erhält aktuelle Zeitposition und zeigt granularere Daten
+- [ADDED] DebugController mit FastAPI Backend-Integration
+  - 5 REST-API Endpoints für Skip, Timeframe, Speed, Play-Toggle, State
+  - Mock Candle Generation mit realistischen Preisbewegungen
+  - Auto-Play Funktionalität mit geschwindigkeitsabhängigen Delays
+  - WebSocket Broadcasting für Echtzeit-Chart-Updates
+
+#### Chart Data Filtering - December 30th Restriction
+- [FIXED] Chart zeigt jetzt korrekt nur Daten bis 30. Dezember 2024
+  - CSV-Datenfilterung: `df['datetime'] < pd.Timestamp('2024-12-31 00:00:00')`
+  - Alle December 31st Daten werden aus initial_chart_data ausgeschlossen
+  - Debug-Controller Startzeit auf 30. Dezember 2024, 16:55 eingestellt
+- [IMPROVED] Data Loading Performance mit pandas DateTime-Filtering
+  - Intelligente Zeitbereich-Filterung vor Datenverarbeitung
+  - Konsistente Datengrundlage für Debug- und Live-Modi
+  - Optimierte CSV-Verarbeitung mit 200-Kerzen Puffer nach Filterung
+
+#### FastAPI Backend Enhancements
+- [ADDED] Comprehensive Debug API mit 5 Endpoints
+  - `POST /api/debug/skip` - Skip +1 Minute mit Timeframe-Aggregation
+  - `POST /api/debug/set_timeframe/{timeframe}` - Timeframe-Switching
+  - `POST /api/debug/set_speed` - Speed Control (1x-15x linear)
+  - `POST /api/debug/toggle_play` - Play/Pause Toggle
+  - `GET /api/debug/state` - Current Debug State
+- [FIXED] Import-Errors behoben für vollständige API-Funktionalität
+  - `from datetime import datetime, timedelta` hinzugefügt
+  - `import random` für Mock-Daten-Generierung hinzugefügt
+  - Alle Debug-API-Calls funktionieren fehlerfrei
+- [ENHANCED] WebSocket Error Handling und JSON-Serialisierung
+  - Robuste WebSocket-Übertragung ohne DataFrame-Objekte
+  - Error-Recovery bei WebSocket-Verbindungsabbrüchen
+  - Clean JSON-Format für alle API-Responses
+
+#### JavaScript Frontend Integration
+- [ADDED] Comprehensive Event Handler System für Debug-Controls
+  - Skip Button: Fetch API mit /api/debug/skip Integration
+  - Play/Pause Button: Toggle-Funktionalität mit visueller State-Anzeige
+  - Speed Slider: Real-time Speed Display und API-Synchronisation
+  - Timeframe Selector: Nahtlose Timeframe-Umschaltung ohne Chart-Reset
+- [IMPLEMENTED] Auto-Skip Functionality mit rekursiver setTimeout-Logic
+  - Geschwindigkeitsabhängige Delays: `delay = 2000 / speed` für 1x-15x Range
+  - Play-State Management mit Start/Stop-Funktionalität
+  - Automatic Skip-Calls während Play-Modus aktiv
+- [ENHANCED] Chart Update Mechanism für Live-Debugging
+  - WebSocket-basierte Chart-Updates ohne Page-Refresh
+  - Candlestick-Series Updates mit LightweightCharts API
+  - Visual Feedback für incomplete Candles (weiße Umrandung)
+
+#### Testing & Quality Assurance
+- [ADDED] Umfassende Test-Suite für Debug-Funktionalität
+  - `tests/test_weekday_localization.py` - Deutsche Wochentag-Tests
+  - Tests für TimeframeAggregator Logik und Edge Cases
+  - API-Endpoint Testing für alle Debug-Funktionen
+  - Chart-Integration Tests für Frontend-Backend-Kommunikation
+- [VALIDATED] Cross-Browser Compatibility für Debug-Controls
+  - Konsistente Darstellung in Chrome, Firefox, Edge
+  - Responsive Design für verschiedene Bildschirmgrößen
+  - Touch-kompatible Controls für Tablet-Nutzung
+
+#### Technical Implementation Details
+- **Problem gelöst:** Chart zeigte December 31st statt gewünschtem December 30th
+- **Root Cause:** CSV-Daten enthielten December 31st Einträge
+- **Lösung:** pandas DateTime-Filtering vor Datenverarbeitung
+  - Cutoff-Date auf 2024-12-31 00:00:00 gesetzt
+  - Nur Daten vor diesem Zeitpunkt werden geladen
+  - Debug-Controller synchronisiert mit gefilterten Daten
+- **User Experience:** Debug-Menu permanent sichtbar und voll funktionsfähig
+- **Performance:** Optimierte API-Calls mit 200ms WebSocket-Polling
+- **Data Consistency:** Einheitliche Datengrundlage für alle Modi
+
+## [Unreleased]
+
 ### 2025-09-20 - Four-Toolbar Layout System
 
 #### Multi-Toolbar UI - Vollständige Chart-Umgebung

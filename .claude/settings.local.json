@@ -69,7 +69,17 @@
       "Bash(copy chart_server.py srcchart_server.py)",
       "Bash(set PYTHONPATH=%cd%/src)",
       "Bash(tree:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(start http://localhost:8003/?WEEKDAY_UPDATE=v2)",
+      "Bash(start http://localhost:8003/?WOCHENTAG_TEST=final)",
+      "Bash(start msedge.exe:*)",
+      "Bash(start http://localhost:8003/?WEEKDAY_TEST=v3)",
+      "Bash(start http://localhost:8003/?CROSSHAIR_TEST=v1)",
+      "Bash(git restore:*)",
+      "Bash(start test_chart.html)",
+      "Bash(start test_debug.html)",
+      "Bash(git --version)",
+      "Bash(git pull:*)"
     ],
     "deny": [],
     "ask": []

@@ -3,14 +3,15 @@ FastAPI Chart Server für RL Trading
 Realtime Chart-Updates ohne Streamlit-Limitations
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 import json
 import asyncio
 from typing import Dict, List, Any
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
 import logging
 import sys
 import os
@@ -19,46 +20,47 @@ import os
 parent_dir = os.path.dirname(os.path.dirname(__file__))
 sys.path.append(os.path.join(parent_dir, 'src'))
 
-# Importiere NQ Data Loader und Performance Aggregator
-from data.nq_data_loader import NQDataLoader
-from data.performance_aggregator import get_performance_aggregator
-from services.account_service import account_service
-
-# FastAPI App
+# FastAPI App (Importiere Module später um Startup-Deadlock zu vermeiden)
 app = FastAPI(title="RL Trading Chart Server", version="1.0.0")
 
-# Globaler NQ Data Loader und Performance Aggregator
-nq_loader = NQDataLoader()
-performance_aggregator = get_performance_aggregator()
+# Globale Variablen (werden nach Startup initialisiert)
+nq_loader = None
+performance_aggregator = None
+account_service = None
 
 # Lade initiale Chart-Daten aus CSV (schneller Startup)
 print("Lade initiale 5m Chart-Daten aus CSV...")
+initial_chart_data = []
+
 try:
     import pandas as pd
     from pathlib import Path
 
     csv_path = Path("src/data/aggregated/5m/nq-2024.csv")
     if csv_path.exists():
-        df = pd.read_csv(csv_path)
-        result_df = df.tail(200)  # Letzte 200 Kerzen als Puffer
+        print(f"CSV gefunden: {csv_path}")
 
-        initial_chart_data = []
-        for _, row in result_df.iterrows():
+        # Direkt die letzten 200 Zeilen lesen (ohne komplexe Filter)
+        df = pd.read_csv(csv_path).tail(200)
+        print(f"CSV gelesen: {len(df)} Zeilen")
+
+        # Konvertiere zu Chart-Format
+        for _, row in df.iterrows():
             initial_chart_data.append({
-                'time': int(row['time']),
+                'time': int(row['time']),  # Unix Timestamp für TradingView
                 'open': float(row['open']),
                 'high': float(row['high']),
                 'low': float(row['low']),
                 'close': float(row['close']),
                 'volume': int(row['volume'])
             })
-        print(f"ERFOLG: Geladen: {len(initial_chart_data)} 5m Kerzen aus CSV")
+        print(f"ERFOLG: {len(initial_chart_data)} NQ-Kerzen geladen!")
     else:
-        initial_chart_data = []
-        print("FEHLER: CSV nicht gefunden - verwende leere Daten")
+        print(f"FEHLER: CSV nicht gefunden: {csv_path}")
 except Exception as e:
     print(f"FEHLER beim CSV-Laden: {e}")
-    initial_chart_data = []
+    import traceback
+    traceback.print_exc()
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -153,8 +155,282 @@ class ConnectionManager:
 
         self.chart_state['last_update'] = datetime.now().isoformat()
 
-# Global Connection Manager
+# Timeframe Aggregator für intelligente Kerzen-Logik
+class TimeframeAggregator:
+    """Intelligente Kerzen-Logik für verschiedene Timeframes"""
+
+    def __init__(self):
+        # Timeframe-Definitionen in Minuten
+        self.timeframes = {
+            '1m': 1,
+            '5m': 5,
+            '15m': 15,
+            '30m': 30,
+            '1h': 60
+        }
+
+        # Aktuelle unvollständige Kerzen pro Timeframe
+        self.incomplete_candles = {}
+
+        # Letzte vollständige Kerze für jeden Timeframe
+        self.last_complete_candles = {}
+
+    def add_minute_to_timeframe(self, current_time: datetime, timeframe: str, last_candle: dict) -> tuple:
+        """
+        Fügt eine Minute zu einem Timeframe hinzu und gibt zurück:
+        - neue_kerze: dict mit neuer Kerze oder None
+        - incomplete_data: dict mit unvollständiger Kerze oder None
+        - is_complete: bool ob Kerze vollständig ist
+        """
+        tf_minutes = self.timeframes.get(timeframe, 1)
+        new_time = current_time + timedelta(minutes=1)
+
+        # Berechne Start-Zeit für aktuelle Timeframe-Periode
+        if timeframe == '1m':
+            period_start = new_time.replace(second=0, microsecond=0)
+        elif timeframe == '5m':
+            period_start = new_time.replace(minute=(new_time.minute // 5) * 5, second=0, microsecond=0)
+        elif timeframe == '15m':
+            period_start = new_time.replace(minute=(new_time.minute // 15) * 15, second=0, microsecond=0)
+        elif timeframe == '30m':
+            period_start = new_time.replace(minute=(new_time.minute // 30) * 30, second=0, microsecond=0)
+        elif timeframe == '1h':
+            period_start = new_time.replace(minute=0, second=0, microsecond=0)
+        else:
+            period_start = new_time.replace(second=0, microsecond=0)
+
+        # Generiere Mock-Preis-Bewegung basierend auf letzter Kerze
+        last_close = last_candle.get('close', 18500)
+        price_change = random.uniform(-20, 20)  # ±20 Punkte Bewegung
+        new_price = last_close + price_change
+
+        # Prüfe ob wir eine neue Periode beginnen
+        key = f"{timeframe}_{period_start.isoformat()}"
+
+        if key not in self.incomplete_candles:
+            # Neue Periode beginnt
+            self.incomplete_candles[key] = {
+                'time': int(period_start.timestamp()),
+                'open': new_price,
+                'high': new_price,
+                'low': new_price,
+                'close': new_price,
+                'period_start': period_start,
+                'minutes_elapsed': 1,
+                'timeframe': timeframe,
+                'is_complete': False
+            }
+        else:
+            # Bestehende Periode fortsetzen
+            candle = self.incomplete_candles[key]
+            candle['high'] = max(candle['high'], new_price)
+            candle['low'] = min(candle['low'], new_price)
+            candle['close'] = new_price
+            candle['minutes_elapsed'] += 1
+
+        current_candle = self.incomplete_candles[key]
+
+        # Prüfe ob Periode vollständig ist
+        if current_candle['minutes_elapsed'] >= tf_minutes:
+            # Kerze ist vollständig
+            complete_candle = current_candle.copy()
+            complete_candle['is_complete'] = True
+
+            # Entferne aus incomplete und speichere als last_complete
+            del self.incomplete_candles[key]
+            self.last_complete_candles[timeframe] = complete_candle
+
+            return complete_candle, None, True
+        else:
+            # Kerze ist noch unvollständig
+            return None, current_candle, False
+
+    def get_incomplete_candle(self, timeframe: str) -> dict:
+        """Gibt die aktuelle unvollständige Kerze für einen Timeframe zurück"""
+        for key, candle in self.incomplete_candles.items():
+            if candle['timeframe'] == timeframe:
+                return candle
+        return None
+
+    def get_all_incomplete_candles(self) -> dict:
+        """Gibt alle unvollständigen Kerzen zurück, gruppiert nach Timeframe"""
+        result = {}
+        for key, candle in self.incomplete_candles.items():
+            tf = candle['timeframe']
+            if tf not in result:
+                result[tf] = []
+            result[tf].append(candle)
+        return result
+
+# Debug Controller für Debug-Funktionalität
+class DebugController:
+    """Verwaltet Debug-Funktionalität mit intelligenter Timeframe-Aggregation"""
+
+    def __init__(self):
+        self.current_time = None  # Wird beim ersten Skip gesetzt
+        self.timeframe = "5m"
+        self.play_mode = False
+        self.speed = 2  # Linear 1-15
+
+        # TimeframeAggregator für intelligente Kerzen-Logik
+        self.aggregator = TimeframeAggregator()
+
+        # Initialisiere mit aktuellstem Zeitpunkt aus CSV-Daten
+        if initial_chart_data:
+            # Hole letzten Zeitpunkt aus den initialen Daten
+            last_candle = initial_chart_data[-1]
+            # Setze Debug-Zeit auf 30. Dezember 2024, 16:55 (1 Tag vor den CSV-Daten)
+            self.current_time = datetime(2024, 12, 30, 16, 55, 0)
+            print(f"DEBUG INIT: Startzeit gesetzt auf {self.current_time} (30. Dezember)")
+
+    def skip_minute(self):
+        """Skip +1 Minute mit intelligenter Timeframe-Aggregation"""
+        if not self.current_time:
+            # Fallback: Verwende aktuellste Zeit aus Chart-Daten
+            if initial_chart_data:
+                last_candle = initial_chart_data[-1]
+                self.current_time = datetime.fromtimestamp(last_candle['time'])
+            else:
+                self.current_time = datetime.now()
+
+        # +1 Minute
+        self.current_time += timedelta(minutes=1)
+
+        print(f"DEBUG SKIP: Neue Zeit: {self.current_time} (Timeframe: {self.timeframe})")
+
+        # Verwende TimeframeAggregator für intelligente Kerzen-Logik
+        if initial_chart_data:
+            last_candle = initial_chart_data[-1]
+        else:
+            last_candle = {'close': 18500}  # Fallback
+
+        # Nutze Aggregator für +1 Minute Skip
+        complete_candle, incomplete_candle, is_complete = self.aggregator.add_minute_to_timeframe(
+            self.current_time - timedelta(minutes=1),  # Aktuelle Zeit vor dem Skip
+            self.timeframe,
+            last_candle
+        )
+
+        if is_complete:
+            # Vollständige Kerze - zum Chart hinzufügen
+            print(f"DEBUG: Vollständige {self.timeframe} Kerze generiert: {complete_candle['time']}")
+            return {
+                'type': 'complete_candle',
+                'candle': complete_candle,
+                'timeframe': self.timeframe
+            }
+        else:
+            # Unvollständige Kerze - mit weißem Rand markieren
+            print(f"DEBUG: Unvollständige {self.timeframe} Kerze: {incomplete_candle['minutes_elapsed']}/{self.aggregator.timeframes[self.timeframe]} min")
+            return {
+                'type': 'incomplete_candle',
+                'candle': incomplete_candle,
+                'timeframe': self.timeframe
+            }
+
+    def set_timeframe(self, timeframe):
+        """Ändert den Timeframe und behält Zeitpunkt bei"""
+        self.timeframe = timeframe
+        print(f"DEBUG TIMEFRAME: Gewechselt zu {timeframe}")
+
+    def set_speed(self, speed):
+        """Setzt die Play-Geschwindigkeit (1-15)"""
+        self.speed = max(1, min(15, speed))
+        print(f"DEBUG SPEED: Geschwindigkeit auf {self.speed}x gesetzt")
+
+    def toggle_play_mode(self):
+        """Toggle Play/Pause Modus"""
+        self.play_mode = not self.play_mode
+        print(f"DEBUG PLAY: Play-Modus {'aktiviert' if self.play_mode else 'deaktiviert'}")
+        return self.play_mode
+
+    def _generate_next_candle(self):
+        """Generiert nächste Kerze basierend auf aktuellem Timeframe"""
+        # Einfache Mock-Kerze für jetzt - wird später durch echte Aggregations-Logik ersetzt
+        timestamp = int(self.current_time.timestamp())
+
+        # Basis-Preis aus letzter Kerze wenn verfügbar
+        base_price = 18000  # NQ Standard-Preis
+        if initial_chart_data:
+            base_price = initial_chart_data[-1]['close']
+
+        # Simuliere leichte Preisbewegung (+/- 0.1%)
+        import random
+        price_change = random.uniform(-0.001, 0.001)
+        new_price = base_price * (1 + price_change)
+
+        return {
+            'time': timestamp,
+            'open': base_price,
+            'high': max(base_price, new_price) + random.uniform(0, base_price * 0.0005),
+            'low': min(base_price, new_price) - random.uniform(0, base_price * 0.0005),
+            'close': new_price,
+            'volume': random.randint(1000, 5000)
+        }
+
+    def get_state(self):
+        """Gibt aktuellen Debug-Status zurück"""
+        return {
+            'current_time': self.current_time.isoformat() if self.current_time else None,
+            'timeframe': self.timeframe,
+            'play_mode': self.play_mode,
+            'speed': self.speed,
+            'incomplete_candles': len(self.aggregator.incomplete_candles),
+            'aggregator_state': self.aggregator.get_all_incomplete_candles()
+        }
+
+# Global Connection Manager und Debug Controller
 manager = ConnectionManager()
+debug_controller = DebugController()
+
+# Background Task für Auto-Play Modus
+async def auto_play_loop():
+    """Background-Task für kontinuierliches Skip im Play-Modus"""
+    while True:
+        if debug_controller.play_mode:
+            try:
+                # Berechne Delay basierend auf Speed (1x-15x)
+                # Speed 1 = 1000ms, Speed 15 = 67ms (linear)
+                delay = max(1000 / debug_controller.speed, 67)  # Minimum 67ms
+
+                # Skip +1 Minute
+                result = debug_controller.skip_minute()
+
+                # Extrahiere Kerze aus dem Ergebnis
+                if result.get('type') == 'complete_candle':
+                    new_candle = result['candle']
+                    # Neue vollständige Kerze zu Chart-Daten hinzufügen
+                    manager.chart_state['data'].append(new_candle)
+                else:
+                    # Incomplete Kerze - markiere als solche
+                    new_candle = result['candle']
+                    new_candle['incomplete'] = True
+
+                # WebSocket-Update an alle Clients
+                await manager.broadcast({
+                    'type': 'auto_play_skip',
+                    'candle': new_candle,
+                    'debug_state': debug_controller.get_state()
+                })
+
+                print(f"AUTO-PLAY: Skip +1min (Speed {debug_controller.speed}x, Delay {delay:.0f}ms)")
+
+                # Warte basierend auf Speed
+                await asyncio.sleep(delay / 1000.0)
+
+            except Exception as e:
+                print(f"AUTO-PLAY FEHLER: {e}")
+                await asyncio.sleep(1)  # Fehler-Fallback
+        else:
+            # Wenn Play-Mode aus ist, warte kurz und prüfe erneut
+            await asyncio.sleep(0.1)
+
+# Startup Event - Auto-Play Background Task starten
+@app.on_event("startup")
+async def startup_event():
+    """App Startup - Starte Auto-Play Background Task"""
+    print("Chart Server startet - Initialisiere Auto-Play Task")
+    asyncio.create_task(auto_play_loop())
 
 @app.get("/")
 async def get_chart():
@@ -172,8 +448,8 @@ async def get_chart():
         .status { position: fixed; top: 10px; right: 10px; color: #fff; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 12px; }
         .status.connected { color: #089981; }
         .status.disconnected { color: #f23645; }
-        /* Erste Chart-Toolbar (leer, oberhalb) */
-        .chart-toolbar-1 { position: fixed; top: 0; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
+        /* Erste Chart-Toolbar (Debug-Controls, oberhalb) */
+        .chart-toolbar-1 { position: fixed; top: 0; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
 
         /* Zweite Chart-Toolbar (Timeframes, darunter) */
         .chart-toolbar-2 { position: fixed; top: 40px; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
@@ -238,12 +514,106 @@ async def get_chart():
             from { transform: translateX(0); opacity: 1; }
             to { transform: translateX(100%); opacity: 0; }
         }
+
+        /* Debug-Controls Styling */
+        .debug-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px;
+            justify-content: center;
+        }
+
+        .debug-btn {
+            background: #2a2a2a;
+            border: 1px solid #404040;
+            color: #ffffff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .debug-btn:hover {
+            background: #3a3a3a;
+            border-color: #505050;
+        }
+
+        .debug-btn:active {
+            background: #1a1a1a;
+            transform: scale(0.95);
+        }
+
+        .debug-slider {
+            width: 80px;
+            height: 20px;
+            -webkit-appearance: none;
+            background: #404040;
+            border-radius: 10px;
+            outline: none;
+        }
+
+        .debug-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #089981;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .debug-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #089981;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+
+        .debug-speed {
+            color: #089981;
+            font-weight: bold;
+            font-size: 12px;
+            min-width: 24px;
+            text-align: center;
+        }
+
+        .debug-timeframe {
+            background: #2a2a2a;
+            border: 1px solid #404040;
+            color: #ffffff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .debug-timeframe:focus {
+            outline: none;
+            border-color: #089981;
+        }
     </style>
 </head>
 <body>
-    <!-- Erste Chart-Toolbar (leer) -->
+    <!-- Erste Chart-Toolbar (Debug-Controls) -->
     <div class="chart-toolbar-1">
-        <!-- Leer - für zukünftige Funktionen -->
+        <!-- Debug-Controls -->
+        <div class="debug-controls">
+            <button id="skipBtn" class="debug-btn" title="Skip +1min">⏭️</button>
+            <button id="playPauseBtn" class="debug-btn" title="Play/Pause">▶️</button>
+            <input type="range" id="speedSlider" class="debug-slider" min="1" max="15" value="2" title="Speed Control">
+            <span id="speedDisplay" class="debug-speed">2x</span>
+            <select id="timeframeSelector" class="debug-timeframe" title="Timeframe">
+                <option value="1m">1m</option>
+                <option value="5m" selected>5m</option>
+                <option value="15m">15m</option>
+                <option value="30m">30m</option>
+                <option value="1h">1h</option>
+            </select>
+        </div>
     </div>
 
     <!-- Zweite Chart-Toolbar (Timeframes) -->
@@ -317,6 +687,28 @@ async def get_chart():
 
     <script>
         console.log('🚀 RL Trading Chart - FastAPI Edition');
+
+        // Server-side Logging Function für Debug-Ausgaben
+        function serverLog(message, data = null) {
+            const logData = {
+                message: message,
+                timestamp: new Date().toISOString(),
+                data: data
+            };
+
+            // Console ausgeben für Browser
+            console.log('📤 SERVER LOG:', message, data);
+
+            // An Server senden für Terminal-Ausgabe
+            fetch('/api/debug/log', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(logData)
+            }).catch(e => console.warn('Server log failed:', e));
+        }
+
+        // Erster Test-Log
+        serverLog('🚀 JavaScript-Execution gestartet');
 
         let chart;
         let candlestickSeries;
@@ -594,6 +986,9 @@ async def get_chart():
             try {
                 window.smartPositioning = new SmartChartPositioning(chart, candlestickSeries);
                 console.log('INIT: Smart Positioning System initialisiert');
+
+                // Chart-Daten sofort laden
+                loadInitialData();
 
                 // SOFORTIGER TEST der Smart Positioning
                 window.testSmartPositioning = function() {
@@ -961,6 +1356,17 @@ async def get_chart():
                     if (isInitialized && message.candle) {
                         candlestickSeries.update(message.candle);
                         console.log('➡️ Candle added:', message.candle);
+                    }
+                    break;
+
+                case 'debug_skip':
+                    // Debug Skip: Direkte Chart-Update ohne Smart Positioning System
+                    if (isInitialized && message.candle) {
+                        candlestickSeries.update(message.candle);
+                        console.log('⏭️ Debug Skip: Neue Kerze hinzugefügt:', message.candle);
+                        console.log('📊 Result Type:', message.result_type);
+                    } else {
+                        console.log('❌ Debug Skip fehlgeschlagen: Chart nicht initialisiert oder fehlende Kerze');
                     }
                     break;
 
@@ -1977,14 +2383,111 @@ async def get_chart():
             });
         }
 
+        // ============ DEBUG CONTROLS EVENT HANDLERS ============
+        // WICHTIG: Funktionen MÜSSEN vor DOMContentLoaded definiert werden!
+
+        // Debug Skip Button Handler
+        function handleDebugSkip() {
+            console.log('🚀 DEBUG SKIP: +1 Minute - Button clicked!');
+            serverLog('🔧 handleDebugSkip called');
+
+            fetch('/api/debug/skip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Debug Skip Response:', data);
+                serverLog('✅ Debug Skip successful', data);
+            })
+            .catch(error => {
+                console.error('❌ Debug Skip Error:', error);
+                serverLog('❌ Debug Skip failed', error);
+            });
+        }
+
+        // Debug Play/Pause Button Handler
+        function handleDebugPlayPause() {
+            console.log('🚀 DEBUG PLAY/PAUSE: Toggle - Button clicked!');
+            serverLog('🔧 handleDebugPlayPause called');
+
+            fetch('/api/debug/toggle_play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Debug PlayPause Response:', data);
+                serverLog('✅ Debug PlayPause successful', data);
+
+                // Update button text
+                const playPauseBtn = document.getElementById('playPauseBtn');
+                if (playPauseBtn) {
+                    playPauseBtn.textContent = data.play_mode ? '⏸️' : '▶️';
+                }
+            })
+            .catch(error => {
+                console.error('❌ Debug PlayPause Error:', error);
+                serverLog('❌ Debug PlayPause failed', error);
+            });
+        }
+
         // Warte bis DOM und Script geladen sind
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('🔧 DOM loaded - Registriere Button Event Handlers...');
+            serverLog('🔧 DOM loaded - Initialisiere Chart und Event Handlers...');
+
+            // WICHTIG: Chart zuerst initialisieren
+            console.log('🔧 Initialisiere Chart beim DOMContentLoaded...');
+            initChart();
 
             // Registriere Button Event Handlers
             const positionBoxTool = document.getElementById('positionBoxTool');
             const shortPositionTool = document.getElementById('shortPositionTool');
             const clearAllBtn = document.getElementById('clearAll');
+
+            // Debug Button Event Handlers - konsolidiert hier
+            // Skip Button
+            const skipBtn = document.getElementById('skipBtn');
+            console.log('🔧 Debug setup - Skip Button element:', skipBtn);
+            if (skipBtn) {
+                skipBtn.addEventListener('click', handleDebugSkip);
+                console.log('✅ Skip Button event listener attached');
+            } else {
+                console.error('❌ Skip Button not found!');
+            }
+
+            // Play/Pause Button
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            console.log('🔧 Debug setup - PlayPause Button element:', playPauseBtn);
+            if (playPauseBtn) {
+                playPauseBtn.addEventListener('click', handleDebugPlayPause);
+                console.log('✅ PlayPause Button event listener attached');
+            } else {
+                console.error('❌ PlayPause Button not found!');
+            }
+
+            // Speed Slider
+            const speedSlider = document.getElementById('speedSlider');
+            const speedDisplay = document.getElementById('speedDisplay');
+            if (speedSlider && speedDisplay) {
+                speedSlider.addEventListener('input', function() {
+                    speedDisplay.textContent = `${this.value}x`;
+                });
+
+                speedSlider.addEventListener('change', function() {
+                    handleDebugSpeed(this.value);
+                });
+            }
+
+            // Timeframe Selector
+            const timeframeSelector = document.getElementById('timeframeSelector');
+            if (timeframeSelector) {
+                timeframeSelector.addEventListener('change', function() {
+                    handleDebugTimeframe(this.value);
+                });
+            }
+
+            console.log('🛠️ Debug Controls Event Handlers konsolidiert und initialized');
 
             if (positionBoxTool) {
                 positionBoxTool.addEventListener('click', togglePositionTool);
@@ -2024,7 +2527,107 @@ async def get_chart():
             // Zusätzliche Sicherheit: Prüfe ob LightweightCharts verfügbar ist
             if (typeof LightweightCharts !== 'undefined') {
                 console.log('✅ LightweightCharts library loaded');
-                initChart();
+                // DIREKT TESTEN: Chart erstellen ohne loadChart()
+                try {
+                    serverLog('🔧 DIRECT CHART TEST - Starting detailed debug...');
+
+                    // 1. Container Debug
+                    const container = document.getElementById('chart_container');
+                    serverLog('🔍 Container Debug:', {
+                        gefunden: !!container,
+                        clientWidth: container?.clientWidth,
+                        clientHeight: container?.clientHeight,
+                        offsetWidth: container?.offsetWidth,
+                        offsetHeight: container?.offsetHeight,
+                        rect: container?.getBoundingClientRect()
+                    });
+
+                    if (!container) {
+                        console.error('❌ Chart container nicht gefunden! ID: chart_container');
+                        return;
+                    }
+
+                    // 2. LightweightCharts Debug
+                    console.log('🔍 LightweightCharts Debug:');
+                    console.log('  - LightweightCharts verfügbar:', typeof LightweightCharts);
+                    console.log('  - createChart function:', typeof LightweightCharts.createChart);
+
+                    // 3. Chart Creation Debug
+                    console.log('🔧 Creating chart with options...');
+                    const chartOptions = {
+                        width: 800,
+                        height: 600,
+                        timeScale: { timeVisible: true },
+                        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+                        layout: {
+                            background: { type: 'solid', color: '#FFFFFF' },
+                            textColor: '#333'
+                        }
+                    };
+                    console.log('  - Chart Options:', chartOptions);
+
+                    const chart = LightweightCharts.createChart(container, chartOptions);
+                    console.log('✅ Chart object created:', chart);
+
+                    // 4. Series Debug
+                    console.log('🔧 Adding candlestick series...');
+                    const candlestickSeries = chart.addCandlestickSeries({
+                        upColor: '#089981',
+                        downColor: '#f23645',
+                        borderVisible: false,
+                        wickUpColor: '#089981',
+                        wickDownColor: '#f23645'
+                    });
+                    console.log('✅ Candlestick series created:', candlestickSeries);
+
+                    // 5. API Call Debug
+                    console.log('🔧 Fetching chart data...');
+                    fetch('/api/chart/data')
+                        .then(response => {
+                            console.log('📡 API Response Status:', response.status);
+                            console.log('📡 API Response OK:', response.ok);
+                            return response.json();
+                        })
+                        .then(data => {
+                            console.log('📊 DETAILED DATA DEBUG:');
+                            console.log('  - Data object:', data);
+                            console.log('  - Data.data exists:', !!data.data);
+                            console.log('  - Data.data length:', data.data?.length);
+                            console.log('  - First 3 candles:', data.data?.slice(0, 3));
+                            console.log('  - Last 3 candles:', data.data?.slice(-3));
+
+                            if (data.data && data.data.length > 0) {
+                                console.log('🔧 Setting data on candlestick series...');
+                                candlestickSeries.setData(data.data);
+                                console.log('✅ Data set successfully!');
+
+                                // 6. Chart Rendering Debug
+                                console.log('🔍 POST-RENDER DEBUG:');
+                                setTimeout(() => {
+                                    console.log('  - Container nach Render clientWidth:', container.clientWidth);
+                                    console.log('  - Container nach Render clientHeight:', container.clientHeight);
+                                    const canvasElements = container.querySelectorAll('canvas');
+                                    console.log('  - Anzahl Canvas Elemente:', canvasElements.length);
+                                    canvasElements.forEach((canvas, i) => {
+                                        console.log(`  - Canvas ${i}: ${canvas.width}x${canvas.height}`);
+                                    });
+                                }, 1000);
+
+                                console.log('✅ CHART ERFOLGREICH GELADEN!');
+                            } else {
+                                console.error('❌ Keine Daten erhalten oder leeres Array');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('❌ Chart API Error Details:');
+                            console.error('  - Error object:', error);
+                            console.error('  - Error message:', error.message);
+                            console.error('  - Error stack:', error.stack);
+                        });
+
+                } catch (error) {
+                    console.error('❌ DIRECT CHART ERROR:', error);
+                }
                 connectWebSocket();
                 loadAccountData(); // Lade initiale Account-Daten
             } else {
@@ -2033,7 +2636,32 @@ async def get_chart():
                 setTimeout(() => {
                     if (typeof LightweightCharts !== 'undefined') {
                         console.log('✅ LightweightCharts library loaded (delayed)');
-                        initChart();
+                        // DIREKT TESTEN: Chart erstellen (2. Fallback)
+                        try {
+                            console.log('🔧 FALLBACK CHART TEST - Creating chart...');
+                            const chart = LightweightCharts.createChart(document.getElementById('chart_container'), {
+                                width: 800,
+                                height: 600,
+                                timeScale: { timeVisible: true },
+                                grid: { vertLines: { visible: false }, horzLines: { visible: false } }
+                            });
+
+                            const candlestickSeries = chart.addCandlestickSeries();
+
+                            fetch('/api/chart/data')
+                                .then(response => response.json())
+                                .then(data => {
+                                    console.log('🔧 FALLBACK - Daten empfangen:', data);
+                                    if (data.data && data.data.length > 0) {
+                                        candlestickSeries.setData(data.data);
+                                        console.log('✅ FALLBACK CHART ERFOLGREICH!');
+                                    }
+                                })
+                                .catch(error => console.error('❌ Fallback Chart Error:', error));
+
+                        } catch (error) {
+                            console.error('❌ FALLBACK CHART ERROR:', error);
+                        }
                         connectWebSocket();
                         loadAccountData(); // Lade initiale Account-Daten
                     } else {
@@ -2183,12 +2811,21 @@ async def get_chart_status():
 
 @app.get("/api/chart/data")
 async def get_chart_data():
-    """Aktuelle Chart-Daten zurückgeben"""
+    """Aktuelle Chart-Daten zurückgeben - Korrekt formatiert für TradingView"""
+    chart_data = manager.chart_state['data']
+
+    # Debug-Ausgabe für Datenvalidierung
+    print(f"API /chart/data: Sende {len(chart_data)} Kerzen")
+    if chart_data:
+        first_candle = chart_data[0]
+        print(f"Erste Kerze: time={first_candle.get('time')}, open={first_candle.get('open')}")
+
     return {
-        "data": manager.chart_state['data'],
+        "data": chart_data,  # Unix Timestamps direkt verwenden
         "symbol": manager.chart_state['symbol'],
         "interval": manager.chart_state['interval'],
-        "count": len(manager.chart_state['data'])
+        "count": len(chart_data),
+        "format": "unix_timestamp"  # Frontend-Hinweis für Zeitformat
     }
 
 @app.post("/api/chart/change_timeframe")
@@ -2412,6 +3049,153 @@ async def update_user_pnl(pnl_data: dict):
         print(f"Fehler beim Aktualisieren der Nutzer PnL: {e}")
         return {"status": "error", "message": str(e)}
 
+# ===== DEBUG API ENDPOINTS =====
+
+@app.post("/api/debug/skip")
+async def debug_skip():
+    """API Endpoint für Debug Skip (+1 Minute)"""
+    try:
+        result = debug_controller.skip_minute()
+
+        # Extrahiere Kerze aus dem Ergebnis
+        if result.get('type') == 'complete_candle':
+            new_candle = result['candle']
+            # Neue vollständige Kerze zu Chart-Daten hinzufügen
+            manager.chart_state['data'].append(new_candle)
+        else:
+            # Incomplete Kerze - markiere als solche
+            new_candle = result['candle']
+            new_candle['incomplete'] = True
+
+        # WebSocket-Update an alle Clients (konvertiere datetime für JSON-Serialisierung)
+        candle_for_ws = new_candle.copy()
+        if 'period_start' in candle_for_ws and hasattr(candle_for_ws['period_start'], 'isoformat'):
+            candle_for_ws['period_start'] = candle_for_ws['period_start'].isoformat()
+
+        await manager.broadcast({
+            'type': 'debug_skip',
+            'candle': candle_for_ws,
+            'result_type': result.get('type')
+        })
+
+        return {
+            "status": "success",
+            "message": f"Skip +1min erfolgreich ({result.get('type')})",
+            "candle": new_candle,
+            "result_type": result.get('type'),
+            "debug_state": debug_controller.get_state()
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Debug Skip: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/debug/set_timeframe/{timeframe}")
+async def debug_set_timeframe(timeframe: str):
+    """API Endpoint um Debug Timeframe zu ändern"""
+    try:
+        valid_timeframes = ["1m", "5m", "15m", "30m", "1h"]
+        if timeframe not in valid_timeframes:
+            return {"status": "error", "message": f"Ungültiger Timeframe. Erlaubt: {valid_timeframes}"}
+
+        debug_controller.set_timeframe(timeframe)
+
+        # WebSocket-Update an alle Clients
+        await manager.broadcast({
+            'type': 'debug_timeframe_changed',
+            'timeframe': timeframe,
+            'debug_state': debug_controller.get_state()
+        })
+
+        return {
+            "status": "success",
+            "message": f"Timeframe auf {timeframe} gesetzt",
+            "debug_state": debug_controller.get_state()
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Setzen des Timeframes: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/debug/set_speed")
+async def debug_set_speed(speed_data: dict):
+    """API Endpoint um Debug Speed zu ändern"""
+    try:
+        speed = speed_data.get("speed", 2)
+        debug_controller.set_speed(speed)
+
+        # WebSocket-Update an alle Clients
+        await manager.broadcast({
+            'type': 'debug_speed_changed',
+            'speed': speed,
+            'debug_state': debug_controller.get_state()
+        })
+
+        return {
+            "status": "success",
+            "message": f"Geschwindigkeit auf {speed}x gesetzt",
+            "debug_state": debug_controller.get_state()
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Setzen der Geschwindigkeit: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/debug/toggle_play")
+async def debug_toggle_play():
+    """API Endpoint um Play/Pause zu togglen"""
+    try:
+        play_mode = debug_controller.toggle_play_mode()
+
+        # WebSocket-Update an alle Clients (ohne debug_state wegen JSON-Serialisierung)
+        await manager.broadcast({
+            'type': 'debug_play_toggled',
+            'play_mode': play_mode
+        })
+
+        return {
+            "status": "success",
+            "message": f"Play-Modus {'aktiviert' if play_mode else 'deaktiviert'}",
+            "play_mode": play_mode,
+            "debug_state": debug_controller.get_state()
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Toggle Play/Pause: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/debug/state")
+async def debug_get_state():
+    """API Endpoint um aktuellen Debug-Status zu holen"""
+    try:
+        return {
+            "status": "success",
+            "debug_state": debug_controller.get_state()
+        }
+
+    except Exception as e:
+        print(f"Fehler beim Holen des Debug-Status: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/debug/log")
+async def debug_log_from_client(request: Request):
+    """API Endpoint für JavaScript Debug-Logs im Terminal"""
+    try:
+        data = await request.json()
+        message = data.get('message', 'No message')
+        timestamp = data.get('timestamp', '')
+        log_data = data.get('data', None)
+
+        # Im Terminal ausgeben mit Prefix für JavaScript-Logs
+        print(f"[JS-DEBUG] [{timestamp}]: {message}")
+        if log_data:
+            print(f"    ↳ Data: {log_data}")
+
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Fehler beim JavaScript Debug-Log: {e}")
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     # Debug Route
     @app.get("/debug")
@@ -2422,7 +3206,7 @@ if __name__ == "__main__":
 <html>
 <head>
     <title>Debug Chart</title>
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         #chart { width: 100%; height: 600px; }
         .status { margin: 10px; padding: 10px; background: #f0f0f0; }
@@ -2445,8 +3229,8 @@ if __name__ == "__main__":
             try {
                 updateStatus('Erstelle Chart...');
 
-                const chart = LightweightCharts.createChart(document.getElementById('chart'), {
-                    width: document.getElementById('chart').clientWidth,
+                const chart = LightweightCharts.createChart(document.getElementById('chart_container'), {
+                    width: document.getElementById('chart_container').clientWidth,
                     height: 600,
                     timeScale: { timeVisible: true },
                     grid: { vertLines: { color: '#e1e1e1' }, horzLines: { color: '#e1e1e1' } }
@@ -2463,7 +3247,7 @@ if __name__ == "__main__":
 
                 if (chartData.data && chartData.data.length > 0) {
                     const formattedData = chartData.data.map(item => ({
-                        time: Math.floor(new Date(item.time).getTime() / 1000),
+                        time: item.time,  // Unix Timestamp direkt verwenden (keine Konvertierung!)
                         open: parseFloat(item.open),
                         high: parseFloat(item.high),
                         low: parseFloat(item.low),
@@ -2488,23 +3272,87 @@ if __name__ == "__main__":
             }
         }
 
+    </script>
+</body>
+</html>
+        """
+
+        return HTMLResponse(content=html_content)
+
+    @app.get("/debug")
+    async def debug_chart():
+        """Debug Chart Page"""
+        html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NQ Debug Chart</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { margin: 0; padding: 20px; background: #f0f0f0; font-family: Arial, sans-serif; }
+        h1 { text-align: center; }
+        .status { text-align: center; font-weight: bold; margin: 10px 0; }
+        #chart { margin: 0 auto; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Debug Chart - Teste NQ Daten</h1>
+    <div class="status" id="status">Status: Initialisiere...</div>
+    <div id="chart"></div>
+
+    <script>
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+            console.log(message);
+        }
+
+        async function loadChart() {
+            try {
+                updateStatus('Erstelle Chart...');
+
+                const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+                    width: document.getElementById('chart_container').clientWidth,
+                    height: 600,
+                    timeScale: { timeVisible: true },
+                    grid: { vertLines: { color: '#e1e1e1' }, horzLines: { color: '#e1e1e1' } }
+                });
+
+                const candlestickSeries = chart.addCandlestickSeries();
+
+                updateStatus('Lade Daten von Server...');
+
+                const response = await fetch('/api/chart/data');
+                const chartData = await response.json();
+
+                console.log('Chart Data received:', chartData);
+
+                if (chartData.data && chartData.data.length > 0) {
+                    candlestickSeries.setData(chartData.data);
+                    updateStatus(`✅ ${chartData.data.length} Kerzen geladen`);
+                } else {
+                    updateStatus('❌ Keine Daten empfangen');
+                }
+
+            } catch (error) {
+                updateStatus(`❌ FEHLER: ${error.message}`);
+                console.error('Chart Error:', error);
+            }
+        }
+
+        // Starte Chart-Loading nach DOM-Load
         document.addEventListener('DOMContentLoaded', loadChart);
     </script>
 </body>
 </html>
-"""
+        """
+
         return HTMLResponse(content=html_content)
 
-    print("Starting RL Trading Chart Server...")
-    print("Chart: http://localhost:8003")
-    print("Debug: http://localhost:8003/debug")
-    print("WebSocket: ws://localhost:8003/ws")
-    print("API: http://localhost:8003/docs")
-
+if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8003,
-        log_level="info",
-        reload=False  # Disable reload for production
+        access_log=False
     )
