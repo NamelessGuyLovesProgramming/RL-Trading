@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Test</title>
+</head>
+<body>
+    <h1>Debug Test - Öffne F12 Console</h1>
+    <div id="chart_container" style="width: 800px; height: 600px; background: red; border: 2px solid blue;">
+        TEST CONTAINER
+    </div>
+
+    <script>
+        console.log('🚀 BASIC TEST - Script läuft');
+        console.log('🔍 Container Test:', document.getElementById('chart_container'));
+
+        // Test LightweightCharts CDN
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js';
+        script.onload = function() {
+            console.log('✅ LightweightCharts geladen, verfügbar:', typeof LightweightCharts);
+            if (typeof LightweightCharts !== 'undefined') {
+                console.log('✅ createChart function:', typeof LightweightCharts.createChart);
+
+                const container = document.getElementById('chart_container');
+                console.log('✅ Container gefunden:', container);
+
+                try {
+                    const chart = LightweightCharts.createChart(container, {
+                        width: 800,
+                        height: 600,
+                        layout: { background: { type: 'solid', color: '#FFFFFF' } }
+                    });
+                    console.log('✅ Chart erfolgreich erstellt!', chart);
+                } catch (error) {
+                    console.error('❌ Chart Fehler:', error);
+                }
+            }
+        };
+        script.onerror = function() {
+            console.error('❌ LightweightCharts konnte nicht geladen werden');
+        };
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>
