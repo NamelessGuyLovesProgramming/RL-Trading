@@ -1,0 +1,1 @@
+# High-Performance Chart Navigation Module

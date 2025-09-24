@@ -34,7 +34,11 @@ current_go_to_date = None  # Aktuelles Go To Date (datetime object)
 current_go_to_index = None  # CSV-Index Position für Skip-Navigation
 
 # High-Performance Chart Data Cache - Global Instance
-chart_cache = None  # Wird beim Server-Start initialisiert
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))  # Add project root to path
+from src.performance.high_performance_cache import HighPerformanceChartCache
+chart_cache = None  # Wird beim Server-Start initialisiert - High-Performance Cache
 
 # Lade initiale Chart-Daten aus CSV (schneller Startup)
 print("Lade initiale 5m Chart-Daten aus CSV...")
@@ -722,23 +726,28 @@ async def startup_event():
     print("Chart Server startet - Initialisiere High-Performance Memory Cache...")
 
     try:
-        # Minimal startup - nur globals initialisieren
-        chart_cache = None
-        print("[STARTUP] Chart Server bereit - CSV-basiert")
+        # Initialize High-Performance Cache System
+        chart_cache = HighPerformanceChartCache(cache_size_mb=100)
 
-        # Cache Info ausgeben
-        if chart_cache and len(chart_cache.loaded_timeframes) > 0:
-            print(f"[CACHE INFO] Geladene Timeframes: {sorted(chart_cache.loaded_timeframes)}")
-            for tf in sorted(chart_cache.loaded_timeframes):
-                info = chart_cache.get_timeframe_info(tf)
-                print(f"[CACHE INFO] {tf}: {info['total_candles']} Kerzen ({info['start_time']} - {info['end_time']})")
+        # Load Master 1m Dataset
+        success = chart_cache.load_master_dataset()
+
+        if success:
+            print("[STARTUP] High-Performance Cache System erfolgreich initialisiert")
+            stats = chart_cache.get_performance_stats()
+            print(f"[CACHE INFO] Master Dataset: {stats['master_dataset_size']:,} Kerzen")
+            print(f"[CACHE INFO] Date Index Entries: {stats['date_index_entries']:,}")
         else:
-            print("[CACHE WARNING] Kein Chart Cache verfügbar - verwende Legacy-System")
+            print("[STARTUP WARNING] High-Performance Cache failed - Fallback zu Legacy System")
+            chart_cache = None
 
     except Exception as e:
-        print(f"[ERROR] Fehler beim Initialisieren der Services: {e}")
-        # Fallback: Verwende initial_chart_data falls Services nicht verfügbar
+        print(f"[ERROR] Fehler beim Initialisieren der High-Performance Cache: {e}")
+        import traceback
+        traceback.print_exc()
+        # Fallback: Verwende initial_chart_data falls High-Performance Cache nicht verfügbar
         print("[WARNING] Verwende Fallback-Modus mit initial_chart_data")
+        chart_cache = None
 
     # Starte Auto-Play Background Task
     print("[INFO] Starte Auto-Play Background Task...")
@@ -1967,6 +1976,9 @@ async def get_chart():
                         // Update Titel mit neuen Informationen
                         document.title = `Go To Date: ${message.target_date} (${message.data.length} historische Kerzen)`;
 
+                        // ADAPTIVE TIMEOUT FIX: Setze Go To Date Status für längere Timeouts
+                        window.current_go_to_date = message.target_date;
+
                         // Server-Log für Debug
                         console.log('[GO TO DATE] Complete: Chart repositioniert, bereit für Skip-Button Navigation');
 
@@ -2020,6 +2032,9 @@ async def get_chart():
 
                         // Update current timeframe
                         window.currentTimeframe = message.timeframe;
+
+                        // RACE CONDITION FIX: Synchronisiere Button-State mit tatsächlichem Timeframe
+                        updateTimeframeButtons(message.timeframe);
 
                         console.log(`[SUCCESS] TF-Wechsel: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
                     }
@@ -2898,9 +2913,11 @@ async def get_chart():
                 // Optimistic UI update
                 updateTimeframeButtons(timeframe);
 
-                // Performance-optimized API call
+                // Performance-optimized API call mit adaptivem Timeout
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+                // ADAPTIVE TIMEOUT: Länger nach Go To Date wegen CSV-Processing
+                const adaptiveTimeout = window.current_go_to_date ? 15000 : 8000; // 15s nach Go To Date, sonst 8s
+                const timeoutId = setTimeout(() => controller.abort(), adaptiveTimeout);
 
                 const response = await fetch('/api/chart/change_timeframe', {
                     method: 'POST',
@@ -2951,11 +2968,14 @@ async def get_chart():
 
             } catch (error) {
                 if (error.name === 'AbortError') {
-                    console.warn('Timeframe request timeout');
+                    console.warn('Timeframe request timeout - aber WebSocket Daten könnten noch kommen');
+                    // NICHT den Button-State zurücksetzen - WebSocket könnte noch antworten!
+                    // Race Condition Fix: Lasse Button auf neuem Timeframe, falls WebSocket später antwortet
                 } else {
                     console.error('Fehler beim Timeframe-Wechsel:', error);
+                    // Nur bei echten Fehlern Button-State zurücksetzen
+                    updateTimeframeButtons(window.currentTimeframe);
                 }
-                updateTimeframeButtons(window.currentTimeframe);
             } finally {
                 window.isTimeframeChanging = false;
             }
@@ -3516,169 +3536,133 @@ async def get_chart_data():
 
 @app.post("/api/chart/change_timeframe")
 async def change_timeframe(request: dict):
-    """Ändert den Timeframe und gibt aggregierte Daten zurück - DIREKT AUS CSV"""
+    """Ändert den Timeframe - HIGH-PERFORMANCE mit Single Source of Truth"""
     timeframe = request.get('timeframe', '5m')
     visible_candles = request.get('visible_candles', 50)  # Default 50 für Standard-Zoom
 
-    print(f"=== API CALL DEBUG ===")
-    print(f"Timeframe-Wechsel zu: {timeframe} mit {visible_candles} sichtbaren Kerzen")
-    print(f"Vollständiger Request: {request}")
-    print(f"Aktive Connections: {len(manager.active_connections)}")
-    print(f"=== END DEBUG ===")
+    print(f"[HIGH-PERF-API] Timeframe-Wechsel zu: {timeframe} mit {visible_candles} sichtbaren Kerzen")
 
     try:
-        import pandas as pd
-        from pathlib import Path
-        from datetime import timedelta
+        import time
+        global current_go_to_date, chart_cache
+        operation_start = time.time()
 
-        # HIGH-PERFORMANCE MEMORY-BASIERTE LOGIK mit Timeframe-Persistenz
-        global current_go_to_date, current_go_to_index, chart_cache
+        # TEMPORARY: Disable High-Performance Cache due to timestamp aggregation issues
+        # High-Performance Cache System
+        if False and chart_cache and chart_cache.is_loaded():
+            # Bestimme Zieldatum für Timeframe-Wechsel
+            if current_go_to_date is not None:
+                # Go To Date ist aktiv - nutze dieses Datum
+                target_date = current_go_to_date.strftime('%Y-%m-%d')
+                print(f"[HIGH-PERF-API] Go To Date aktiv: {target_date}")
+            else:
+                # Standard: Nutze letztes verfügbares Datum
+                available_dates = sorted(chart_cache.date_index_map.keys())
+                target_date = available_dates[-1]  # Letztes Datum
+                print(f"[HIGH-PERF-API] Standard-Modus: Letztes Datum {target_date}")
 
-        print(f"[TIMEFRAME] Memory-basierte Navigation zu {timeframe}")
+            # High-Performance Data Retrieval
+            result = chart_cache.get_timeframe_data(timeframe, target_date, candle_count=200)
 
-        # Prüfe ob Chart Cache verfügbar ist, verwende CSV-Fallback wenn nötig
-        if not chart_cache or timeframe not in chart_cache.loaded_timeframes:
-            print(f"[TIMEFRAME] Memory Cache nicht verfügbar für {timeframe} - verwende CSV-Fallback")
-
-            # CSV-basierter Fallback
-            csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
-
-            if csv_path.exists():
-                # Prüfe ob Go To Date aktiv ist
-                global current_go_to_date
-                if current_go_to_date is not None:
-                    # Go To Date ist aktiv - lade Daten ab diesem Datum
-                    print(f"[TIMEFRAME] Go To Date aktiv: Lade 200 {timeframe} Kerzen rückwärts bis {current_go_to_date.date()}")
-                    df = pd.read_csv(csv_path)
-
-                    # DateTime kombinieren für Datumsvergleich
-                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
-                    df['date_only'] = df['datetime'].dt.date
-
-                    # Suche das gewünschte Datum
-                    target_date_only = current_go_to_date.date()
-                    target_rows = df[df['date_only'] == target_date_only]
-
-                    if len(target_rows) > 0:
-                        # Verwende die erste Kerze des Zieldatums und lade 200 Kerzen rückwärts
-                        end_index = target_rows.index[0] + 1   # Ende bei erster Kerze des Zieldatums (00:00)
-                        start_index = max(0, end_index - 200)  # 200 Kerzen rückwärts
-                        df = df.iloc[start_index:end_index]
-                        print(f"[TIMEFRAME] Go To Date: {len(target_rows)} Kerzen für {target_date_only} gefunden, 200 Kerzen rückwärts geladen")
-                    else:
-                        # Fallback: Letzte 200 Kerzen
-                        df = df.tail(200)
-                        print(f"[TIMEFRAME] Go To Date: Datum {target_date_only} nicht gefunden in {timeframe}, verwende letzte 200 Kerzen")
-                else:
-                    # Standard: Letzte 200 Kerzen
-                    print(f"[TIMEFRAME] Standard: Lade 200 {timeframe} Kerzen (letzten 200)")
-                    df = pd.read_csv(csv_path).tail(200)
-
-                # DateTime kombinieren und als zusätzliche Spalte hinzufügen (falls noch nicht vorhanden)
-                if 'datetime' not in df.columns:
-                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
-                df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
-
-                # Konvertiere zu Chart-Format
-                chart_data = []
-                for _, row in df.iterrows():
-                    chart_data.append({
-                        'time': int(row['time']),
-                        'open': float(row['Open']),
-                        'high': float(row['High']),
-                        'low': float(row['Low']),
-                        'close': float(row['Close']),
-                        'volume': int(row['Volume'])
-                    })
-
-                print(f"[TIMEFRAME] CSV geladen: {len(chart_data)} {timeframe} Kerzen")
+            if result['data']:
+                # Performance Stats
+                perf_stats = result.get('performance_stats', {})
+                print(f"[HIGH-PERF-API] SUCCESS: {len(result['data'])} {timeframe} Kerzen in {perf_stats.get('response_time_ms', 0):.1f}ms")
+                print(f"[HIGH-PERF-API] Cache Hit: {perf_stats.get('cache_hit', False)}, Aggregation: {perf_stats.get('aggregation_time_ms', 0):.1f}ms")
 
                 # WebSocket Broadcast
                 await manager.broadcast({
                     'type': 'timeframe_changed',
                     'timeframe': timeframe,
-                    'data': chart_data
+                    'data': result['data'],
+                    'visible_range': result.get('visible_range'),
+                    'performance_stats': perf_stats
                 })
-
-                print(f"Broadcast: {len(manager.active_connections)} aktive Verbindungen, Nachricht: timeframe_changed")
-                print(f"Broadcast abgeschlossen an {len(manager.active_connections)} Clients")
-                print(f"Timeframe geändert zu {timeframe} - {len(chart_data)} Kerzen")
 
                 return {
                     "status": "success",
-                    "message": f"Timeframe zu {timeframe} geändert",
-                    "data": chart_data,
+                    "message": f"High-Performance Timeframe zu {timeframe} geändert",
+                    "data": result['data'],
                     "timeframe": timeframe,
-                    "count": len(chart_data)
+                    "count": len(result['data']),
+                    "visible_range": result.get('visible_range'),
+                    "performance_stats": perf_stats
                 }
             else:
-                return {"status": "error", "message": f"CSV-Datei für {timeframe} nicht gefunden"}
+                print(f"[HIGH-PERF-API] WARNING: Keine Daten für {timeframe} am {target_date}")
 
+        # Fallback: Legacy CSV System (wenn High-Performance Cache nicht verfügbar)
+        print(f"[HIGH-PERF-API] FALLBACK zu Legacy CSV System für {timeframe}")
+
+        import pandas as pd
+        from pathlib import Path
+
+        csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
+
+        if not csv_path.exists():
+            return {"status": "error", "message": f"Timeframe {timeframe} nicht verfügbar (CSV nicht gefunden)"}
+
+        # Legacy CSV-basierter Fallback
         if current_go_to_date is not None:
-            # Go To Date Modus: Verwende Memory Cache für ultra-schnelle Navigation
-            print(f"[TIMEFRAME] Go To Date Persistenz: {current_go_to_date} -> {timeframe}")
+            # Go To Date ist aktiv - lade Daten ab diesem Datum
+            print(f"[FALLBACK] Go To Date aktiv: Lade 200 {timeframe} Kerzen rückwärts bis {current_go_to_date.date()}")
+            df = pd.read_csv(csv_path)
 
-            # Memory-basierte Index-Suche für neuen Timeframe
-            best_index = chart_cache.find_best_date_index(current_go_to_date, timeframe)
+            # DateTime kombinieren für Datumsvergleich
+            df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+            df['date_only'] = df['datetime'].dt.date
 
-            # Hole 200 Kerzen mit nur 50 sichtbar (konsistent mit Go To Date)
-            candles_result = chart_cache.get_candles_range(
-                timeframe=timeframe,
-                center_index=best_index,
-                total_candles=200,
-                visible_candles=50
-            )
+            # Suche das gewünschte Datum
+            target_date_only = current_go_to_date.date()
+            target_rows = df[df['date_only'] == target_date_only]
 
-            aggregated_data = candles_result['data']
-            visible_start = candles_result['visible_start']
-            visible_end = candles_result['visible_end']
-
-            # Update Index für neuen Timeframe
-            current_go_to_index = best_index
-
-            print(f"[TIMEFRAME] Go To Date Memory: {len(aggregated_data)} {timeframe} Kerzen, sichtbar {visible_start}-{visible_end}")
-
+            if len(target_rows) > 0:
+                # Verwende die erste Kerze des Zieldatums und lade 200 Kerzen rückwärts
+                end_index = target_rows.index[0] + 1   # Ende bei erster Kerze des Zieldatums (00:00)
+                start_index = max(0, end_index - 200)  # 200 Kerzen rückwärts
+                df = df.iloc[start_index:end_index]
+                print(f"[FALLBACK] Go To Date: {len(target_rows)} Kerzen für {target_date_only} gefunden, 200 Kerzen rückwärts geladen")
+            else:
+                # Fallback: Letzte 200 Kerzen
+                df = df.tail(200)
+                print(f"[FALLBACK] Go To Date: Datum {target_date_only} nicht gefunden in {timeframe}, verwende letzte 200 Kerzen")
         else:
-            # Standard-Modus: Lade die letzten 200 Kerzen aus Memory
-            tf_info = chart_cache.get_timeframe_info(timeframe)
-            last_index = tf_info['total_candles'] - 1
+            # Standard: Letzte 200 Kerzen
+            print(f"[FALLBACK] Standard: Lade 200 {timeframe} Kerzen (letzten 200)")
+            df = pd.read_csv(csv_path).tail(200)
 
-            candles_result = chart_cache.get_candles_range(
-                timeframe=timeframe,
-                center_index=last_index,
-                total_candles=200,
-                visible_candles=50
-            )
+        # DateTime kombinieren und als zusätzliche Spalte hinzufügen (falls noch nicht vorhanden)
+        if 'datetime' not in df.columns:
+            df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+        df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
 
-            aggregated_data = candles_result['data']
-            visible_start = candles_result['visible_start']
-            visible_end = candles_result['visible_end']
+        # Konvertiere zu Chart-Format
+        chart_data = []
+        for _, row in df.iterrows():
+            chart_data.append({
+                'time': int(row['time']),
+                'open': float(row['Open']),
+                'high': float(row['High']),
+                'low': float(row['Low']),
+                'close': float(row['Close']),
+                'volume': int(row['Volume'])
+            })
 
-            print(f"[TIMEFRAME] Standard Memory: {len(aggregated_data)} {timeframe} Kerzen, sichtbar {visible_start}-{visible_end}")
+        print(f"[FALLBACK] CSV geladen: {len(chart_data)} {timeframe} Kerzen")
 
-        print(f"[TIMEFRAME] Memory-Performance: {len(aggregated_data)} {timeframe} Kerzen geladen")
-
-        # Update Chart State
-        manager.chart_state['data'] = aggregated_data
-        manager.chart_state['interval'] = timeframe
-        manager.chart_state['last_update'] = datetime.now().isoformat()
-
-        # Broadcast an alle Clients
+        # WebSocket Broadcast
         await manager.broadcast({
             'type': 'timeframe_changed',
             'timeframe': timeframe,
-            'data': aggregated_data,
-            'count': len(aggregated_data)
+            'data': chart_data
         })
-
-        print(f"Timeframe geändert zu {timeframe} - {len(aggregated_data)} Kerzen")
 
         return {
             "status": "success",
-            "data": aggregated_data,
-            "count": len(aggregated_data),
+            "message": f"Fallback Timeframe zu {timeframe} geändert",
+            "data": chart_data,
             "timeframe": timeframe,
-            "message": f"Timeframe zu {timeframe} gewechselt"
+            "count": len(chart_data)
         }
 
     except Exception as e:
@@ -4001,9 +3985,10 @@ async def debug_log_from_client(request: Request):
 
 @app.post("/api/debug/go_to_date")
 async def debug_go_to_date(date_data: dict):
-    """High-Performance Memory-basierte Go To Date mit intelligentem Fallback-System"""
+    """Ultra-High-Performance Go To Date mit Single Source of Truth"""
     try:
         from datetime import datetime
+        import time
 
         target_date = date_data.get("date")
         if not target_date:
@@ -4013,134 +3998,113 @@ async def debug_go_to_date(date_data: dict):
         target_datetime = datetime.strptime(target_date, "%Y-%m-%d")
         current_timeframe = debug_controller.current_timeframe
 
-        print(f"[GO TO DATE] Memory-Request: {target_datetime} (Timeframe: {current_timeframe})")
+        operation_start = time.time()
+        print(f"[HIGH-PERF-GO-TO-DATE] Request: {target_date} in {current_timeframe}")
 
-        # Prüfe ob Chart Cache verfügbar ist
-        global chart_cache, current_go_to_date, current_go_to_index
+        # TEMPORARY: Disable High-Performance Cache due to timestamp aggregation issues
+        # High-Performance Cache System
+        global chart_cache, current_go_to_date
 
-        if not chart_cache or current_timeframe not in chart_cache.loaded_timeframes:
-            print(f"[GO TO DATE] Cache nicht verfügbar für {current_timeframe} - verwende CSV-Fallback")
+        if False and chart_cache and chart_cache.is_loaded():
+            # High-Performance Data Retrieval
+            result = chart_cache.get_timeframe_data(current_timeframe, target_date, candle_count=200)
 
-            # CSV-basierter Fallback für Go To Date
-            import pandas as pd
-            from pathlib import Path
+            if result['data']:
+                # Performance Stats
+                perf_stats = result.get('performance_stats', {})
+                print(f"[HIGH-PERF-GO-TO-DATE] SUCCESS: {len(result['data'])} {current_timeframe} Kerzen in {perf_stats.get('response_time_ms', 0):.1f}ms")
+                print(f"[HIGH-PERF-GO-TO-DATE] Cache Hit: {perf_stats.get('cache_hit', False)}")
 
-            csv_path = Path(f"src/data/aggregated/{current_timeframe}/nq-2024.csv")
-
-            if csv_path.exists():
-                # Lade komplette CSV und suche das gewünschte Datum
-                df = pd.read_csv(csv_path)
-
-                # DateTime kombinieren und als zusätzliche Spalte hinzufügen
-                df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
-                df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
-
-                # Suche das gewünschte Datum
-                target_date_only = target_datetime.date()
-                df['date_only'] = df['datetime'].dt.date
-
-                # Finde Kerzen für das Zieldatum
-                target_rows = df[df['date_only'] == target_date_only]
-
-                if len(target_rows) > 0:
-                    # Verwende die erste Kerze des Zieldatums und lade 200 Kerzen rückwärts
-                    end_index = target_rows.index[0] + 1   # Ende bei erster Kerze des Zieldatums (00:00)
-                    start_index = max(0, end_index - 200)  # 200 Kerzen rückwärts
-                    selected_df = df.iloc[start_index:end_index]
-
-                    print(f"[GO TO DATE] Gefunden: {len(target_rows)} Kerzen für {target_date}, lade 200 Kerzen rückwärts bis Index {end_index} (endet bei {target_date} 00:00)")
-                else:
-                    # Fallback: Lade letzten 200 Kerzen wenn Datum nicht gefunden
-                    selected_df = df.tail(200)
-                    print(f"[GO TO DATE] Datum {target_date} nicht gefunden, verwende letzten 200 Kerzen")
-
-                # Konvertiere zu Chart-Format
-                chart_data = []
-                for _, row in selected_df.iterrows():
-                    chart_data.append({
-                        'time': int(row['time']),
-                        'open': float(row['Open']),
-                        'high': float(row['High']),
-                        'low': float(row['Low']),
-                        'close': float(row['Close']),
-                        'volume': int(row['Volume'])
-                    })
-
-                # Update globale Go To Date Variable für CSV-System
-                global current_go_to_date
+                # Update globale Go To Date Variable
                 current_go_to_date = target_datetime
 
                 # WebSocket Broadcast
                 await manager.broadcast({
                     'type': 'go_to_date_complete',
-                    'data': chart_data,
-                    'date': target_date
+                    'data': result['data'],
+                    'date': target_date,
+                    'visible_range': result.get('visible_range'),
+                    'performance_stats': perf_stats
                 })
-
-                print(f"[GO TO DATE] Erfolgreich zu {target_date} gesprungen - {len(chart_data)} Kerzen geladen")
 
                 return {
                     "status": "success",
-                    "message": f"Go To Date zu {target_date} erfolgreich",
-                    "data": chart_data,
-                    "count": len(chart_data),
-                    "target_date": target_date
+                    "message": f"High-Performance Go To Date zu {target_date}",
+                    "data": result['data'],
+                    "count": len(result['data']),
+                    "target_date": target_date,
+                    "visible_range": result.get('visible_range'),
+                    "performance_stats": perf_stats
                 }
             else:
-                return {"status": "error", "message": f"CSV-Datei für {current_timeframe} nicht gefunden"}
+                print(f"[HIGH-PERF-GO-TO-DATE] WARNING: Keine Daten für {target_date} in {current_timeframe}")
 
-        # MEMORY-BASIERTE NAVIGATION: Ultra-schnelle Index-Suche
-        best_index = chart_cache.find_best_date_index(target_datetime, current_timeframe)
+        # Fallback: Legacy CSV System
+        print(f"[HIGH-PERF-GO-TO-DATE] FALLBACK zu CSV System für {current_timeframe}")
 
-        # Hole 200 Kerzen mit nur 50 sichtbar (Smart Range Loading)
-        candles_result = chart_cache.get_candles_range(
-            timeframe=current_timeframe,
-            center_index=best_index,
-            total_candles=200,
-            visible_candles=50
-        )
+        import pandas as pd
+        from pathlib import Path
 
-        chart_data = candles_result['data']
-        visible_start = candles_result['visible_start']
-        visible_end = candles_result['visible_end']
+        csv_path = Path(f"src/data/aggregated/{current_timeframe}/nq-2024.csv")
 
-        print(f"[GO TO DATE] Memory-Navigation: {len(chart_data)} Kerzen geladen, sichtbar: {visible_start}-{visible_end}")
+        if not csv_path.exists():
+            return {"status": "error", "message": f"CSV-Datei für {current_timeframe} nicht gefunden"}
 
-        # Update globale Go To Date Variablen
+        # Lade komplette CSV und suche das gewünschte Datum
+        df = pd.read_csv(csv_path)
+
+        # DateTime kombinieren und als zusätzliche Spalte hinzufügen
+        df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+        df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
+
+        # Suche das gewünschte Datum
+        target_date_only = target_datetime.date()
+        df['date_only'] = df['datetime'].dt.date
+
+        # Finde Kerzen für das Zieldatum
+        target_rows = df[df['date_only'] == target_date_only]
+
+        if len(target_rows) > 0:
+            # Verwende die erste Kerze des Zieldatums und lade 200 Kerzen rückwärts
+            end_index = target_rows.index[0] + 1   # Ende bei erster Kerze des Zieldatums (00:00)
+            start_index = max(0, end_index - 200)  # 200 Kerzen rückwärts
+            selected_df = df.iloc[start_index:end_index]
+            print(f"[FALLBACK-GO-TO-DATE] Gefunden: {len(target_rows)} Kerzen für {target_date}")
+        else:
+            # Fallback: Lade letzten 200 Kerzen wenn Datum nicht gefunden
+            selected_df = df.tail(200)
+            print(f"[FALLBACK-GO-TO-DATE] Datum {target_date} nicht gefunden, verwende letzten 200 Kerzen")
+
+        # Konvertiere zu Chart-Format
+        chart_data = []
+        for _, row in selected_df.iterrows():
+            chart_data.append({
+                'time': int(row['time']),
+                'open': float(row['Open']),
+                'high': float(row['High']),
+                'low': float(row['Low']),
+                'close': float(row['Close']),
+                'volume': int(row['Volume'])
+            })
+
+        # Update globale Go To Date Variable für CSV-System
         current_go_to_date = target_datetime
-        current_go_to_index = best_index
 
-        # Update Chart State
-        manager.chart_state['data'] = chart_data
-        manager.chart_state['last_update'] = datetime.now().isoformat()
-
-        # WebSocket-Update mit Chart-Positioning Info
-        update_data = {
+        # WebSocket Broadcast
+        await manager.broadcast({
             'type': 'go_to_date_complete',
             'data': chart_data,
-            'target_date': target_date,
-            'data_count': len(chart_data),
-            'csv_position': best_index,
-            'visible_range': {
-                'start': visible_start,
-                'end': visible_end,
-                'total': len(chart_data)
-            },
-            'performance': 'memory_cache'
-        }
+            'date': target_date
+        })
 
-        await manager.broadcast(update_data)
-
-        print(f"[GO TO DATE] Memory-Performance: {target_date} -> Index {best_index}, {len(chart_data)} Kerzen, {visible_end - visible_start + 1} sichtbar")
+        print(f"[FALLBACK-GO-TO-DATE] Erfolgreich zu {target_date} gesprungen - {len(chart_data)} Kerzen geladen")
 
         return {
             "status": "success",
-            "message": f"Memory-Navigation zu {target_date}",
-            "data_count": len(chart_data),
-            "csv_position": best_index,
-            "target_date": target_date,
-            "visible_candles": visible_end - visible_start + 1,
-            "performance_mode": "memory_cache"
+            "message": f"Fallback Go To Date zu {target_date}",
+            "data": chart_data,
+            "count": len(chart_data),
+            "target_date": target_date
         }
 
     except Exception as e:
