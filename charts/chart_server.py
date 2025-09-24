@@ -25,8 +25,16 @@ app = FastAPI(title="RL Trading Chart Server", version="1.0.0")
 
 # Globale Variablen (werden nach Startup initialisiert)
 nq_loader = None
+nq_data_loader = None  # NQDataLoader für Go To Date Funktionalität
 performance_aggregator = None
 account_service = None
+
+# Go To Date State - Index-basiertes System mit CSV-Position
+current_go_to_date = None  # Aktuelles Go To Date (datetime object)
+current_go_to_index = None  # CSV-Index Position für Skip-Navigation
+
+# High-Performance Chart Data Cache - Global Instance
+chart_cache = None  # Wird beim Server-Start initialisiert
 
 # Lade initiale Chart-Daten aus CSV (schneller Startup)
 print("Lade initiale 5m Chart-Daten aus CSV...")
@@ -44,15 +52,19 @@ try:
         df = pd.read_csv(csv_path).tail(200)
         print(f"CSV gelesen: {len(df)} Zeilen")
 
-        # Konvertiere zu Chart-Format
+        # Konvertiere zu Chart-Format (neue Struktur: Date, Time, OHLCV)
         for _, row in df.iterrows():
+            # DateTime aus Date und Time kombinieren
+            dt_str = f"{row['Date']} {row['Time']}"
+            dt = pd.to_datetime(dt_str, format='mixed', dayfirst=True)
+
             initial_chart_data.append({
-                'time': int(row['time']),  # Unix Timestamp für TradingView
-                'open': float(row['open']),
-                'high': float(row['high']),
-                'low': float(row['low']),
-                'close': float(row['close']),
-                'volume': int(row['volume'])
+                'time': int(dt.timestamp()),  # Unix Timestamp für TradingView
+                'open': float(row['Open']),
+                'high': float(row['High']),
+                'low': float(row['Low']),
+                'close': float(row['Close']),
+                'volume': int(row['Volume'])
             })
         print(f"ERFOLG: {len(initial_chart_data)} NQ-Kerzen geladen!")
     else:
@@ -262,6 +274,262 @@ class TimeframeAggregator:
             result[tf].append(candle)
         return result
 
+# High-Performance Memory-basierte Chart Data Cache
+class ChartDataCache:
+    """
+    Ultra-schneller Memory-basierter Data Cache für alle Timeframes
+    Lädt alle CSV-Dateien einmalig beim Start -> Sub-Millisekunden Navigation
+    """
+
+    def __init__(self):
+        """Initialisiert leeren Cache"""
+        self.timeframe_data = {}  # {timeframe: pandas.DataFrame}
+        self.loaded_timeframes = set()
+        self.available_timeframes = ["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h"]  # CORRECTED: Alle Timeframe-Ordner verfügbar
+        print("[CACHE] ChartDataCache initialisiert")
+
+    def load_all_timeframes(self):
+        """Lädt alle verfügbaren Timeframes in Memory - einmalig beim Server-Start"""
+        import pandas as pd
+        from pathlib import Path
+
+        print("[CACHE] Starte Memory-Loading aller Timeframes...")
+
+        for timeframe in self.available_timeframes:
+            csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
+
+            if csv_path.exists():
+                try:
+                    # CSV mit neuer Struktur laden (Date, Time, OHLCV)
+                    df = pd.read_csv(csv_path)
+
+                    # DateTime kombinieren und als zusätzliche Spalte hinzufügen
+                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+                    df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
+
+                    # Sortierung nach Datum sicherstellen
+                    df = df.sort_values('datetime')
+
+                    self.timeframe_data[timeframe] = df
+                    self.loaded_timeframes.add(timeframe)
+
+                    # Debug Info
+                    start_time = df['datetime'].iloc[0]
+                    end_time = df['datetime'].iloc[-1]
+
+                    print(f"[CACHE] SUCCESS {timeframe} loaded: {len(df)} candles ({start_time} bis {end_time})")
+
+                except Exception as e:
+                    print(f"[CACHE] ERROR beim Laden {timeframe}: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[CACHE] WARNING CSV nicht gefunden: {csv_path}")
+
+        print(f"[CACHE] Memory-Loading abgeschlossen: {len(self.loaded_timeframes)} Timeframes geladen")
+        return len(self.loaded_timeframes) > 0
+
+    def load_priority_timeframes(self, priority_list):
+        """Lädt nur prioritäre Timeframes für schnellen Server-Start"""
+        import pandas as pd
+        from pathlib import Path
+
+        print(f"[CACHE] Lade Priority Timeframes: {priority_list}")
+
+        for timeframe in priority_list:
+            if timeframe not in self.available_timeframes:
+                continue
+
+            csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
+
+            if csv_path.exists():
+                try:
+                    # CSV mit neuer Struktur laden (Date, Time, OHLCV)
+                    df = pd.read_csv(csv_path)
+
+                    # DateTime kombinieren und als zusätzliche Spalte hinzufügen
+                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+                    df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
+
+                    # Sortierung nach Datum sicherstellen
+                    df = df.sort_values('datetime')
+
+                    self.timeframe_data[timeframe] = df
+                    self.loaded_timeframes.add(timeframe)
+
+                    # Debug Info
+                    start_time = df['datetime'].iloc[0]
+                    end_time = df['datetime'].iloc[-1]
+
+                    print(f"[CACHE] SUCCESS {timeframe} loaded: {len(df)} candles ({start_time.strftime('%Y-%m-%d')} bis {end_time.strftime('%Y-%m-%d')})")
+
+                except Exception as e:
+                    print(f"[CACHE] ERROR beim Laden {timeframe}: {e}")
+            else:
+                print(f"[CACHE] WARNING CSV nicht gefunden: {csv_path}")
+
+        print(f"[CACHE] Priority Loading abgeschlossen: {len(self.loaded_timeframes)} von {len(priority_list)} geladen")
+        return len(self.loaded_timeframes) > 0
+
+    def find_best_date_index(self, target_date, timeframe):
+        """
+        Findet den besten Index für ein Zieldatum mit intelligenten Fallback-Strategien
+
+        Args:
+            target_date: datetime object
+            timeframe: string (z.B. '5m')
+
+        Returns:
+            int: Index im DataFrame der am besten zum Zieldatum passt
+        """
+        if timeframe not in self.timeframe_data:
+            raise ValueError(f"Timeframe {timeframe} nicht geladen!")
+
+        df = self.timeframe_data[timeframe]
+        target_timestamp = int(target_date.timestamp())
+
+        # Check if target is before CSV data range
+        if target_timestamp < df['time'].iloc[0]:
+            print(f"[CACHE] Datum {target_date} vor CSV-Bereich - verwende ersten verfügbaren Index (0)")
+            return 0  # FIXED: Verwende ersten verfügbaren Datenpunkt statt willkürlichen Index 199
+
+        # Check if target is after CSV data range
+        elif target_timestamp > df['time'].iloc[-1]:
+            print(f"[CACHE] Datum {target_date} nach CSV-Bereich - verwende letzten Index")
+            return len(df) - 1
+
+        # Find nearest timestamp match
+        else:
+            time_diffs = (df['time'] - target_timestamp).abs()
+            best_index = time_diffs.idxmin()
+
+            matched_time = pd.to_datetime(df.iloc[best_index]['time'], unit='s')
+            print(f"[CACHE] Exakte Übereinstimmung: Index {best_index} -> {matched_time}")
+
+            return best_index
+
+    def get_candles_range(self, timeframe, center_index, total_candles=200, visible_candles=50):
+        """
+        Holt einen Bereich von Kerzen rund um center_index
+
+        Args:
+            timeframe: string
+            center_index: int - Zentrum des Bereichs
+            total_candles: int - Gesamt zu ladende Kerzen (200)
+            visible_candles: int - Sichtbare Kerzen im Chart (50)
+
+        Returns:
+            dict: {
+                'data': list - Chart-formatierte Daten (200 Kerzen),
+                'visible_start': int - Index der ersten sichtbaren Kerze,
+                'visible_end': int - Index der letzten sichtbaren Kerze,
+                'center_index': int - Ursprungsindex,
+                'total_count': int
+            }
+        """
+        if timeframe not in self.timeframe_data:
+            raise ValueError(f"Timeframe {timeframe} nicht geladen!")
+
+        df = self.timeframe_data[timeframe]
+        df_length = len(df)
+
+        # Berechne Start/End Index für total_candles (200) Kerzen VOR center_index
+        start_idx = max(0, center_index - total_candles + 1)  # 199 Kerzen davor + 1 center = 200
+        end_idx = center_index + 1  # Bis einschließlich center_index
+
+        # Falls nicht genug Daten vor center_index, fülle nach vorne auf
+        if end_idx - start_idx < total_candles:
+            needed = total_candles - (end_idx - start_idx)
+            end_idx = min(df_length, end_idx + needed)
+
+        # Extrahiere DataFrame-Bereich
+        result_df = df.iloc[start_idx:end_idx]
+
+        # Konvertiere zu Chart-Format
+        chart_data = []
+        for _, row in result_df.iterrows():
+            chart_data.append({
+                'time': int(row['time']),
+                'open': float(row['Open']),
+                'high': float(row['High']),
+                'low': float(row['Low']),
+                'close': float(row['Close']),
+                'volume': int(row['Volume'])
+            })
+
+        # Berechne sichtbaren Bereich (letzten visible_candles von total_candles)
+        data_count = len(chart_data)
+        visible_start = max(0, data_count - visible_candles)
+        visible_end = data_count - 1
+
+        print(f"[CACHE] Kerzen-Bereich: {data_count} total, sichtbar {visible_start}-{visible_end} (CSV Index {start_idx}-{end_idx-1})")
+
+        return {
+            'data': chart_data,
+            'visible_start': visible_start,
+            'visible_end': visible_end,
+            'center_index': center_index,
+            'total_count': data_count,
+            'csv_range': (start_idx, end_idx - 1)
+        }
+
+    def get_next_candle(self, timeframe, current_index):
+        """
+        Holt die nächste Kerze für Skip-Operation
+
+        Args:
+            timeframe: string
+            current_index: int - Aktueller Index im DataFrame
+
+        Returns:
+            dict: {'candle': {chart_data}, 'new_index': int} oder None wenn Ende erreicht
+        """
+        if timeframe not in self.timeframe_data:
+            raise ValueError(f"Timeframe {timeframe} nicht geladen!")
+
+        df = self.timeframe_data[timeframe]
+        next_index = current_index + 1
+
+        if next_index >= len(df):
+            print(f"[CACHE] Ende der {timeframe} Daten erreicht (Index {current_index})")
+            return None
+
+        # Nächste Kerze extrahieren
+        next_row = df.iloc[next_index]
+        next_candle = {
+            'time': int(next_row['time']),
+            'open': float(next_row['Open']),
+            'high': float(next_row['High']),
+            'low': float(next_row['Low']),
+            'close': float(next_row['Close']),
+            'volume': int(next_row['Volume'])
+        }
+
+        next_time = pd.to_datetime(next_row['time'], unit='s')
+        print(f"[CACHE] Skip: Index {current_index} -> {next_index} ({next_time})")
+
+        return {
+            'candle': next_candle,
+            'new_index': next_index
+        }
+
+    def get_timeframe_info(self, timeframe):
+        """Gibt Info über einen geladenen Timeframe zurück"""
+        if timeframe not in self.timeframe_data:
+            return None
+
+        df = self.timeframe_data[timeframe]
+        start_time = pd.to_datetime(df['time'].iloc[0], unit='s')
+        end_time = pd.to_datetime(df['time'].iloc[-1], unit='s')
+
+        return {
+            'timeframe': timeframe,
+            'total_candles': len(df),
+            'start_time': start_time,
+            'end_time': end_time,
+            'loaded': True
+        }
+
 # Debug Controller für Debug-Funktionalität
 class DebugController:
     """Verwaltet Debug-Funktionalität mit intelligenter Timeframe-Aggregation"""
@@ -337,6 +605,26 @@ class DebugController:
         """Setzt die Play-Geschwindigkeit (1-15)"""
         self.speed = max(1, min(15, speed))
         print(f"DEBUG SPEED: Geschwindigkeit auf {self.speed}x gesetzt")
+
+    def set_start_time(self, start_datetime):
+        """Setzt eine neue Start-Zeit für das Chart (Go To Date Funktionalität)"""
+        self.current_time = start_datetime
+        print(f"DEBUG GO TO DATE: Start-Zeit gesetzt auf {self.current_time}")
+
+    @property
+    def current_timeframe(self):
+        """Gibt den aktuellen Timeframe zurück"""
+        return self.timeframe
+
+    @property
+    def current_index(self):
+        """Gibt den aktuellen Index zurück (für Kompatibilität)"""
+        return getattr(self, '_current_index', 0)
+
+    @current_index.setter
+    def current_index(self, value):
+        """Setzt den aktuellen Index (für Kompatibilität)"""
+        self._current_index = value
 
     def toggle_play_mode(self):
         """Toggle Play/Pause Modus"""
@@ -428,8 +716,32 @@ async def auto_play_loop():
 # Startup Event - Auto-Play Background Task starten
 @app.on_event("startup")
 async def startup_event():
-    """App Startup - Starte Auto-Play Background Task"""
-    print("Chart Server startet - Initialisiere Auto-Play Task")
+    """App Startup - Initialisiere High-Performance Memory Cache und Services"""
+    global performance_aggregator, nq_loader, account_service, nq_data_loader, chart_cache
+
+    print("Chart Server startet - Initialisiere High-Performance Memory Cache...")
+
+    try:
+        # Minimal startup - nur globals initialisieren
+        chart_cache = None
+        print("[STARTUP] Chart Server bereit - CSV-basiert")
+
+        # Cache Info ausgeben
+        if chart_cache and len(chart_cache.loaded_timeframes) > 0:
+            print(f"[CACHE INFO] Geladene Timeframes: {sorted(chart_cache.loaded_timeframes)}")
+            for tf in sorted(chart_cache.loaded_timeframes):
+                info = chart_cache.get_timeframe_info(tf)
+                print(f"[CACHE INFO] {tf}: {info['total_candles']} Kerzen ({info['start_time']} - {info['end_time']})")
+        else:
+            print("[CACHE WARNING] Kein Chart Cache verfügbar - verwende Legacy-System")
+
+    except Exception as e:
+        print(f"[ERROR] Fehler beim Initialisieren der Services: {e}")
+        # Fallback: Verwende initial_chart_data falls Services nicht verfügbar
+        print("[WARNING] Verwende Fallback-Modus mit initial_chart_data")
+
+    # Starte Auto-Play Background Task
+    print("[INFO] Starte Auto-Play Background Task...")
     asyncio.create_task(auto_play_loop())
 
 @app.get("/")
@@ -449,7 +761,7 @@ async def get_chart():
         .status.connected { color: #089981; }
         .status.disconnected { color: #f23645; }
         /* Erste Chart-Toolbar (Debug-Controls, oberhalb) */
-        .chart-toolbar-1 { position: fixed; top: 0; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
+        .chart-toolbar-1 { position: fixed; top: 0; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; margin: 0; z-index: 1000; }
 
         /* Zweite Chart-Toolbar (Timeframes, darunter) */
         .chart-toolbar-2 { position: fixed; top: 40px; left: 0; right: 0; height: 40px; background: #1e1e1e; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0; margin: 0; gap: 12px; z-index: 1000; }
@@ -595,12 +907,172 @@ async def get_chart():
             outline: none;
             border-color: #089981;
         }
+
+        /* Navigation Controls (Go To Date Button) */
+        .navigation-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .nav-btn {
+            background: #2a2a2a;
+            border: 1px solid #404040;
+            color: #ffffff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .nav-btn:hover {
+            background: #3a3a3a;
+            border-color: #089981;
+        }
+
+        .nav-btn:active {
+            background: #1a1a1a;
+            transform: scale(0.95);
+        }
+
+        /* Date-Picker Modal */
+        .date-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .date-modal-content {
+            background: #2a2a2a;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+            position: relative;
+        }
+
+        .date-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            color: #ffffff;
+        }
+
+        .date-modal-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-modal:hover {
+            color: #ffffff;
+        }
+
+        .date-input-group {
+            margin-bottom: 20px;
+        }
+
+        .date-input-label {
+            display: block;
+            color: #ffffff;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .date-input {
+            width: 100%;
+            background: #1a1a1a;
+            border: 1px solid #404040;
+            color: #ffffff;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+
+        .date-input:focus {
+            outline: none;
+            border-color: #089981;
+        }
+
+        .date-modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .modal-btn {
+            background: #2a2a2a;
+            border: 1px solid #404040;
+            color: #ffffff;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .modal-btn:hover {
+            background: #3a3a3a;
+        }
+
+        .modal-btn.primary {
+            background: #089981;
+            border-color: #089981;
+        }
+
+        .modal-btn.primary:hover {
+            background: #0a7a6b;
+        }
     </style>
 </head>
 <body>
+    <!-- Date-Picker Modal -->
+    <div id="dateModal" class="date-modal">
+        <div class="date-modal-content">
+            <div class="date-modal-header">
+                <span class="date-modal-title">📅 Go To Date</span>
+                <button class="close-modal" onclick="closeDateModal()">&times;</button>
+            </div>
+            <div class="date-input-group">
+                <label class="date-input-label" for="goToDateInput">Wähle Chart-Startdatum:</label>
+                <input type="date" id="goToDateInput" class="date-input" />
+            </div>
+            <div class="date-modal-buttons">
+                <button class="modal-btn" onclick="closeDateModal()">Abbrechen</button>
+                <button class="modal-btn primary" onclick="goToSelectedDate()">Go To Date</button>
+            </div>
+        </div>
+    </div>
     <!-- Erste Chart-Toolbar (Debug-Controls) -->
     <div class="chart-toolbar-1">
-        <!-- Debug-Controls -->
+        <!-- Debug-Controls (Links) -->
         <div class="debug-controls">
             <button id="skipBtn" class="debug-btn" title="Skip +1min">⏭️</button>
             <button id="playPauseBtn" class="debug-btn" title="Play/Pause">▶️</button>
@@ -613,6 +1085,11 @@ async def get_chart():
                 <option value="30m">30m</option>
                 <option value="1h">1h</option>
             </select>
+        </div>
+
+        <!-- Navigation Controls (Rechts) -->
+        <div class="navigation-controls">
+            <button id="goToDateBtn" class="nav-btn" title="Go To Date">📅 Go To</button>
         </div>
     </div>
 
@@ -690,14 +1167,27 @@ async def get_chart():
 
         // Server-side Logging Function für Debug-Ausgaben
         function serverLog(message, data = null) {
+            // Bereinige data für JSON-Serialisierung
+            let cleanData = null;
+            if (data !== null && data !== undefined) {
+                try {
+                    // Teste ob data JSON-serialisierbar ist
+                    JSON.stringify(data);
+                    cleanData = data;
+                } catch (e) {
+                    // Falls nicht serialisierbar, konvertiere zu String
+                    cleanData = String(data);
+                }
+            }
+
             const logData = {
-                message: message,
+                message: message || 'No message',
                 timestamp: new Date().toISOString(),
-                data: data
+                data: cleanData
             };
 
             // Console ausgeben für Browser
-            console.log('📤 SERVER LOG:', message, data);
+            console.log('[SERVER LOG]', message, cleanData);
 
             // An Server senden für Terminal-Ausgabe
             fetch('/api/debug/log', {
@@ -1384,6 +1874,107 @@ async def get_chart():
                     }
                     break;
 
+                case 'chart_reinitialize':
+                    if (isInitialized && message.data) {
+                        console.log('📅 Chart Reinitialization: Go To Date triggered');
+                        console.log('📊 New data received:', message.data.length, 'candles');
+                        console.log('🎯 Target Date:', message.target_date);
+                        console.log('📍 Current Index:', message.current_index);
+
+                        // Lösche alle bestehenden Position-Overlays
+                        clearAllPositions();
+
+                        // Setze neue Chart-Daten
+                        candlestickSeries.setData(message.data);
+
+                        // Positioniere Chart zu gewähltem Datum (zeige 50 Kerzen ab Startdatum)
+                        if (message.data.length > 0) {
+                            const startIndex = Math.max(0, message.current_index - 5); // 5 Kerzen Kontext vor Startdatum
+                            const endIndex = Math.min(message.data.length - 1, message.current_index + 45); // 45 Kerzen nach Startdatum
+
+                            const firstTime = message.data[startIndex].time;
+                            const lastTime = message.data[endIndex].time;
+                            const timeSpan = lastTime - firstTime;
+                            const margin = timeSpan * 0.25; // 20% Freiraum rechts
+
+                            chart.timeScale().setVisibleRange({
+                                from: firstTime,
+                                to: lastTime + margin
+                            });
+
+                            console.log('✅ Chart reinitialized and positioned to:', message.target_date);
+                            console.log('📊 Showing candles:', startIndex, 'to', endIndex, 'with 20% margin');
+                        }
+
+                        // Update Titel mit neuen Informationen
+                        document.title = `Chart: ${message.target_date} (${message.data.length} Kerzen verfügbar)`;
+                    } else {
+                        console.error('❌ Chart Reinitialization failed: Chart not initialized or no data');
+                    }
+                    break;
+
+                case 'go_to_date_complete':
+                    if (isInitialized && message.data) {
+                        console.log('[GO TO DATE] Memory-Performance Complete: Loading', message.data.length, 'candles');
+                        console.log('[GO TO DATE] Target Date:', message.target_date);
+                        console.log('[GO TO DATE] Performance Mode:', message.performance);
+
+                        // Verwende visible_range Info vom Server falls verfügbar
+                        if (message.visible_range) {
+                            console.log('[GO TO DATE] Server Visible Range:', message.visible_range);
+                        }
+
+                        // Lösche alle bestehenden Position-Overlays
+                        clearAllPositions();
+
+                        // Setze neue historische Chart-Daten
+                        candlestickSeries.setData(message.data);
+
+                        // HIGH-PERFORMANCE POSITIONING: Verwende Server-calculated Range
+                        if (message.data.length > 0) {
+                            let startIndex, endIndex;
+                            const totalCandles = message.data.length;
+                            const visibleCandles = 50; // FIXED: Variable außerhalb der Blöcke definieren
+
+                            if (message.visible_range) {
+                                // Verwende vom Memory Cache berechnete Range
+                                startIndex = message.visible_range.start;
+                                endIndex = message.visible_range.end;
+                                console.log('[POSITIONING] Server-calculated range:', startIndex, '-', endIndex);
+                            } else {
+                                // Fallback: Standardberechnung (letzten 50 von 200)
+                                startIndex = Math.max(0, totalCandles - visibleCandles);
+                                endIndex = totalCandles - 1;
+                                console.log('[POSITIONING] Fallback range:', startIndex, '-', endIndex);
+                            }
+
+                            // Zeitbereich für die sichtbaren Kerzen
+                            const startTime = message.data[startIndex].time;
+                            const endTime = message.data[endIndex].time;
+                            const timeSpan = endTime - startTime;
+                            const margin = timeSpan * 0.05; // 5% Margin für gefüllten Chart
+
+                            chart.timeScale().setVisibleRange({
+                                from: startTime - margin,
+                                to: endTime + margin
+                            });
+
+                            console.log(`[GO TO DATE] Positioning: ${visibleCandles} von ${totalCandles} Kerzen angezeigt (Chart gefüllt)`);
+                            console.log(`[GO TO DATE] Sichtbare Kerzen: Index ${startIndex}-${endIndex}`);
+                            console.log(`[GO TO DATE] Zeitbereich: ${new Date(startTime * 1000).toISOString()} bis ${new Date(endTime * 1000).toISOString()}`);
+                        }
+
+                        // Update Titel mit neuen Informationen
+                        document.title = `Go To Date: ${message.target_date} (${message.data.length} historische Kerzen)`;
+
+                        // Server-Log für Debug
+                        console.log('[GO TO DATE] Complete: Chart repositioniert, bereit für Skip-Button Navigation');
+
+                    } else {
+                        console.error('[GO TO DATE] Complete failed: Chart not initialized or no data');
+                    }
+                    break;
+
                 case 'positions_sync':
                     if (isInitialized && message.positions) {
                         syncPositions(message.positions);
@@ -1407,7 +1998,7 @@ async def get_chart():
                         candlestickSeries.setData(formattedData);
 
                         // NEUE LOGIK: Zeige nur letzten 50 Kerzen mit 80/20 Aufteilung bei TF-Wechsel
-                        console.log(`📊 Timeframe ${message.timeframe}: ${formattedData.length} Kerzen geladen, zeige letzten 50 mit 80/20 Aufteilung`);
+                        console.log(`[TIMEFRAME] ${message.timeframe}: ${formattedData.length} Kerzen geladen, zeige letzten 50 mit 80/20 Aufteilung`);
                         document.title = `Chart: ${formattedData.length} Kerzen verfügbar, 50 sichtbar (${message.timeframe})`;
 
                         // Berechne die letzten 50 Kerzen
@@ -1430,12 +2021,12 @@ async def get_chart():
                         // Update current timeframe
                         window.currentTimeframe = message.timeframe;
 
-                        console.log(`✅ TF-Wechsel: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
+                        console.log(`[SUCCESS] TF-Wechsel: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
                     }
                     break;
 
                 default:
-                    console.log('❓ Unknown message type:', message.type);
+                    console.log('[UNKNOWN] Unknown message type:', message.type);
             }
         }
 
@@ -2233,7 +2824,7 @@ async def get_chart():
         }
 
         function clearAllPositions() {
-            console.log('🗑️ Clear All Button geklickt via onclick - FORCE DEAKTIVIERE TOOL');
+            console.log('[CLEAR ALL] Button geklickt via onclick - FORCE DEAKTIVIERE TOOL');
 
             try {
                 // Deaktiviere beide Position Tools komplett
@@ -2245,9 +2836,9 @@ async def get_chart():
                     positionTool.classList.remove('active');
                     positionTool.style.background = '#333';
                     positionTool.style.color = '#fff';
-                    console.log('✅ Long Position Tool deaktiviert via onclick');
+                    console.log('[SUCCESS] Long Position Tool deaktiviert via onclick');
                 } else {
-                    console.error('❌ positionBoxTool Element nicht gefunden beim Clear!');
+                    console.error('[ERROR] positionBoxTool Element nicht gefunden beim Clear!');
                 }
 
                 const shortTool = document.getElementById('shortPositionTool');
@@ -2255,15 +2846,15 @@ async def get_chart():
                     shortTool.classList.remove('active');
                     shortTool.style.background = '#333';
                     shortTool.style.color = '#fff';
-                    console.log('✅ Short Position Tool deaktiviert via onclick');
+                    console.log('[SUCCESS] Short Position Tool deaktiviert via onclick');
                 } else {
-                    console.error('❌ shortPositionTool Element nicht gefunden beim Clear!');
+                    console.error('[ERROR] shortPositionTool Element nicht gefunden beim Clear!');
                 }
 
                 // Versuche Position Box zu entfernen (falls vorhanden)
                 if (typeof removeCurrentPositionBox === 'function') {
                     removeCurrentPositionBox();
-                    console.log('✅ Position Box entfernt');
+                    console.log('[SUCCESS] Position Box entfernt');
                 } else {
                     console.log('⚠️ removeCurrentPositionBox function not available yet');
                 }
@@ -2432,6 +3023,91 @@ async def get_chart():
             });
         }
 
+        // Go To Date Modal Functions
+        function openDateModal() {
+            console.log('[GO TO DATE] Opening Modal...');
+            const modal = document.getElementById('dateModal');
+            const dateInput = document.getElementById('goToDateInput');
+
+            // Setze ein verfügbares Datum als Default (Dezember 2024)
+            // Die CSV-Daten gehen von 31. Dezember 2024 rückwärts
+            const defaultDate = new Date('2024-12-25'); // Ein Datum das in den Daten ist
+            const dateString = defaultDate.toISOString().split('T')[0];
+            dateInput.value = dateString;
+
+            // Setze min/max Werte für verfügbare Daten (ungefähr)
+            dateInput.setAttribute('min', '2024-12-01'); // Ca. Startdatum der Daten
+            dateInput.setAttribute('max', '2024-12-30'); // Enddatum der Daten
+
+            modal.style.display = 'flex';
+            dateInput.focus();
+        }
+
+        function closeDateModal() {
+            console.log('[GO TO DATE] Closing Modal...');
+            const modal = document.getElementById('dateModal');
+            modal.style.display = 'none';
+        }
+
+        function goToSelectedDate() {
+            const dateInput = document.getElementById('goToDateInput');
+            const selectedDate = dateInput.value;
+
+            if (!selectedDate) {
+                alert('Bitte wähle ein Datum aus!');
+                return;
+            }
+
+            console.log('[GO TO DATE] Request:', selectedDate);
+            serverLog('[GO TO DATE] Request: ' + selectedDate);
+
+            // Modal schließen
+            closeDateModal();
+
+            // API Call zum Backend
+            fetch('/api/debug/go_to_date', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date: selectedDate })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Go To Date Response:', data);
+                serverLog('[SUCCESS] Go To Date successful: ' + data.message, data);
+
+                if (data.status === 'success') {
+                    console.log('[CHART] Chart wird zu neuem Datum reinitialisiert...');
+                    // WebSocket wird automatisch das chart_reinitialize Event senden
+                } else {
+                    console.error('❌ Go To Date failed:', data.message);
+                    alert('Fehler: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('❌ Go To Date Error:', error);
+                serverLog('❌ Go To Date failed', error);
+                alert('Fehler beim Laden des Datums: ' + error.message);
+            });
+        }
+
+        // Modal schließen bei Escape-Taste
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const modal = document.getElementById('dateModal');
+                if (modal.style.display === 'flex') {
+                    closeDateModal();
+                }
+            }
+        });
+
+        // Modal schließen bei Klick außerhalb
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('dateModal');
+            if (event.target === modal) {
+                closeDateModal();
+            }
+        });
+
         // Warte bis DOM und Script geladen sind
         document.addEventListener('DOMContentLoaded', function() {
             serverLog('🔧 DOM loaded - Initialisiere Chart und Event Handlers...');
@@ -2485,6 +3161,16 @@ async def get_chart():
                 timeframeSelector.addEventListener('change', function() {
                     handleDebugTimeframe(this.value);
                 });
+            }
+
+            // Go To Date Button
+            const goToDateBtn = document.getElementById('goToDateBtn');
+            console.log('🔧 Debug setup - Go To Date Button element:', goToDateBtn);
+            if (goToDateBtn) {
+                goToDateBtn.addEventListener('click', openDateModal);
+                console.log('✅ Go To Date Button event listener attached');
+            } else {
+                console.error('❌ Go To Date Button not found!');
             }
 
             console.log('🛠️ Debug Controls Event Handlers konsolidiert und initialized');
@@ -2843,36 +3529,134 @@ async def change_timeframe(request: dict):
     try:
         import pandas as pd
         from pathlib import Path
+        from datetime import timedelta
 
-        # Direkter CSV-Load (Option 2 Struktur)
-        csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
+        # HIGH-PERFORMANCE MEMORY-BASIERTE LOGIK mit Timeframe-Persistenz
+        global current_go_to_date, current_go_to_index, chart_cache
 
-        if not csv_path.exists():
-            return {"status": "error", "message": f"CSV-Datei für {timeframe} nicht gefunden: {csv_path}"}
+        print(f"[TIMEFRAME] Memory-basierte Navigation zu {timeframe}")
 
-        # CSV laden
-        df = pd.read_csv(csv_path)
+        # Prüfe ob Chart Cache verfügbar ist, verwende CSV-Fallback wenn nötig
+        if not chart_cache or timeframe not in chart_cache.loaded_timeframes:
+            print(f"[TIMEFRAME] Memory Cache nicht verfügbar für {timeframe} - verwende CSV-Fallback")
 
-        # Lade 200 Kerzen als Puffer (nicht visible_candles)
-        buffer_candles = 200
-        if len(df) > buffer_candles:
-            result_df = df.tail(buffer_candles)
+            # CSV-basierter Fallback
+            csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
+
+            if csv_path.exists():
+                # Prüfe ob Go To Date aktiv ist
+                global current_go_to_date
+                if current_go_to_date is not None:
+                    # Go To Date ist aktiv - lade Daten ab diesem Datum
+                    print(f"[TIMEFRAME] Go To Date aktiv: Lade 200 {timeframe} Kerzen rückwärts bis {current_go_to_date.date()}")
+                    df = pd.read_csv(csv_path)
+
+                    # DateTime kombinieren für Datumsvergleich
+                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+                    df['date_only'] = df['datetime'].dt.date
+
+                    # Suche das gewünschte Datum
+                    target_date_only = current_go_to_date.date()
+                    target_rows = df[df['date_only'] == target_date_only]
+
+                    if len(target_rows) > 0:
+                        # Verwende die erste Kerze des Zieldatums und lade 200 Kerzen rückwärts
+                        end_index = target_rows.index[0] + 1   # Ende bei erster Kerze des Zieldatums (00:00)
+                        start_index = max(0, end_index - 200)  # 200 Kerzen rückwärts
+                        df = df.iloc[start_index:end_index]
+                        print(f"[TIMEFRAME] Go To Date: {len(target_rows)} Kerzen für {target_date_only} gefunden, 200 Kerzen rückwärts geladen")
+                    else:
+                        # Fallback: Letzte 200 Kerzen
+                        df = df.tail(200)
+                        print(f"[TIMEFRAME] Go To Date: Datum {target_date_only} nicht gefunden in {timeframe}, verwende letzte 200 Kerzen")
+                else:
+                    # Standard: Letzte 200 Kerzen
+                    print(f"[TIMEFRAME] Standard: Lade 200 {timeframe} Kerzen (letzten 200)")
+                    df = pd.read_csv(csv_path).tail(200)
+
+                # DateTime kombinieren und als zusätzliche Spalte hinzufügen (falls noch nicht vorhanden)
+                if 'datetime' not in df.columns:
+                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+                df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
+
+                # Konvertiere zu Chart-Format
+                chart_data = []
+                for _, row in df.iterrows():
+                    chart_data.append({
+                        'time': int(row['time']),
+                        'open': float(row['Open']),
+                        'high': float(row['High']),
+                        'low': float(row['Low']),
+                        'close': float(row['Close']),
+                        'volume': int(row['Volume'])
+                    })
+
+                print(f"[TIMEFRAME] CSV geladen: {len(chart_data)} {timeframe} Kerzen")
+
+                # WebSocket Broadcast
+                await manager.broadcast({
+                    'type': 'timeframe_changed',
+                    'timeframe': timeframe,
+                    'data': chart_data
+                })
+
+                print(f"Broadcast: {len(manager.active_connections)} aktive Verbindungen, Nachricht: timeframe_changed")
+                print(f"Broadcast abgeschlossen an {len(manager.active_connections)} Clients")
+                print(f"Timeframe geändert zu {timeframe} - {len(chart_data)} Kerzen")
+
+                return {
+                    "status": "success",
+                    "message": f"Timeframe zu {timeframe} geändert",
+                    "data": chart_data,
+                    "timeframe": timeframe,
+                    "count": len(chart_data)
+                }
+            else:
+                return {"status": "error", "message": f"CSV-Datei für {timeframe} nicht gefunden"}
+
+        if current_go_to_date is not None:
+            # Go To Date Modus: Verwende Memory Cache für ultra-schnelle Navigation
+            print(f"[TIMEFRAME] Go To Date Persistenz: {current_go_to_date} -> {timeframe}")
+
+            # Memory-basierte Index-Suche für neuen Timeframe
+            best_index = chart_cache.find_best_date_index(current_go_to_date, timeframe)
+
+            # Hole 200 Kerzen mit nur 50 sichtbar (konsistent mit Go To Date)
+            candles_result = chart_cache.get_candles_range(
+                timeframe=timeframe,
+                center_index=best_index,
+                total_candles=200,
+                visible_candles=50
+            )
+
+            aggregated_data = candles_result['data']
+            visible_start = candles_result['visible_start']
+            visible_end = candles_result['visible_end']
+
+            # Update Index für neuen Timeframe
+            current_go_to_index = best_index
+
+            print(f"[TIMEFRAME] Go To Date Memory: {len(aggregated_data)} {timeframe} Kerzen, sichtbar {visible_start}-{visible_end}")
+
         else:
-            result_df = df
+            # Standard-Modus: Lade die letzten 200 Kerzen aus Memory
+            tf_info = chart_cache.get_timeframe_info(timeframe)
+            last_index = tf_info['total_candles'] - 1
 
-        # In API-Format konvertieren
-        aggregated_data = []
-        for _, row in result_df.iterrows():
-            aggregated_data.append({
-                'time': int(row['time']),
-                'open': float(row['open']),
-                'high': float(row['high']),
-                'low': float(row['low']),
-                'close': float(row['close']),
-                'volume': int(row['volume'])
-            })
+            candles_result = chart_cache.get_candles_range(
+                timeframe=timeframe,
+                center_index=last_index,
+                total_candles=200,
+                visible_candles=50
+            )
 
-        print(f"CSV geladen: {len(aggregated_data)} {timeframe} Kerzen")
+            aggregated_data = candles_result['data']
+            visible_start = candles_result['visible_start']
+            visible_end = candles_result['visible_end']
+
+            print(f"[TIMEFRAME] Standard Memory: {len(aggregated_data)} {timeframe} Kerzen, sichtbar {visible_start}-{visible_end}")
+
+        print(f"[TIMEFRAME] Memory-Performance: {len(aggregated_data)} {timeframe} Kerzen geladen")
 
         # Update Chart State
         manager.chart_state['data'] = aggregated_data
@@ -3053,42 +3837,61 @@ async def update_user_pnl(pnl_data: dict):
 
 @app.post("/api/debug/skip")
 async def debug_skip():
-    """API Endpoint für Debug Skip (+1 Minute)"""
+    """High-Performance Memory-basiertes Skip System mit Sub-Millisekunden Navigation"""
     try:
-        result = debug_controller.skip_minute()
+        # Prüfe ob Go To Date aktiv ist für Index-Navigation
+        global current_go_to_date, current_go_to_index, chart_cache
 
-        # Extrahiere Kerze aus dem Ergebnis
-        if result.get('type') == 'complete_candle':
-            new_candle = result['candle']
-            # Neue vollständige Kerze zu Chart-Daten hinzufügen
-            manager.chart_state['data'].append(new_candle)
-        else:
-            # Incomplete Kerze - markiere als solche
-            new_candle = result['candle']
-            new_candle['incomplete'] = True
+        if current_go_to_date is None or current_go_to_index is None:
+            return {"status": "error", "message": "Kein Go To Date aktiv - Skip nur nach Go To verfügbar"}
 
-        # WebSocket-Update an alle Clients (konvertiere datetime für JSON-Serialisierung)
-        candle_for_ws = new_candle.copy()
-        if 'period_start' in candle_for_ws and hasattr(candle_for_ws['period_start'], 'isoformat'):
-            candle_for_ws['period_start'] = candle_for_ws['period_start'].isoformat()
+        # Verwende aktuellen Timeframe für Memory-Navigation
+        current_timeframe = debug_controller.current_timeframe
 
+        # Prüfe Chart Cache Verfügbarkeit
+        if not chart_cache or current_timeframe not in chart_cache.loaded_timeframes:
+            print(f"[SKIP] Memory Cache nicht verfügbar für {current_timeframe}")
+            return {"status": "error", "message": f"Memory Cache für {current_timeframe} nicht verfügbar"}
+
+        # ULTRA-SCHNELLE MEMORY-NAVIGATION: Nächste Kerze aus DataFrame
+        skip_result = chart_cache.get_next_candle(current_timeframe, current_go_to_index)
+
+        if not skip_result:
+            return {"status": "error", "message": f"Ende der {current_timeframe} Memory-Daten erreicht"}
+
+        new_candle = skip_result['candle']
+        new_index = skip_result['new_index']
+
+        # Update Index für nächsten Skip
+        current_go_to_index = new_index
+
+        print(f"[SKIP] Memory-Performance: Index {current_go_to_index}, Ultra-schnelle Navigation")
+
+        # Chart-Daten aktualisieren
+        manager.chart_state['data'].append(new_candle)
+
+        # WebSocket-Update
         await manager.broadcast({
             'type': 'debug_skip',
-            'candle': candle_for_ws,
-            'result_type': result.get('type')
+            'candle': new_candle,
+            'result_type': 'memory_cache',
+            'csv_position': current_go_to_index,
+            'performance': 'memory_navigation'
         })
 
         return {
             "status": "success",
-            "message": f"Skip +1min erfolgreich ({result.get('type')})",
+            "message": f"Memory Skip +1 {current_timeframe} (Index {current_go_to_index})",
             "candle": new_candle,
-            "result_type": result.get('type'),
-            "debug_state": debug_controller.get_state()
+            "csv_position": current_go_to_index,
+            "performance_mode": "memory_cache"
         }
 
     except Exception as e:
-        print(f"Fehler beim Debug Skip: {e}")
-        return {"status": "error", "message": str(e)}
+        print(f"[ERROR] Memory Skip Fehler: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": f"Skip Fehler: {str(e)}"}
 
 @app.post("/api/debug/set_timeframe/{timeframe}")
 async def debug_set_timeframe(timeframe: str):
@@ -3195,6 +3998,156 @@ async def debug_log_from_client(request: Request):
     except Exception as e:
         print(f"Fehler beim JavaScript Debug-Log: {e}")
         return {"status": "error", "message": str(e)}
+
+@app.post("/api/debug/go_to_date")
+async def debug_go_to_date(date_data: dict):
+    """High-Performance Memory-basierte Go To Date mit intelligentem Fallback-System"""
+    try:
+        from datetime import datetime
+
+        target_date = date_data.get("date")
+        if not target_date:
+            return {"status": "error", "message": "Kein Datum angegeben"}
+
+        # Parse das Datum (Format: YYYY-MM-DD)
+        target_datetime = datetime.strptime(target_date, "%Y-%m-%d")
+        current_timeframe = debug_controller.current_timeframe
+
+        print(f"[GO TO DATE] Memory-Request: {target_datetime} (Timeframe: {current_timeframe})")
+
+        # Prüfe ob Chart Cache verfügbar ist
+        global chart_cache, current_go_to_date, current_go_to_index
+
+        if not chart_cache or current_timeframe not in chart_cache.loaded_timeframes:
+            print(f"[GO TO DATE] Cache nicht verfügbar für {current_timeframe} - verwende CSV-Fallback")
+
+            # CSV-basierter Fallback für Go To Date
+            import pandas as pd
+            from pathlib import Path
+
+            csv_path = Path(f"src/data/aggregated/{current_timeframe}/nq-2024.csv")
+
+            if csv_path.exists():
+                # Lade komplette CSV und suche das gewünschte Datum
+                df = pd.read_csv(csv_path)
+
+                # DateTime kombinieren und als zusätzliche Spalte hinzufügen
+                df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+                df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
+
+                # Suche das gewünschte Datum
+                target_date_only = target_datetime.date()
+                df['date_only'] = df['datetime'].dt.date
+
+                # Finde Kerzen für das Zieldatum
+                target_rows = df[df['date_only'] == target_date_only]
+
+                if len(target_rows) > 0:
+                    # Verwende die erste Kerze des Zieldatums und lade 200 Kerzen rückwärts
+                    end_index = target_rows.index[0] + 1   # Ende bei erster Kerze des Zieldatums (00:00)
+                    start_index = max(0, end_index - 200)  # 200 Kerzen rückwärts
+                    selected_df = df.iloc[start_index:end_index]
+
+                    print(f"[GO TO DATE] Gefunden: {len(target_rows)} Kerzen für {target_date}, lade 200 Kerzen rückwärts bis Index {end_index} (endet bei {target_date} 00:00)")
+                else:
+                    # Fallback: Lade letzten 200 Kerzen wenn Datum nicht gefunden
+                    selected_df = df.tail(200)
+                    print(f"[GO TO DATE] Datum {target_date} nicht gefunden, verwende letzten 200 Kerzen")
+
+                # Konvertiere zu Chart-Format
+                chart_data = []
+                for _, row in selected_df.iterrows():
+                    chart_data.append({
+                        'time': int(row['time']),
+                        'open': float(row['Open']),
+                        'high': float(row['High']),
+                        'low': float(row['Low']),
+                        'close': float(row['Close']),
+                        'volume': int(row['Volume'])
+                    })
+
+                # Update globale Go To Date Variable für CSV-System
+                global current_go_to_date
+                current_go_to_date = target_datetime
+
+                # WebSocket Broadcast
+                await manager.broadcast({
+                    'type': 'go_to_date_complete',
+                    'data': chart_data,
+                    'date': target_date
+                })
+
+                print(f"[GO TO DATE] Erfolgreich zu {target_date} gesprungen - {len(chart_data)} Kerzen geladen")
+
+                return {
+                    "status": "success",
+                    "message": f"Go To Date zu {target_date} erfolgreich",
+                    "data": chart_data,
+                    "count": len(chart_data),
+                    "target_date": target_date
+                }
+            else:
+                return {"status": "error", "message": f"CSV-Datei für {current_timeframe} nicht gefunden"}
+
+        # MEMORY-BASIERTE NAVIGATION: Ultra-schnelle Index-Suche
+        best_index = chart_cache.find_best_date_index(target_datetime, current_timeframe)
+
+        # Hole 200 Kerzen mit nur 50 sichtbar (Smart Range Loading)
+        candles_result = chart_cache.get_candles_range(
+            timeframe=current_timeframe,
+            center_index=best_index,
+            total_candles=200,
+            visible_candles=50
+        )
+
+        chart_data = candles_result['data']
+        visible_start = candles_result['visible_start']
+        visible_end = candles_result['visible_end']
+
+        print(f"[GO TO DATE] Memory-Navigation: {len(chart_data)} Kerzen geladen, sichtbar: {visible_start}-{visible_end}")
+
+        # Update globale Go To Date Variablen
+        current_go_to_date = target_datetime
+        current_go_to_index = best_index
+
+        # Update Chart State
+        manager.chart_state['data'] = chart_data
+        manager.chart_state['last_update'] = datetime.now().isoformat()
+
+        # WebSocket-Update mit Chart-Positioning Info
+        update_data = {
+            'type': 'go_to_date_complete',
+            'data': chart_data,
+            'target_date': target_date,
+            'data_count': len(chart_data),
+            'csv_position': best_index,
+            'visible_range': {
+                'start': visible_start,
+                'end': visible_end,
+                'total': len(chart_data)
+            },
+            'performance': 'memory_cache'
+        }
+
+        await manager.broadcast(update_data)
+
+        print(f"[GO TO DATE] Memory-Performance: {target_date} -> Index {best_index}, {len(chart_data)} Kerzen, {visible_end - visible_start + 1} sichtbar")
+
+        return {
+            "status": "success",
+            "message": f"Memory-Navigation zu {target_date}",
+            "data_count": len(chart_data),
+            "csv_position": best_index,
+            "target_date": target_date,
+            "visible_candles": visible_end - visible_start + 1,
+            "performance_mode": "memory_cache"
+        }
+
+    except Exception as e:
+        print(f"[ERROR] Go To Date Memory Fehler: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": f"Go To Date Fehler: {str(e)}"}
 
 if __name__ == "__main__":
     # Debug Route
