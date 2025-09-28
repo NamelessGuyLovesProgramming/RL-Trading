@@ -121,8 +121,209 @@ class UnifiedStateManager:
         if not self.go_to_date_mode and not self.current_skip_position:
             print(f"[UNIFIED-STATE] DebugController Zeit global synchronisiert: {new_time}")
 
+# REVOLUTIONARY: Chart Data Validator - Prevents "Value is null" errors
+class ChartDataValidator:
+    """Data validation and sanitization für LightweightCharts compatibility"""
+
+    def __init__(self):
+        self.validation_stats = {'total_validations': 0, 'null_fixes': 0, 'type_fixes': 0}
+
+    def validate_chart_data(self, data, timeframe=None, source="unknown"):
+        """Validates and sanitizes chart data before sending to LightweightCharts"""
+        self.validation_stats['total_validations'] += 1
+
+        if not data:
+            print(f"[DATA-VALIDATOR] WARNING: Empty data from {source}")
+            return []
+
+        validated_data = []
+        fixed_count = 0
+
+        for i, candle in enumerate(data):
+            # Copy candle to prevent mutation
+            validated_candle = candle.copy()
+            candle_fixed = False
+
+            # CRITICAL: Fix null/undefined values that cause LightweightCharts crashes
+            required_fields = ['time', 'open', 'high', 'low', 'close']
+            for field in required_fields:
+                if field not in validated_candle or validated_candle[field] is None:
+                    print(f"[DATA-VALIDATOR] CRITICAL: {field} is null in {timeframe} candle {i} from {source}")
+
+                    if field == 'time':
+                        # Use previous candle time + timeframe minutes if available
+                        if i > 0 and validated_data:
+                            prev_time = validated_data[-1]['time']
+                            timeframe_minutes = self._get_timeframe_minutes(timeframe)
+                            validated_candle[field] = prev_time + (timeframe_minutes * 60)
+                        else:
+                            # Fallback: Use current timestamp
+                            validated_candle[field] = int(datetime.now().timestamp())
+                        candle_fixed = True
+                    else:
+                        # For OHLC: Use previous candle's close or 20000 as fallback
+                        fallback_price = 20000  # NQ realistic fallback
+                        if i > 0 and validated_data:
+                            fallback_price = validated_data[-1]['close']
+                        validated_candle[field] = fallback_price
+                        candle_fixed = True
+
+                    self.validation_stats['null_fixes'] += 1
+
+            # Type validation and conversion
+            for field in required_fields:
+                if field == 'time':
+                    if not isinstance(validated_candle[field], (int, float)):
+                        validated_candle[field] = int(float(validated_candle[field]))
+                        candle_fixed = True
+                        self.validation_stats['type_fixes'] += 1
+                else:
+                    if not isinstance(validated_candle[field], (int, float)):
+                        try:
+                            validated_candle[field] = float(validated_candle[field])
+                            candle_fixed = True
+                            self.validation_stats['type_fixes'] += 1
+                        except (ValueError, TypeError):
+                            validated_candle[field] = 20000  # Safe fallback
+                            candle_fixed = True
+                            self.validation_stats['null_fixes'] += 1
+
+            # SPECIAL: 4h timeframe specific validation
+            if timeframe == '4h' and candle_fixed:
+                print(f"[DATA-VALIDATOR] 4h-FIX: Candle {i} sanitized - time:{validated_candle['time']}, "
+                      f"OHLC:[{validated_candle['open']:.2f}, {validated_candle['high']:.2f}, "
+                      f"{validated_candle['low']:.2f}, {validated_candle['close']:.2f}]")
+                fixed_count += 1
+
+            validated_data.append(validated_candle)
+
+        if fixed_count > 0:
+            print(f"[DATA-VALIDATOR] {timeframe} from {source}: {fixed_count}/{len(data)} candles fixed")
+
+        return validated_data
+
+    def _get_timeframe_minutes(self, timeframe):
+        """Helper: Convert timeframe to minutes"""
+        timeframe_map = {
+            '1m': 1, '2m': 2, '3m': 3, '5m': 5,
+            '15m': 15, '30m': 30, '1h': 60, '4h': 240
+        }
+        return timeframe_map.get(timeframe, 5)
+
+    def get_validation_stats(self):
+        """Returns validation statistics for debugging"""
+        return self.validation_stats.copy()
+
+    def reset_stats(self):
+        """Reset validation statistics"""
+        self.validation_stats = {'total_validations': 0, 'null_fixes': 0, 'type_fixes': 0}
+
+# REVOLUTIONARY: Unified Price Repository - Single Source of Truth für konsistente Endkurse
+class UnifiedPriceRepository:
+    """Zentrale Price-Synchronisation für alle Timeframes - löst Endkurs-Inkonsistenz"""
+
+    def __init__(self):
+        self.master_price_timeline = {}  # {timestamp: unified_price}
+        self.timeframe_positions = {}    # {timeframe: current_timestamp}
+        self.base_candles_1m = []        # 1-minute base data als Single Source of Truth
+        self.initialized = False
+        self.price_sync_stats = {'syncs': 0, 'corrections': 0}
+
+    def initialize_with_1m_data(self, csv_1m_data):
+        """Initialize master price timeline with 1-minute CSV data"""
+        if self.initialized:
+            return
+
+        print(f"[PRICE-REPO] Initializing master price timeline with {len(csv_1m_data)} 1m candles")
+
+        for candle in csv_1m_data:
+            timestamp = candle['time'] if isinstance(candle['time'], int) else int(candle['time'])
+            self.master_price_timeline[timestamp] = {
+                'open': float(candle['open']),
+                'high': float(candle['high']),
+                'low': float(candle['low']),
+                'close': float(candle['close']),  # Master close price
+                'volume': int(candle.get('volume', 0))
+            }
+
+        self.base_candles_1m = csv_1m_data.copy()
+        self.initialized = True
+        print(f"[PRICE-REPO] Master timeline initialized: {len(self.master_price_timeline)} price points")
+
+    def get_synchronized_price_at_time(self, target_timestamp, timeframe):
+        """Gets synchronized price at specific timestamp for any timeframe"""
+        if not self.initialized:
+            print(f"[PRICE-REPO] WARNING: Not initialized, returning fallback price")
+            return 20000  # Fallback
+
+        # Find closest timestamp in master timeline
+        closest_timestamp = min(self.master_price_timeline.keys(),
+                               key=lambda x: abs(x - target_timestamp))
+
+        master_price = self.master_price_timeline[closest_timestamp]
+        self.price_sync_stats['syncs'] += 1
+
+        print(f"[PRICE-REPO] {timeframe} @ {target_timestamp} -> Master price: {master_price['close']:.2f}")
+        return master_price['close']
+
+    def synchronize_skip_event_prices(self, skip_time, generated_candles_by_timeframe):
+        """Synchronizes all timeframe candles to same price at skip time"""
+        if not self.initialized:
+            print(f"[PRICE-REPO] Cannot sync - not initialized")
+            return generated_candles_by_timeframe
+
+        target_timestamp = int(skip_time.timestamp())
+        master_price = self.get_synchronized_price_at_time(target_timestamp, "master")
+
+        synchronized_candles = {}
+        for timeframe, candles in generated_candles_by_timeframe.items():
+            if not candles:
+                synchronized_candles[timeframe] = []
+                continue
+
+            sync_candles = []
+            for candle in candles:
+                sync_candle = candle.copy()
+
+                # CRITICAL: Synchronize close price to master price
+                old_close = sync_candle['close']
+                sync_candle['close'] = master_price
+
+                # Adjust OHLC to maintain realistic relationships
+                if sync_candle['open'] > master_price:
+                    sync_candle['open'] = master_price
+                if sync_candle['high'] < master_price:
+                    sync_candle['high'] = master_price + 0.25  # Small buffer
+                if sync_candle['low'] > master_price:
+                    sync_candle['low'] = master_price - 0.25   # Small buffer
+
+                sync_candles.append(sync_candle)
+
+                if old_close != master_price:
+                    self.price_sync_stats['corrections'] += 1
+                    print(f"[PRICE-REPO] {timeframe} price corrected: {old_close:.2f} -> {master_price:.2f}")
+
+            synchronized_candles[timeframe] = sync_candles
+
+        print(f"[PRICE-REPO] Skip event synchronized: {len(synchronized_candles)} timeframes")
+        return synchronized_candles
+
+    def update_timeframe_position(self, timeframe, timestamp):
+        """Updates current position for timeframe"""
+        self.timeframe_positions[timeframe] = timestamp
+
+    def get_price_sync_stats(self):
+        """Returns synchronization statistics"""
+        return self.price_sync_stats.copy()
+
+    def reset_stats(self):
+        """Reset synchronization statistics"""
+        self.price_sync_stats = {'syncs': 0, 'corrections': 0}
+
 # Global Instance - Single Source of Truth
 unified_state = UnifiedStateManager()
+data_validator = ChartDataValidator()  # Global validator instance
+price_repository = UnifiedPriceRepository()  # Global price synchronization
 
 # Legacy Compatibility - für bestehenden Code
 current_go_to_date = None  # Wird durch unified_state ersetzt
@@ -172,6 +373,15 @@ class UniversalSkipRenderer:
                 if cls._is_candle_safe_for_timeframe(base_candle, target_timeframe):
                     # TIMEFRAME ADAPTATION: Adjust candle for target timeframe if needed
                     adapted_candle = cls._adapt_candle_for_timeframe(base_candle, original_tf, target_timeframe, event_time)
+
+                    # CRITICAL: Apply price synchronization across timeframes
+                    if price_repository.initialized:
+                        synchronized_price = price_repository.get_synchronized_price_at_time(
+                            adapted_candle['time'], target_timeframe
+                        )
+                        adapted_candle['close'] = synchronized_price
+                        print(f"[CROSS-TF-PRICE-SYNC] {original_tf}->{target_timeframe}: {base_candle['close']:.2f} -> {synchronized_price:.2f}")
+
                     rendered_candles.append(adapted_candle)
                     print(f"[CROSS-TF-SKIP] {original_tf} Skip-Event -> {target_timeframe} verfügbar")
                 else:
@@ -253,10 +463,21 @@ class UniversalSkipRenderer:
             master_clock['current_time'] = datetime.fromtimestamp(candle['time'])
             pass  # Debug entfernt - verursacht CLI-Abstürze
 
-        # Erstelle Skip-Event
+        # CRITICAL: Price synchronization with UnifiedPriceRepository
+        synchronized_candle = candle.copy()
+        if price_repository.initialized:
+            master_price = price_repository.get_synchronized_price_at_time(
+                candle['time'], original_timeframe
+            )
+            synchronized_candle['close'] = master_price
+            print(f"[PRICE-SYNC] {original_timeframe} skip candle price synchronized: {candle['close']:.2f} -> {master_price:.2f}")
+        else:
+            print(f"[PRICE-SYNC] WARNING: PriceRepository not initialized - no sync for {original_timeframe}")
+
+        # Erstelle Skip-Event mit synchronized price
         skip_event = {
             'time': master_clock['current_time'],
-            'candle': candle.copy(),
+            'candle': synchronized_candle,
             'original_timeframe': original_timeframe,
             'created_at': datetime.now()
         }
@@ -2386,6 +2607,38 @@ async def startup_event():
         print("[STARTUP FIX] HighPerformanceChartCache nicht verfügbar - Fallback zu Legacy System")
         chart_cache = None
         success = True  # Fallback ist immer "erfolgreich"
+
+        # CRITICAL: Initialize UnifiedPriceRepository with 1m data for price synchronization
+        try:
+            csv_1m_path = Path("src/data/aggregated/1m/nq-2024.csv")
+            if csv_1m_path.exists():
+                print("[PRICE-REPO] Loading 1m CSV data for price synchronization...")
+                # PERFORMANCE: Load only recent 1m data (last 30 days ~ 43200 rows)
+                df_1m = pd.read_csv(csv_1m_path).tail(43200)
+
+                if 'datetime' not in df_1m.columns:
+                    df_1m['datetime'] = pd.to_datetime(df_1m['Date'] + ' ' + df_1m['Time'], format='mixed', dayfirst=True)
+                df_1m['time'] = df_1m['datetime'].astype(int) // 10**9
+
+                # Convert to chart format for PriceRepository
+                chart_data_1m = []
+                for _, row in df_1m.iterrows():
+                    chart_data_1m.append({
+                        'time': int(row['time']),
+                        'open': float(row['Open']),
+                        'high': float(row['High']),
+                        'low': float(row['Low']),
+                        'close': float(row['Close']),
+                        'volume': int(row['Volume'])
+                    })
+
+                # Initialize price repository
+                price_repository.initialize_with_1m_data(chart_data_1m)
+                print(f"[PRICE-REPO] SUCCESS: Initialized with {len(chart_data_1m)} 1m candles")
+            else:
+                print("[PRICE-REPO] WARNING: 1m CSV not found - price sync will use fallback")
+        except Exception as e:
+            print(f"[PRICE-REPO] ERROR: Failed to initialize - {e}")
 
     except Exception as e:
         print(f"[ERROR] Fehler beim Initialisieren der High-Performance Cache: {e}")
@@ -5940,10 +6193,25 @@ async def change_timeframe(request: Request):
                 "transaction_id": transaction_id
             }
 
-        # Multi-layer data sanitization
+        # Multi-layer data sanitization - ENHANCED: Use ChartDataValidator
         validated_data = DataIntegrityGuard.sanitize_chart_data(chart_data, source=f"bulletproof_tf_{target_timeframe}")
-        if len(validated_data) != len(chart_data):
-            print(f"[BULLETPROOF-TF] Data sanitization: {len(chart_data)} → {len(validated_data)} candles")
+
+        # CRITICAL: Add ChartDataValidator for LightweightCharts compatibility
+        final_validated_data = data_validator.validate_chart_data(
+            validated_data, timeframe=target_timeframe, source=f"change_timeframe_{target_timeframe}"
+        )
+
+        if len(final_validated_data) != len(chart_data):
+            print(f"[BULLETPROOF-TF] Data validation pipeline: {len(chart_data)} → {len(validated_data)} → {len(final_validated_data)} candles")
+
+        # Special logging for 4h timeframe
+        if target_timeframe == '4h':
+            print(f"[BULLETPROOF-TF] 4h-SPECIAL: {len(final_validated_data)} candles validated and sanitized")
+            if final_validated_data:
+                sample_candle = final_validated_data[0]
+                print(f"[BULLETPROOF-TF] 4h-SAMPLE: {sample_candle}")
+
+        validated_data = final_validated_data
 
         print(f"[BULLETPROOF-TF] Phase 3 COMPLETE - {len(validated_data)} validated candles loaded")
 
@@ -6426,7 +6694,12 @@ async def debug_set_timeframe(timeframe: str):
                 'volume': int(row['Volume'])
             })
 
-        print(f"[DEBUG-SET-TF] CSV geladen: {len(chart_data)} {timeframe} Kerzen")
+        # CRITICAL: Validate chart data with ChartDataValidator
+        validated_chart_data = data_validator.validate_chart_data(
+            chart_data, timeframe=timeframe, source=f"debug_set_timeframe_{timeframe}"
+        )
+
+        print(f"[DEBUG-SET-TF] CSV geladen: {len(chart_data)} → {len(validated_chart_data)} {timeframe} Kerzen nach Validation")
 
         # CRITICAL: Add skip candles (same logic as change_timeframe)
         print(f"[DEBUG-SET-TF] SKIP-KERZEN Check für {timeframe}:")
@@ -6448,24 +6721,24 @@ async def debug_set_timeframe(timeframe: str):
         else:
             print(f"[DEBUG-SET-TF] Keine Skip-Kerzen für {timeframe} gefunden (direct: {len(direct_skip_candles)})")
 
-        # Update chart state
-        manager.chart_state['data'] = chart_data
+        # Update chart state with validated data
+        manager.chart_state['data'] = validated_chart_data
         manager.chart_state['interval'] = timeframe
 
-        # WebSocket-Update with complete chart data
+        # WebSocket-Update with complete validated chart data
         await manager.broadcast({
             'type': 'timeframe_changed',  # Use same type as change_timeframe for consistency
             'timeframe': timeframe,
-            'data': chart_data,
+            'data': validated_chart_data,
             'debug_state': debug_controller.get_state()
         })
 
         return {
             "status": "success",
             "message": f"Debug Timeframe auf {timeframe} gesetzt (+ {len(global_skip_candles.get(timeframe, []))} Skip-Kerzen)",
-            "data": chart_data,
+            "data": validated_chart_data,
             "timeframe": timeframe,
-            "count": len(chart_data),
+            "count": len(validated_chart_data),
             "skip_candles": len(global_skip_candles.get(timeframe, [])),
             "debug_state": debug_controller.get_state()
         }

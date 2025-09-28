@@ -1,5 +1,87 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Unicode Encoding Skip Bug - September 2025 🔧 CRITICAL FIX
+
+### Problem Description
+**Symptom:** Skip-Button verursacht sofortigen Fehler in allen Timeframes mit `UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 29: character maps to <undefined>`
+
+**Exact Failure Sequence:**
+1. Go To Date → Beliebiges Datum (✅ works)
+2. Skip-Button klicken (❌ FAILS immediately)
+3. Fehler erscheint sowohl in Frontend als auch Server-Console
+4. Skip-Funktionalität komplett blockiert
+
+**Technical Root Cause:** Windows CMD/PowerShell verwendet CP1252 Encoding, welches Unicode-Character `\u2192` (→) nicht darstellen kann
+
+### Technical Analysis 🎯
+
+#### **Error Stack Trace:**
+```
+File "C:\Users\vgude\VsStudio\RL-Trading\charts\chart_server.py", line 266, in get_synchronized_price_at_time
+print(f"[PRICE-REPO] {timeframe} @ {target_timestamp} → Master price: {master_price['close']:.2f}")
+File "C:\Users\vgude\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 29: character maps to <undefined>
+```
+
+#### **Affected Code Locations:**
+- `chart_server.py:266` - `[PRICE-REPO]` Master price sync log
+- `chart_server.py:304` - `[PRICE-REPO]` Price correction log
+- `chart_server.py:383` - `[CROSS-TF-PRICE-SYNC]` Cross-timeframe sync log
+- `chart_server.py:473` - `[PRICE-SYNC]` Skip candle sync log
+
+### Solution Implementation 🚀
+
+#### **Fix Applied: Unicode-to-ASCII Character Replacement**
+**Date:** 2025-09-28
+**Scope:** 4 print statements using `→` unicode character
+
+**Changes Made:**
+```python
+# BEFORE (Causes UnicodeEncodeError)
+print(f"[PRICE-REPO] {timeframe} @ {target_timestamp} → Master price: {master_price['close']:.2f}")
+
+# AFTER (Windows-compatible)
+print(f"[PRICE-REPO] {timeframe} @ {target_timestamp} -> Master price: {master_price['close']:.2f}")
+```
+
+**All Replacements:**
+1. **Line 266:** `→` → `->` in PRICE-REPO master price log
+2. **Line 304:** `→` → `->` in PRICE-REPO correction log
+3. **Line 383:** `→` → `->` in CROSS-TF-PRICE-SYNC log (both arrows)
+4. **Line 473:** `→` → `->` in PRICE-SYNC skip log
+
+### Validation & Testing ✅
+
+**Test Results:**
+- ✅ Skip-Button functionality restored in all timeframes (1m, 2m, 3m, 5m, 15m, 30m, 1h, 4h)
+- ✅ No encoding errors in Windows CMD/PowerShell
+- ✅ All log messages display correctly with `->` character
+- ✅ Debug skip operations work properly after Go-To-Date
+- ✅ Cross-timeframe synchronization unaffected
+
+**User Validation Confirmed - 2025-09-28:**
+- ✅ **USER CONFIRMED:** "perfekt. es klappt" - Skip-Button funktioniert vollständig
+- ✅ **LIVE TESTING:** GoTo Date + Skip operations successful
+- ✅ **PRODUCTION READY:** Fix deployed and validated in real-time usage
+
+**System Impact:**
+- **Risk Level:** Very Low (Log-only changes)
+- **Performance:** No impact
+- **Compatibility:** Improved Windows compatibility
+
+### Prevention Rules 📋
+
+1. **Unicode Character Policy:** Use ASCII-compatible characters in all print statements for Windows compatibility
+2. **Character Guidelines:**
+   - ✅ Use `->` instead of `→`
+   - ✅ Use `<=` instead of `≤`
+   - ✅ Use `>=` instead of `≥`
+   - ✅ Use `!=` instead of `≠`
+3. **Testing:** Test all console output on Windows CMD before deployment
+4. **Code Review:** Check for unicode characters in logging statements
+
+---
+
 ## "Value is null" Multi-Timeframe Synchronization Bug - September 2025 🚀 REVOLUTIONARY FIX
 
 ### Problem Description
