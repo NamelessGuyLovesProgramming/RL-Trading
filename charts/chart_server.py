@@ -3,6 +3,16 @@ FastAPI Chart Server für RL Trading
 Realtime Chart-Updates ohne Streamlit-Limitations
 """
 
+# -*- coding: utf-8 -*-
+import sys
+import os
+
+# Windows UTF-8 encoding fix
+if sys.platform.startswith('win'):
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
@@ -398,13 +408,16 @@ class UniversalSkipRenderer:
         if source_tf == target_tf:
             return True
 
-        # Skip-Events from higher timeframes can be shown in lower timeframes within same time range
-        # E.g., 15m skip can be shown in 5m, but not vice versa (prevents artificial data)
+        # ENHANCED COMPATIBILITY: Allow both directions for aggregation
+        # 1. Higher -> Lower: 15m skip can be shown in 5m (downsampling)
+        # 2. Lower -> Higher: 5m skip can be aggregated into 15m (upsampling for price sync)
         source_min = cls.get_timeframe_minutes(source_tf)
         target_min = cls.get_timeframe_minutes(target_tf)
 
-        # Allow higher -> lower timeframe (15m -> 5m), but not lower -> higher (5m -> 15m)
-        return source_min >= target_min
+        # Allow both directions: aggregation requires all constituent candles
+        # For 5m->15m: need all 3 skip candles (00:00, 00:05, 00:10) to create 15m candle
+        # For 15m->5m: can distribute 15m candle across 3x 5m periods
+        return True  # Allow all combinations - filtering happens in _adapt_candle_for_timeframe
 
     @classmethod
     def _is_candle_safe_for_timeframe(cls, candle, target_timeframe):
@@ -2149,12 +2162,21 @@ class ChartSeriesLifecycleManager:
 
     def prepare_timeframe_transition(self, from_timeframe, to_timeframe):
         """Bereitet sauberen Timeframe-Übergang vor"""
+
+        # CRITICAL FIX: Prüfe State BEVOR er auf TRANSITIONING gesetzt wird
+        was_corrupted = self.current_state == self.STATES['CORRUPTED']
+        was_skip_modified = self.current_state == self.STATES['SKIP_MODIFIED']
+        has_skip_operations = self.skip_operations_count > 0
+
+        print(f"[CHART-LIFECYCLE] Pre-transition state check: corrupted={was_corrupted}, skip_modified={was_skip_modified}, skip_count={has_skip_operations}")
+
         self.current_state = self.STATES['TRANSITIONING']
 
-        # Entscheide ob Chart Recreation nötig ist
+        # ENHANCED LOGIC: Chart Recreation bei verschiedenen Corruptions-Szenarien
         needs_recreation = (
-            self.skip_operations_count > 0 or  # Skip-Operationen haben State modifiziert
-            self.current_state == self.STATES['CORRUPTED']  # Chart bereits als korrupt markiert
+            has_skip_operations or          # Skip-Operationen haben State modifiziert
+            was_corrupted or               # Chart war bereits als korrupt markiert
+            was_skip_modified              # Chart war im SKIP_MODIFIED State
         )
 
         transition_plan = {
@@ -2165,7 +2187,17 @@ class ChartSeriesLifecycleManager:
             'reason': 'skip_contamination' if self.skip_operations_count > 0 else 'corruption_detected'
         }
 
-        print(f"[CHART-LIFECYCLE] Transition plan: {from_timeframe} -> {to_timeframe}, Recreation: {needs_recreation}")
+        recreation_reason = []
+        if has_skip_operations:
+            recreation_reason.append(f"skip_operations({self.skip_operations_count})")
+        if was_corrupted:
+            recreation_reason.append("was_corrupted")
+        if was_skip_modified:
+            recreation_reason.append("was_skip_modified")
+
+        reason_text = " + ".join(recreation_reason) if recreation_reason else "no_recreation_needed"
+
+        print(f"[CHART-LIFECYCLE] Transition plan: {from_timeframe} -> {to_timeframe}, Recreation: {needs_recreation} ({reason_text})")
         return transition_plan
 
     def get_chart_recreation_command(self):
@@ -2197,10 +2229,24 @@ class ChartSeriesLifecycleManager:
 
     def reset_to_clean_state(self):
         """Reset zu sauberem Zustand (z.B. nach Go To Date)"""
+        print(f"[CHART-LIFECYCLE] Starting CLEAN RESET - Previous state: {self.current_state}, Skip count: {self.skip_operations_count}")
+
         self.current_state = self.STATES['CLEAN']
         self.skip_operations_count = 0
         self.chart_series_version += 1
-        print(f"[CHART-LIFECYCLE] Reset to CLEAN state (v{self.chart_series_version})")
+
+        print(f"[CHART-LIFECYCLE] CLEAN RESET COMPLETE - Version: {self.chart_series_version}, State: CLEAN")
+
+        # ENHANCED: Verify clean state
+        if self.skip_operations_count == 0 and self.current_state == self.STATES['CLEAN']:
+            print(f"[CHART-LIFECYCLE] CLEAN STATE VERIFIED: Ready for timeframe operations")
+        else:
+            print(f"[CHART-LIFECYCLE] WARNING: Reset verification failed!")
+
+    def force_chart_recreation_on_next_transition(self):
+        """EMERGENCY: Forciert Chart Recreation beim nächsten Timeframe-Wechsel"""
+        self.current_state = self.STATES['CORRUPTED']
+        print(f"[CHART-LIFECYCLE] EMERGENCY: Forced chart recreation on next transition")
 
     def get_state_info(self):
         """Debug Info über aktuellen Chart State"""
@@ -3444,6 +3490,52 @@ async def get_chart():
 
             console.log('🔧 CandlestickSeries und Smart Positioning erstellt:', candlestickSeries);
 
+            // 🛡️ EMERGENCY GLOBAL ERROR HANDLER: "Value is null" Protection
+            window.emergencyChartRecovery = {
+                enabled: true,
+                recoveryCount: 0,
+                maxRecoveries: 3,
+
+                handleValueIsNullError: function(error) {
+                    if (this.recoveryCount >= this.maxRecoveries) {
+                        console.error('[EMERGENCY-RECOVERY] Max recovery attempts reached, forcing page reload');
+                        location.reload();
+                        return;
+                    }
+
+                    this.recoveryCount++;
+                    console.warn(`[EMERGENCY-RECOVERY] Attempt ${this.recoveryCount}: Value is null detected, triggering chart recreation`);
+
+                    // Force chart recreation via backend
+                    fetch('/api/chart/emergency_chart_recreation', { method: 'POST' })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('[EMERGENCY-RECOVERY] Chart recreation requested:', data);
+                            // The backend will trigger chart recreation on next timeframe switch
+                        })
+                        .catch(err => {
+                            console.error('[EMERGENCY-RECOVERY] Failed to request chart recreation:', err);
+                            // Fallback: Page reload after brief delay
+                            setTimeout(() => location.reload(), 2000);
+                        });
+                }
+            };
+
+            // Global error handler für LightweightCharts "Value is null" errors
+            window.addEventListener('error', function(event) {
+                if (event.error && event.error.message &&
+                    event.error.message.includes('Value is null') &&
+                    window.emergencyChartRecovery && window.emergencyChartRecovery.enabled) {
+
+                    console.error('[EMERGENCY-RECOVERY] Global "Value is null" error detected:', event.error);
+                    event.preventDefault(); // Prevent default error handling
+
+                    window.emergencyChartRecovery.handleValueIsNullError(event.error);
+                }
+            });
+
+            console.log('🛡️ Emergency Chart Recovery System aktiviert');
+
             // Position Lines Container
             window.positionLines = {};
             window.activeSeries = {};
@@ -4458,6 +4550,14 @@ async def get_chart():
                         console.log('[BULLETPROOF-TF] Chart recreation completed, setting data...');
                     }
 
+                    // 🛡️ EMERGENCY SAFETY CHECK: Verify candlestickSeries exists after chart recreation
+                    if (!candlestickSeries || typeof candlestickSeries.setData !== 'function') {
+                        console.error('[BULLETPROOF-TF] CRITICAL: candlestickSeries is invalid after chart recreation');
+                        console.error('[BULLETPROOF-TF] EMERGENCY: Triggering page reload...');
+                        location.reload();
+                        return;
+                    }
+
                     if (isInitialized && message.data && Array.isArray(message.data) && message.data.length > 0) {
                         try {
                             // Use the same ultra-defensive validation as unified_timeframe_changed
@@ -4501,19 +4601,37 @@ async def get_chart():
 
                                 if (cleanData.length > 0) {
                                     // BULLETPROOF DATA SETTING: Use recreation-safe approach
-                                    if (message.chart_recreation) {
-                                        // Chart was just recreated, set data directly without clearing
-                                        console.log('[BULLETPROOF-TF] Setting data on recreated chart...');
-                                        candlestickSeries.setData(cleanData);
-                                        console.log('[BULLETPROOF-TF] ✅ SUCCESS: Data set on recreated chart');
-                                    } else {
-                                        // Standard approach for non-recreation scenarios
-                                        console.log('[BULLETPROOF-TF] Using standard data setting...');
-                                        candlestickSeries.setData([]);
-                                        setTimeout(() => {
+                                    try {
+                                        if (message.chart_recreation) {
+                                            // Chart was just recreated, set data directly without clearing
+                                            console.log('[BULLETPROOF-TF] Setting data on recreated chart...');
+
+                                            // Extra safety check before setting data
+                                            if (!candlestickSeries || typeof candlestickSeries.setData !== 'function') {
+                                                throw new Error('candlestickSeries became invalid during data setting');
+                                            }
+
                                             candlestickSeries.setData(cleanData);
-                                            console.log('[BULLETPROOF-TF] ✅ SUCCESS: Standard data setting completed');
-                                        }, 50);
+                                            console.log('[BULLETPROOF-TF] ✅ SUCCESS: Data set on recreated chart');
+                                        } else {
+                                            // Standard approach for non-recreation scenarios
+                                            console.log('[BULLETPROOF-TF] Using standard data setting...');
+                                            candlestickSeries.setData([]);
+                                            setTimeout(() => {
+                                                try {
+                                                    candlestickSeries.setData(cleanData);
+                                                    console.log('[BULLETPROOF-TF] ✅ SUCCESS: Standard data setting completed');
+                                                } catch (delayedError) {
+                                                    console.error('[BULLETPROOF-TF] Delayed setData error:', delayedError);
+                                                    location.reload();
+                                                }
+                                            }, 50);
+                                        }
+                                    } catch (setDataError) {
+                                        console.error('[BULLETPROOF-TF] CRITICAL: setData failed:', setDataError);
+                                        console.error('[BULLETPROOF-TF] EMERGENCY: Triggering page reload...');
+                                        location.reload();
+                                        return;
                                     }
 
                                     document.title = `${message.timeframe} Bulletproof (${cleanData.length} candles)`;
@@ -5174,10 +5292,10 @@ async def get_chart():
 
                 if (isLeftHandle) {
                     box.x1Percent = newXPercent;
-                    console.log('↔️ ECK: Links Handle bewegt zu X:', mouseX);
+                    console.log('<-> ECK: Links Handle bewegt zu X:', mouseX);
                 } else if (isRightHandle) {
                     box.x2Percent = newXPercent;
-                    console.log('↔️ ECK: Rechts Handle bewegt zu X:', mouseX);
+                    console.log('<-> ECK: Rechts Handle bewegt zu X:', mouseX);
                 }
             }
 
@@ -6184,6 +6302,55 @@ async def change_timeframe(request: Request):
 
         print(f"[BULLETPROOF-TF] Phase 3 SUCCESS - Loaded {len(chart_data) if chart_data else 0} candles for {target_timeframe}")
 
+        # PHASE 3.5: INTEGRATE SKIP EVENTS FOR MULTI-TIMEFRAME SYNCHRONIZATION
+        print(f"[BULLETPROOF-TF] Phase 3.5: Integrating skip events for {target_timeframe}")
+
+        # Render skip candles for the target timeframe with price synchronization
+        if global_skip_events:
+            print(f"[BULLETPROOF-TF] Found {len(global_skip_events)} skip events to process")
+            skip_candles = universal_renderer.render_skip_candles_for_timeframe(target_timeframe)
+
+            if skip_candles:
+                print(f"[BULLETPROOF-TF] Rendered {len(skip_candles)} skip candles for {target_timeframe}")
+
+                # 🔧 CRITICAL FIX: Deduplicate skip candles BEFORE merging (prevent duplicate timestamps)
+                print(f"[BULLETPROOF-TF] Raw skip candles: {len(skip_candles)}")
+
+                # Deduplicate skip candles by timestamp (keep last one for each timestamp)
+                skip_candles_dict = {}
+                for candle in skip_candles:
+                    timestamp = candle['time']
+                    if timestamp in skip_candles_dict:
+                        print(f"[BULLETPROOF-TF] DUPLICATE SKIP TIMESTAMP DETECTED: {timestamp} - replacing")
+                    skip_candles_dict[timestamp] = candle
+
+                deduplicated_skip_candles = list(skip_candles_dict.values())
+                print(f"[BULLETPROOF-TF] Deduplicated skip candles: {len(deduplicated_skip_candles)}")
+
+                # Merge deduplicated skip candles with CSV data
+                merged_data = []
+                skip_timestamps = {candle['time'] for candle in deduplicated_skip_candles}
+
+                # Add CSV candles that don't conflict with skip timestamps
+                for csv_candle in chart_data:
+                    if csv_candle['time'] not in skip_timestamps:
+                        merged_data.append(csv_candle)
+
+                # Add all deduplicated skip candles (these have priority for price synchronization)
+                merged_data.extend(deduplicated_skip_candles)
+
+                # Sort by timestamp to maintain chronological order
+                merged_data.sort(key=lambda x: x['time'])
+
+                chart_data = merged_data
+                print(f"[BULLETPROOF-TF] Merged data: {len(chart_data)} total candles ({len(skip_candles)} skip + {len(chart_data)-len(skip_candles)} CSV)")
+            else:
+                print(f"[BULLETPROOF-TF] No compatible skip candles for {target_timeframe}")
+        else:
+            print(f"[BULLETPROOF-TF] No skip events to process")
+
+        print(f"[BULLETPROOF-TF] Phase 3.5 COMPLETE - Skip event integration finished")
+
         # Ultra-defensive data validation
         if not chart_data:
             chart_lifecycle_manager.complete_timeframe_transition(success=False)
@@ -6202,7 +6369,7 @@ async def change_timeframe(request: Request):
         )
 
         if len(final_validated_data) != len(chart_data):
-            print(f"[BULLETPROOF-TF] Data validation pipeline: {len(chart_data)} → {len(validated_data)} → {len(final_validated_data)} candles")
+            print(f"[BULLETPROOF-TF] Data validation pipeline: {len(chart_data)} -> {len(validated_data)} -> {len(final_validated_data)} candles")
 
         # Special logging for 4h timeframe
         if target_timeframe == '4h':
@@ -6306,6 +6473,36 @@ async def change_timeframe(request: Request):
             "transaction_id": transaction_id,
             "recovery_required": True,
             "system": "bulletproof_timeframe_architecture"
+        }
+
+@app.post("/api/chart/emergency_chart_recreation")
+async def emergency_chart_recreation():
+    """🚨 EMERGENCY API: Forciert Chart Recreation bei 'Value is null' Errors"""
+    try:
+        print(f"[EMERGENCY-RECOVERY] Emergency chart recreation requested by frontend")
+
+        # Force chart recreation on next timeframe transition
+        chart_lifecycle_manager.force_chart_recreation_on_next_transition()
+
+        # Also clear any potentially corrupted state
+        unified_state.clear_go_to_date("emergency_recovery")
+
+        # Force current chart state to be seen as corrupted
+        manager.chart_state['emergency_recreation_pending'] = True
+
+        print(f"[EMERGENCY-RECOVERY] Chart marked for emergency recreation")
+
+        return {
+            "status": "success",
+            "message": "Chart recreation scheduled for next operation",
+            "chart_state": chart_lifecycle_manager.get_state_info()
+        }
+
+    except Exception as e:
+        print(f"[EMERGENCY-RECOVERY] Error during emergency chart recreation: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Emergency recreation failed: {str(e)}"
         }
 
 @app.post("/api/chart/load_historical")
@@ -6699,7 +6896,7 @@ async def debug_set_timeframe(timeframe: str):
             chart_data, timeframe=timeframe, source=f"debug_set_timeframe_{timeframe}"
         )
 
-        print(f"[DEBUG-SET-TF] CSV geladen: {len(chart_data)} → {len(validated_chart_data)} {timeframe} Kerzen nach Validation")
+        print(f"[DEBUG-SET-TF] CSV geladen: {len(chart_data)} -> {len(validated_chart_data)} {timeframe} Kerzen nach Validation")
 
         # CRITICAL: Add skip candles (same logic as change_timeframe)
         print(f"[DEBUG-SET-TF] SKIP-KERZEN Check für {timeframe}:")
