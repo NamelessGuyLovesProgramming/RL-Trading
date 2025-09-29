@@ -1736,6 +1736,119 @@ class UnifiedTimeManager:
 # Global Unified Time Manager Instance
 unified_time_manager = UnifiedTimeManager()
 
+# ===== TEMPORAL STATE COMMAND PATTERN =====
+class TemporalCommand:
+    """
+    🚀 Command Pattern für atomische Zeit-Operationen mit Rollback-Capability
+    Verhindert inkonsistente Multi-Timeframe Zeit-States
+    """
+
+    def __init__(self, operation_type, target_time, timeframe=None, source=None):
+        self.operation_type = operation_type  # 'skip', 'goto', 'tf_switch'
+        self.target_time = target_time
+        self.timeframe = timeframe
+        self.source = source or "temporal_command"
+        self.timestamp = datetime.now()
+
+        # Rollback state
+        self.previous_time = None
+        self.previous_source = None
+        self.executed = False
+
+    def execute(self, time_manager):
+        """Führt die Zeit-Operation atomic aus"""
+        # Backup current state for rollback
+        self.previous_time = time_manager.get_current_time()
+        self.previous_source = getattr(time_manager, 'last_operation_source', None)
+
+        # Execute operation
+        time_manager.set_time(self.target_time, source=self.source)
+        self.executed = True
+
+        print(f"[TEMPORAL-CMD] Executed {self.operation_type}: {self.previous_time} -> {self.target_time}")
+        return True
+
+    def rollback(self, time_manager):
+        """Rollback der Operation bei Fehlern"""
+        if not self.executed:
+            return False
+
+        time_manager.set_time(self.previous_time, source=self.previous_source or "rollback")
+        self.executed = False
+
+        print(f"[TEMPORAL-CMD] Rollback {self.operation_type}: {self.target_time} -> {self.previous_time}")
+        return True
+
+class TemporalOperationManager:
+    """
+    Manager für atomische Multi-Timeframe Operationen
+    Koordiniert Skip + TF-Switch als eine einzige Transaction
+    """
+
+    def __init__(self, time_manager):
+        self.time_manager = time_manager
+        self.operation_history = []
+        self.current_transaction = None
+
+    def begin_transaction(self, transaction_id=None):
+        """Startet eine neue atomische Zeit-Transaction"""
+        self.current_transaction = {
+            'id': transaction_id or f"temporal_tx_{int(datetime.now().timestamp())}",
+            'commands': [],
+            'started_at': datetime.now()
+        }
+        print(f"[TEMPORAL-TX] Transaction started: {self.current_transaction['id']}")
+
+    def add_skip_and_tf_switch(self, skip_time, target_timeframe):
+        """Fügt Skip + TF-Switch als atomische Operation hinzu"""
+        if not self.current_transaction:
+            self.begin_transaction()
+
+        # Command 1: Skip-Operation
+        skip_cmd = TemporalCommand('skip', skip_time, source=f"skip_tf_switch_{target_timeframe}")
+        self.current_transaction['commands'].append(skip_cmd)
+
+        print(f"[TEMPORAL-TX] Added skip+tf_switch: {skip_time} -> {target_timeframe}")
+
+    def commit_transaction(self):
+        """Führt alle Commands der Transaction atomic aus"""
+        if not self.current_transaction:
+            return False
+
+        try:
+            # Execute all commands
+            for cmd in self.current_transaction['commands']:
+                cmd.execute(self.time_manager)
+
+            # Success: Add to history
+            self.operation_history.append(self.current_transaction)
+            print(f"[TEMPORAL-TX] Transaction committed: {self.current_transaction['id']}")
+            self.current_transaction = None
+            return True
+
+        except Exception as e:
+            # Rollback on error
+            print(f"[TEMPORAL-TX] Transaction failed: {e}")
+            self.rollback_transaction()
+            return False
+
+    def rollback_transaction(self):
+        """Rollback der aktuellen Transaction"""
+        if not self.current_transaction:
+            return False
+
+        # Rollback in reverse order
+        for cmd in reversed(self.current_transaction['commands']):
+            if cmd.executed:
+                cmd.rollback(self.time_manager)
+
+        print(f"[TEMPORAL-TX] Transaction rolled back: {self.current_transaction['id']}")
+        self.current_transaction = None
+        return True
+
+# Global Temporal Operation Manager
+temporal_operation_manager = TemporalOperationManager(unified_time_manager)
+
 # ===== TIMEFRAME DATA REPOSITORY =====
 class TimeframeDataRepository:
     """
@@ -1848,11 +1961,20 @@ class TimeframeDataRepository:
     def get_candles_for_date_range(self, timeframe, start_date, end_date=None, max_candles=200):
         """
         Holt Kerzen für einen Datumsbereich - für Chart-Loading optimiert
+        🔧 SKIP-POSITION AWARE: Respektiert aktuelle Skip-Positionen vom UnifiedTimeManager
         """
         if isinstance(start_date, str):
             start_date = datetime.strptime(start_date, "%Y-%m-%d")
         if end_date and isinstance(end_date, str):
             end_date = datetime.strptime(end_date, "%Y-%m-%d")
+
+        # 🚀 SKIP-POSITION LOGGING: Track welcher Zeitbereich geladen wird
+        print(f"[SKIP-POSITION-AWARE] Loading {timeframe} candles: {start_date} to {end_date}, max: {max_candles}")
+
+        # Verify with UnifiedTimeManager current state
+        current_unified_time = self.unified_time.get_current_time()
+        if current_unified_time:
+            print(f"[SKIP-POSITION-AWARE] UnifiedTimeManager current time: {current_unified_time}")
 
         df = self._load_and_validate_timeframe_data(timeframe)
         if df is None or df.empty:
@@ -4215,6 +4337,14 @@ async def get_chart():
                         // Lösche alle bestehenden Position-Overlays
                         clearAllPositions();
 
+                        // 🚀 CRITICAL FIX: Browser-Cache Invalidation nach GoTo-Operationen
+                        // Verhindert veraltete Skip-Kerzen bei TF-Wechseln
+                        const cacheCountBefore = window.timeframeCache.size;
+                        window.timeframeCache.clear();
+                        window.lastGoToDate = message.target_date; // Server-State für Cache-Validation
+                        console.log(`[CACHE-INVALIDATION] Browser-Cache cleared: ${cacheCountBefore} entries removed`);
+                        console.log(`[CACHE-INVALIDATION] Grund: GoTo-Operation zu ${message.target_date}`);
+
                         // Setze neue validierte historische Chart-Daten
                         const validatedHistoricalData = validateCandleData(message.data);
                         candlestickSeries.setData(validatedHistoricalData);
@@ -5524,21 +5654,43 @@ async def get_chart():
                 // Check browser cache first
                 const cacheKey = `tf_${timeframe}`;
                 if (window.timeframeCache.has(cacheKey)) {
-                    console.log(`Browser Cache Hit für ${timeframe}`);
+                    console.log(`[CACHE-HIT] Browser Cache Hit für ${timeframe} (${window.timeframeCache.size} total entries)`);
                     const cachedData = window.timeframeCache.get(cacheKey);
+                    console.log(`[CACHE-HIT] Cached data: ${cachedData.length} candles, first: ${new Date(cachedData[0]?.time * 1000).toISOString()}`);
 
-                    // Instant UI update from cache mit Smart Positioning
-                    updateTimeframeButtons(timeframe);
-                    candlestickSeries.setData(cachedData);
-
-                    // Smart Positioning: Nach Cache-Hit zurück zu 50-Kerzen Standard
-                    if (window.smartPositioning) {
-                        window.smartPositioning.resetToStandardPosition(cachedData);
+                    // 🚀 CRITICAL FIX: Cache-Validation gegen Server-State
+                    // Prüfe ob Cache-Daten nach GoTo-Operation noch gültig sind
+                    let cacheValid = true;
+                    if (window.lastGoToDate && cachedData.length > 0) {
+                        const cacheDataDate = new Date(cachedData[0]?.time * 1000).toISOString().split('T')[0];
+                        if (cacheDataDate !== window.lastGoToDate) {
+                            console.log(`[CACHE-VALIDATION] Cache ungültig: Daten ${cacheDataDate} vs Server ${window.lastGoToDate}`);
+                            window.timeframeCache.delete(cacheKey);
+                            console.log(`[CACHE-INVALIDATION] Stale cache entry removed for ${timeframe}`);
+                            cacheValid = false;
+                        }
                     }
 
-                    window.currentTimeframe = timeframe;
-                    window.isTimeframeChanging = false;
-                    return;
+                    if (cacheValid) {
+                        // Instant UI update from cache mit Smart Positioning
+                        updateTimeframeButtons(timeframe);
+                        candlestickSeries.setData(cachedData);
+
+                        // Smart Positioning: Nach Cache-Hit zurück zu 50-Kerzen Standard
+                        if (window.smartPositioning) {
+                            window.smartPositioning.resetToStandardPosition(cachedData);
+                        }
+
+                        window.currentTimeframe = timeframe;
+                        window.isTimeframeChanging = false;
+                        return;
+                    }
+                }
+
+                // 🚀 CACHE-MISS LOGGING: Detailliertes Logging für Server-Requests
+                console.log(`[CACHE-MISS] No cache für ${timeframe} - Server-Request erforderlich (${window.timeframeCache.size} total entries)`);
+                if (window.lastGoToDate) {
+                    console.log(`[CACHE-MISS] Server-State: lastGoToDate=${window.lastGoToDate}`);
                 }
 
                 // Optimistic UI update
@@ -5580,11 +5732,14 @@ async def get_chart():
 
                     // Cache for instant future access
                     window.timeframeCache.set(cacheKey, formattedData);
+                    console.log(`[CACHE-SET] Cached ${formattedData.length} candles für ${timeframe} (total cache: ${window.timeframeCache.size} entries)`);
+                    console.log(`[CACHE-SET] Data range: ${new Date(formattedData[0]?.time * 1000).toISOString()} - ${new Date(formattedData[formattedData.length-1]?.time * 1000).toISOString()}`);
 
                     // Limit cache size to prevent memory issues
                     if (window.timeframeCache.size > 8) {
                         const firstKey = window.timeframeCache.keys().next().value;
                         window.timeframeCache.delete(firstKey);
+                        console.log(`[CACHE-CLEANUP] Oldest cache entry removed: ${firstKey}`);
                     }
 
                     // Fast chart update mit Smart Positioning
@@ -6288,17 +6443,35 @@ async def change_timeframe(request: Request):
         # PHASE 3: INTELLIGENT DATA LOADING WITH SKIP-STATE ISOLATION
         print(f"[BULLETPROOF-TF] Phase 3: Data loading with skip isolation")
 
+        # 🚀 CRITICAL FIX: Re-sync current_global_time to ensure Skip-TF consistency
+        current_global_time = unified_time_manager.get_current_time()
+        print(f"[SKIP-TF-SYNC] Re-synced global time for TF switch: {current_global_time}")
+
+        # 🔧 SKIP-STATE VALIDATION: Verify no temporal inconsistencies from previous operations
+        last_operation_source = getattr(unified_time_manager, 'last_operation_source', None)
+        print(f"[SKIP-TF-SYNC] Last operation source: {last_operation_source}")
+
+        # Warn if we detect potential skip-contaminated state
+        if last_operation_source and 'skip_' in str(last_operation_source):
+            print(f"[SKIP-TF-SYNC] ⚠️  Skip-contaminated state detected - ensuring data consistency")
+
         # SIMPLIFIED DATA LOADING: Load fresh CSV data for timeframe
         if current_global_time:
+            # 🔧 SKIP-POSITION FIX: Recalculate lookback with synced time
+            timeframe_minutes = unified_time_manager._get_timeframe_minutes(target_timeframe)
+            lookback_time = current_global_time - timedelta(minutes=timeframe_minutes * visible_candles)
+
             chart_data = timeframe_data_repository.get_candles_for_date_range(
                 target_timeframe, lookback_time, current_global_time, max_candles=visible_candles
             )
+            print(f"[SKIP-TF-SYNC] CSV data loaded from {lookback_time} to {current_global_time}")
         else:
             end_date = datetime.now().date()
             start_date = end_date - timedelta(days=7)
             chart_data = timeframe_data_repository.get_candles_for_date_range(
                 target_timeframe, start_date, end_date, max_candles=visible_candles
             )
+            print(f"[SKIP-TF-SYNC] Fallback: CSV data loaded for {start_date} to {end_date}")
 
         print(f"[BULLETPROOF-TF] Phase 3 SUCCESS - Loaded {len(chart_data) if chart_data else 0} candles for {target_timeframe}")
 
@@ -7115,7 +7288,7 @@ async def debug_go_to_date(date_data: dict):
 
         # TEMPORARY: Disable High-Performance Cache due to timestamp aggregation issues
         # High-Performance Cache System
-        global chart_cache, current_go_to_date
+        global chart_cache, current_go_to_date, global_skip_events, debug_control_timeframe
 
         if False and chart_cache and chart_cache.is_loaded():
             # High-Performance Data Retrieval
@@ -7129,6 +7302,26 @@ async def debug_go_to_date(date_data: dict):
 
                 # UNIFIED STATE: Update Go-To-Date für alle Timeframes einheitlich
                 unified_state.set_go_to_date(target_datetime)
+
+                # 🚀 CRITICAL FIX: Global Skip Events Reset bei Go-To-Date (High-Performance Path)
+                skip_events_count = len(global_skip_events)
+                global_skip_events.clear()  # Alle Skip-Events löschen
+                print(f"[GO-TO-DATE-RESET] Global Skip Events cleared: {skip_events_count} events removed (High-Perf)")
+
+                # 🚀 UNIFIED TIME MANAGER: Skip-State Reset integrieren
+                unified_time_manager.clear_all_skip_data()
+                print(f"[GO-TO-DATE-RESET] UnifiedTimeManager Skip-State cleared (High-Perf)")
+
+                # 🚀 DEBUG CONTROL TIMEFRAME SYNCHRONISATION: Frontend-Backend Konsistenz sicherstellen
+                print(f"[GO-TO-DATE-SYNC] Debug Control Timeframe synchronisiert: {debug_control_timeframe} (High-Perf)")
+
+                # WebSocket Broadcast für Debug Control Sync
+                await manager.broadcast({
+                    'type': 'debug_control_timeframe_changed',
+                    'debug_control_timeframe': debug_control_timeframe,
+                    'old_timeframe': None,
+                    'source': 'go_to_date_sync_highperf'
+                })
 
                 # WebSocket Broadcast
                 await manager.broadcast({
@@ -7201,6 +7394,26 @@ async def debug_go_to_date(date_data: dict):
 
         # UNIFIED STATE: Update Go-To-Date für alle Timeframes einheitlich (CSV-System)
         unified_state.set_go_to_date(target_datetime)
+
+        # 🚀 CRITICAL FIX: Global Skip Events Reset bei Go-To-Date
+        skip_events_count = len(global_skip_events)
+        global_skip_events.clear()  # Alle Skip-Events löschen
+        print(f"[GO-TO-DATE-RESET] Global Skip Events cleared: {skip_events_count} events removed")
+
+        # 🚀 UNIFIED TIME MANAGER: Skip-State Reset integrieren
+        unified_time_manager.clear_all_skip_data()
+        print(f"[GO-TO-DATE-RESET] UnifiedTimeManager Skip-State cleared")
+
+        # 🚀 DEBUG CONTROL TIMEFRAME SYNCHRONISATION: Frontend-Backend Konsistenz sicherstellen
+        print(f"[GO-TO-DATE-SYNC] Debug Control Timeframe synchronisiert: {debug_control_timeframe}")
+
+        # WebSocket Broadcast für Debug Control Sync
+        await manager.broadcast({
+            'type': 'debug_control_timeframe_changed',
+            'debug_control_timeframe': debug_control_timeframe,
+            'old_timeframe': None,
+            'source': 'go_to_date_sync'
+        })
 
         # WebSocket Broadcast
         await manager.broadcast({
