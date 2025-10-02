@@ -33,7 +33,14 @@ python-dotenv>=1.0.0
 # ta>=0.10.2  # Technical Analysis Library
 # ccxt>=4.0.0  # Cryptocurrency Exchange Trading Library
 
-# Development Tools (optional)
-# pytest>=7.4.0
-# black>=23.0.0
-# flake8>=6.0.0
+# Development Tools & Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+black>=23.0.0
+flake8>=6.0.0
+
+# Configuration
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
