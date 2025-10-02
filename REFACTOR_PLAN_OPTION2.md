@@ -582,6 +582,9 @@ tests/unit/test_repositories/ - 33 passed, 2 failed (94%)
 **TODO vor Phase 8 (Documentation):**
 - [ ] Test-Assertions für Windows-Paths anpassen
 - [ ] Test-Datums-Range validieren gegen tatsächliche CSV-Daten
+- [ ] Test-Batch-Dateien konsolidieren (aktuell 6 separate .bat → 1 mit Menü/Parametern)
+  - run_tests_phase1.bat, run_tests_phase2.bat, run_tests_unit.bat, etc.
+  - Ziel: Eine `run_tests.bat` mit Parametern oder interaktivem Menü
 
 ---
 
