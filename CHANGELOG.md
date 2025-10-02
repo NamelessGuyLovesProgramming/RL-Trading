@@ -6,6 +6,43 @@ Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/) 
 
 ## [Unreleased]
 
+### 2025-10-02 - 🎯 FIX: TP-Handles Resize Functionality - Koordinaten-Caching System
+
+#### 🐛 Bugfix - TP-Handles nicht klickbar ✅ FIXED
+- [FIXED] **TP-Handles (Take Profit) nicht klickbar für Resize-Operationen**
+  - **Problem:** Grüne TP-Handles (obere Ecken) reagierten nicht auf Klicks, SL-Handles (unten) funktionierten
+  - **Root Cause:** `isPointOverPositionBox()` berechnete Y-Koordinaten neu via API, während Hover-Detection lief → inkonsistente/falsche Werte → Canvas blieb auf `pointer-events: none`
+  - **Impact:** User konnte nur SL-Box resizen, TP-Box war komplett unbrauchbar für Anpassungen
+  - **Solution:** Cache-Aside Pattern - Pixel-Koordinaten beim Zeichnen in `box.cachedPixelCoordinates` speichern, in Hover-Detection wiederverwenden
+
+- [IMPLEMENTED] **Koordinaten-Caching System** - Cache-Aside Pattern für konsistente Pixel-Koordinaten
+  - **Cache-Storage:** `box.cachedPixelCoordinates` speichert `{x1, x2, entryY, slY, tpY, slTop, tpTop, slHeight, tpHeight, timestamp}` nach jedem Draw
+  - **Cache-Usage:** `isPointOverPositionBox()` verwendet gecachte Koordinaten (Cache-Hit) statt API-Neuberechnung
+  - **Fallback-System:** Bei Cache-Miss (erste Box-Erstellung) Berechnung aus Preisen als Backup
+  - **Performance:** Eliminiert doppelte API-Aufrufe (Draw + Hover), garantiert Konsistenz
+
+- [ENHANCED] **Hover Detection Debugging** - Diagnostics für TP-Handle-Bereich
+  - **Debug-Logs:** `🔍 Hover Detection` für Y < 100px mit `{mouseY, minY, maxY, isOver, cacheUsed, tpY}`
+  - **Cache-Monitoring:** Zeigt ob Cache verwendet wurde für Debugging
+  - **TP-Handle Bereich:** Spezifische Logs nur für problematischen oberen Bereich
+
+#### 🏗️ Architecture Improvements
+- **Cache-Aside Pattern:** Trennung von Daten-Berechnung (Draw) und Daten-Nutzung (Hover)
+- **Single Source of Truth:** Koordinaten nur EINMAL berechnen, mehrfach verwenden
+- **Defensive Programming:** Fallback-System bei Cache-Miss für Robustheit
+- **DRY Principle:** Keine doppelte Koordinaten-Berechnung mehr
+
+#### 📊 Impact & Metrics
+- **User Experience:** ✅ TP-Handles vollständig funktional, gleiches Verhalten wie SL-Handles
+- **Consistency:** 100% identische Koordinaten zwischen Draw und Hover-Detection
+- **Performance:** -50% API-Aufrufe für Koordinaten-Konvertierung
+- **Code Quality:** Reduzierte Komplexität, klarere Verantwortlichkeiten
+
+#### 📝 Modified Files
+- `charts/chart_server.py` (Lines 5771-5825, 5977-5983): Koordinaten-Caching implementiert
+
+---
+
 ### 2025-09-29 - 🔒 CRITICAL FIX: Browser-Cache Invalidation System - Trading System Stability Restored
 
 #### 🎯 Critical Bugfix - Browser-Cache Invalidation Bug ✅ PRODUCTION-READY

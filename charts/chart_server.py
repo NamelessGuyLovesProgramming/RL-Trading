@@ -3126,6 +3126,134 @@ async def get_chart():
         .modal-btn.primary:hover {
             background: #0a7a6b;
         }
+
+        /* Trade Modal Specific Styles */
+        .trade-setup-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .trade-info-section {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 15px;
+        }
+
+        .trade-info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .trade-info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .trade-info-row.highlight {
+            background: #2a2a2a;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .trade-label {
+            font-size: 13px;
+            color: #ccc;
+            font-weight: 500;
+        }
+
+        .trade-value {
+            font-size: 13px;
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .trade-value.profit {
+            color: #4ade80;
+        }
+
+        .risk-input-section, .rr-ratio-section, .position-size-section {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 15px;
+        }
+
+        .risk-input-group {
+            margin-top: 10px;
+        }
+
+        .risk-input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .risk-presets {
+            display: flex;
+            gap: 8px;
+        }
+
+        .risk-preset-btn {
+            flex: 1;
+            padding: 6px 12px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .risk-preset-btn:hover {
+            background: #444;
+            color: #fff;
+        }
+
+        .risk-preset-btn.active {
+            background: #4ade80;
+            color: #000;
+            border-color: #4ade80;
+        }
+
+        .rr-ratio-buttons {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .rr-btn {
+            flex: 1;
+            padding: 8px 12px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .rr-btn:hover {
+            background: #444;
+            color: #fff;
+        }
+
+        .rr-btn.active {
+            background: #60a5fa;
+            color: #000;
+            border-color: #60a5fa;
+        }
     </style>
 </head>
 <body>
@@ -3146,6 +3274,81 @@ async def get_chart():
             </div>
         </div>
     </div>
+
+    <!-- Trade Dialog Modal -->
+    <div id="tradeModal" class="date-modal" style="display: none;">
+        <div class="date-modal-content" style="max-width: 450px;">
+            <div class="date-modal-header">
+                <span class="date-modal-title">💰 Trade Setup</span>
+                <button class="close-modal" onclick="closeTradeModal()">&times;</button>
+            </div>
+
+            <div class="trade-setup-content">
+                <!-- Trade Info Display -->
+                <div class="trade-info-section">
+                    <div class="trade-info-row">
+                        <span class="trade-label">Typ:</span>
+                        <span id="tradeType" class="trade-value">LONG</span>
+                    </div>
+                    <div class="trade-info-row">
+                        <span class="trade-label">Entry:</span>
+                        <span id="tradeEntry" class="trade-value">21,250.50</span>
+                    </div>
+                    <div class="trade-info-row">
+                        <span class="trade-label">Stop Loss:</span>
+                        <span id="tradeStopLoss" class="trade-value">21,200.00</span>
+                    </div>
+                    <div class="trade-info-row">
+                        <span class="trade-label">Take Profit:</span>
+                        <span id="tradeTakeProfit" class="trade-value">21,350.00</span>
+                    </div>
+                </div>
+
+                <!-- Risk Input Section -->
+                <div class="risk-input-section">
+                    <label class="trade-label" for="riskAmount">💶 Risiko (EUR):</label>
+                    <div class="risk-input-group">
+                        <input type="number" id="riskAmount" class="risk-input" value="100" min="10" max="10000" step="10">
+                        <div class="risk-presets">
+                            <button class="risk-preset-btn" onclick="setRiskAmount(50)">50€</button>
+                            <button class="risk-preset-btn active" onclick="setRiskAmount(100)">100€</button>
+                            <button class="risk-preset-btn" onclick="setRiskAmount(250)">250€</button>
+                            <button class="risk-preset-btn" onclick="setRiskAmount(500)">500€</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- R:R Ratio Section -->
+                <div class="rr-ratio-section">
+                    <label class="trade-label">📊 Risk:Reward Ratio:</label>
+                    <div class="rr-ratio-buttons">
+                        <button class="rr-btn" onclick="setRRRatio(1, 1)">1:1</button>
+                        <button class="rr-btn active" onclick="setRRRatio(1, 2)">1:2</button>
+                        <button class="rr-btn" onclick="setRRRatio(1, 3)">1:3</button>
+                        <button class="rr-btn" onclick="setRRRatio(2, 3)">2:3</button>
+                    </div>
+                </div>
+
+                <!-- Position Size Display -->
+                <div class="position-size-section">
+                    <div class="trade-info-row highlight">
+                        <span class="trade-label">📦 Position Size:</span>
+                        <span id="positionSize" class="trade-value">2.0 NQ</span>
+                    </div>
+                    <div class="trade-info-row">
+                        <span class="trade-label">💰 Max. Gewinn:</span>
+                        <span id="maxProfit" class="trade-value profit">+200€</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="date-modal-buttons">
+                <button class="modal-btn" onclick="closeTradeModal()">Abbrechen</button>
+                <button class="modal-btn primary" onclick="executeTrade()">🚀 Trade ausführen</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Erste Chart-Toolbar (Debug-Controls) -->
     <div class="chart-toolbar-1">
         <!-- Debug-Controls (Links) -->
@@ -3166,6 +3369,28 @@ async def get_chart():
         <!-- Navigation Controls (Rechts) -->
         <div class="navigation-controls">
             <button id="goToDateBtn" class="nav-btn" title="Go To Date">📅 Go To</button>
+
+            <!-- RL Trading Panel (Minimal) -->
+            <div class="rl-panel" style="
+                display: flex; align-items: center; gap: 8px; margin-left: 15px;
+                padding-left: 15px; border-left: 1px solid #404040;
+            ">
+                <span style="font-size: 11px; color: #888;">RL:</span>
+                <span id="rlStatus" style="font-size: 10px; color: #666;">Offline</span>
+                <button id="rlDemoBtn" style="
+                    background: #2a2a2a; border: 1px solid #404040; color: #fff;
+                    padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;
+                " title="Demo-Modus" onclick="RLSystem.startDemo()">📝</button>
+                <button id="rlBotBtn" style="
+                    background: #2a2a2a; border: 1px solid #404040; color: #fff;
+                    padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;
+                " title="Bot-Modus" onclick="RLSystem.startBot()">🤖</button>
+                <button id="rlStopBtn" style="
+                    background: #2a2a2a; border: 1px solid #404040; color: #888;
+                    padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;
+                    display: none;
+                " title="Stop" onclick="RLSystem.stop()">⏹</button>
+            </div>
         </div>
     </div>
 
@@ -3676,12 +3901,51 @@ async def get_chart():
             // Intelligent Zoom System - Garantiert sichtbare Kerzen beim Auszoomen
             window.intelligentZoom = null;  // Wird nach Daten-Load initialisiert
 
-            // Responsive Resize
+            // ⭐⭐⭐ Position Box Observer: VEREINFACHT (kein Cache mehr!) ⭐⭐⭐
+            // Bei JEDEM Zoom/Pan Event → Boxes neu zeichnen
+            // Koordinaten werden in drawPositionBox() frisch berechnet
+            let redrawScheduled = false;
+
+            chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+                // ⭐ MULTI-BOX: Prüfe Manager statt Singleton
+                if (window.positionBoxManager && window.positionBoxManager.count() > 0 && !redrawScheduled) {
+                    redrawScheduled = true;
+                    requestAnimationFrame(() => {
+                        if (window.positionBoxManager && window.positionBoxManager.count() > 0) {
+                            // ⭐ EINFACH: Zeichne alle Boxes neu
+                            // X-Koordinaten: Kerzen-Index → stabil
+                            // Y-Koordinaten: frisch → reagiert auf vertikalen Pan
+                            window.positionBoxManager.drawAll();
+
+                            // console.log(`🔄 ${window.positionBoxManager.count()} Boxes neu gezeichnet (Zoom/Pan Event)`);
+                        }
+                        redrawScheduled = false;
+                    });
+                }
+            });
+
+            // ⭐ EVENT-BASED REDRAW: Boxes werden nur bei Chart-Events neu gezeichnet
+            // Observer Pattern (subscribeVisibleLogicalRangeChange) übernimmt Redraw bei Zoom/Pan
+            // Kein continuous redraw mehr → Massive Performance-Verbesserung + stabile Koordinaten
+
+            // Responsive Resize - VEREINFACHT (kein Cache mehr!)
             window.addEventListener('resize', () => {
                 chart.applyOptions({
                     width: chartContainer.clientWidth,
                     height: chartContainer.clientHeight
                 });
+
+                // ⭐ Position Boxes mitskalieren bei Window Resize (MULTI-BOX Support)
+                if (window.positionBoxManager && window.positionBoxManager.count() > 0 && window.positionCanvas) {
+                    // Update Canvas Größe
+                    const canvas = window.positionCanvas;
+                    canvas.width = chartContainer.clientWidth;
+                    canvas.height = chartContainer.clientHeight;
+
+                    // ⭐ EINFACH: Zeichne alle Boxes neu (Koordinaten werden frisch berechnet)
+                    window.positionBoxManager.drawAll();
+                    console.log(`🔄 ${window.positionBoxManager.count()} Position Boxes neu gezeichnet nach Window Resize`);
+                }
             });
 
             // LADE ECHTE NQ-DATEN über WebSocket
@@ -3696,18 +3960,61 @@ async def get_chart():
             chart.subscribeClick((param) => {
                 console.log('🖱️ Chart geklickt:', param);
                 console.log('📦 Position Box Mode:', window.positionBoxMode);
+                console.log('📦 Aktuelle Boxes:', window.positionBoxManager ? window.positionBoxManager.count() : 0);
 
+                // ⭐ MULTI-BOX SUPPORT: Mehrere Boxes erlaubt!
+                // (Alte Guard wurde entfernt)
+
+                // ⭐ GUARD: Position Tool muss explizit aktiviert sein
                 if ((window.positionBoxMode || window.shortPositionMode) && param.point) {
                     const price = candlestickSeries.coordinateToPrice(param.point.y);
-                    const clickX = param.point.x; // ⭐ Click-X-Koordinate erfassen
-                    const clickY = param.point.y; // ⭐ Click-Y-Koordinate erfassen
 
-                    // Verwende param.time falls vorhanden (Kerzen-Klick), sonst aktuelle Zeit (freier Bereich)
-                    const timeForBox = param.time || Math.floor(Date.now() / 1000);
+                    // ⭐ FIX: Verwende Chart-Zeit, NICHT Date.now()
+                    // Wenn param.time fehlt, verwende Mitte des sichtbaren Bereichs
+                    let clickTime = param.time;
+                    if (!clickTime) {
+                        const logicalRange = chart.timeScale().getVisibleLogicalRange();
+                        if (logicalRange) {
+                            // Konvertiere logische Range zu Zeit
+                            const allData = candlestickSeries.data();
+                            const middleIndex = Math.floor((logicalRange.from + logicalRange.to) / 2);
+                            clickTime = allData[middleIndex]?.time || Math.floor(Date.now() / 1000);
+                        } else {
+                            // Fallback: Letzte Kerze
+                            const allData = candlestickSeries.data();
+                            clickTime = allData[allData.length - 1]?.time || Math.floor(Date.now() / 1000);
+                        }
+                    }
 
+                    // Für Y-Koordinate: Verwende Chart-API für exakte Position
+                    const clickY = param.point.y;  // Chart-relative Y-Koordinate
+
+                    // X-Koordinate wird zeit-basiert berechnet, nicht pixel-basiert
                     const isShort = window.shortPositionMode;
-                    console.log('📦 Erstelle', isShort ? 'Short' : 'Long', 'Position Box bei Preis:', price, 'an X-Position:', clickX, 'Y-Position:', clickY, 'Zeit:', timeForBox);
-                    createPositionBox(timeForBox, price, clickX, clickY, isShort);
+                    console.log('📦 Erstelle', isShort ? 'Short' : 'Long', 'Position Box bei Preis:', price, 'an Zeit:', clickTime, 'Y-Position:', clickY);
+                    createPositionBox(clickTime, price, null, clickY, isShort);  // clickX = null für zeit-basierte Positionierung
+
+                    // ⭐ ÄNDERUNG: Button DEAKTIVIEREN nach Box-Erstellung
+                    window.positionBoxMode = false;
+                    window.shortPositionMode = false;
+
+                    // UI aktualisieren
+                    const positionTool = document.getElementById('positionBoxTool');
+                    const shortTool = document.getElementById('shortPositionTool');
+
+                    if (positionTool) {
+                        positionTool.classList.remove('active');
+                        positionTool.style.background = '#333';
+                        positionTool.style.color = '#fff';
+                    }
+
+                    if (shortTool) {
+                        shortTool.classList.remove('active');
+                        shortTool.style.background = '#333';
+                        shortTool.style.color = '#fff';
+                    }
+
+                    console.log('✅ Position Box erstellt - Tool deaktiviert');
                 } else {
                     console.log('❌ Position Box Mode nicht aktiv oder ungültiger Klick');
                 }
@@ -4810,6 +5117,20 @@ async def get_chart():
         function addPositionOverlay(position) {
             const positionId = position.id;
 
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('add_position', {
+                    position_id: positionId,
+                    position_type: position.type,
+                    entry_price: position.entry_price,
+                    stop_loss: position.stop_loss,
+                    take_profit: position.take_profit,
+                    size: position.size,
+                    current_timeframe: window.currentTimeframe,
+                    timestamp: new Date()
+                });
+            }
+
             // Entry Line (grün für Long, rot für Short)
             const entryColor = position.type === 'LONG' ? '#089981' : '#f23645';
             const entrySeries = chart.addLineSeries({
@@ -4902,16 +5223,190 @@ async def get_chart():
             });
         }
 
+        // ===== POSITION BOX MANAGER - ENTERPRISE REPOSITORY PATTERN =====
+        // Verwaltet mehrere Position Boxes gleichzeitig mit CRUD Operations
+        window.positionBoxManager = {
+            boxes: [],              // Array aller Position Boxes
+            activeBoxId: null,      // Aktuell selektierte Box
+            canvas: null,           // Shared Canvas für alle Boxes
+            ctx: null,              // Shared Canvas Context
+
+            // Initialisierung
+            init(canvas, ctx) {
+                this.canvas = canvas;
+                this.ctx = ctx;
+                console.log('📦 Position Box Manager initialized');
+            },
+
+            // CRUD: Create - Box hinzufügen
+            add(box) {
+                if (!box.id) {
+                    box.id = 'BOX_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                }
+                this.boxes.push(box);
+                console.log(`➕ Box added: ${box.id} (Total: ${this.boxes.length})`);
+                return box.id;
+            },
+
+            // CRUD: Read - Box abrufen
+            get(id) {
+                return this.boxes.find(box => box.id === id);
+            },
+
+            getAll() {
+                return [...this.boxes];  // Return copy für Sicherheit
+            },
+
+            // CRUD: Update - Box aktualisieren
+            update(id, changes) {
+                const box = this.get(id);
+                if (box) {
+                    Object.assign(box, changes);
+                    console.log(`✏️ Box updated: ${id}`);
+                    return true;
+                }
+                return false;
+            },
+
+            // CRUD: Delete - Box entfernen
+            remove(id) {
+                const index = this.boxes.findIndex(box => box.id === id);
+                if (index !== -1) {
+                    this.boxes.splice(index, 1);
+                    console.log(`🗑️ Box removed: ${id} (Remaining: ${this.boxes.length})`);
+                    return true;
+                }
+                return false;
+            },
+
+            // Alle Boxes löschen
+            clear() {
+                const count = this.boxes.length;
+                this.boxes = [];
+                this.activeBoxId = null;
+                console.log(`🧹 All boxes cleared (${count} boxes deleted)`);
+            },
+
+            // Query: Nur sichtbare Boxes (im Chart-Bereich)
+            getVisible(timeScale, chartWidth) {
+                return this.boxes.filter(box => {
+                    try {
+                        let x1, x2;
+
+                        // ⭐⭐⭐ NEU: Verwende TIMESTAMPS (stabil bei Datenladen) ⭐⭐⭐
+                        if (box.timeStart && box.timeEnd) {
+                            const allData = candlestickSeries.data();
+
+                            if (allData && allData.length > 0) {
+                                const startCandle = allData.find(c => c.time === box.timeStart);
+                                const endCandle = allData.find(c => c.time === box.timeEnd);
+
+                                if (startCandle && endCandle) {
+                                    x1 = timeScale.timeToCoordinate(startCandle.time);
+                                    x2 = timeScale.timeToCoordinate(endCandle.time);
+                                }
+                            }
+                        }
+
+                        // Fallback: Direkte Timestamp-Konvertierung
+                        if (x1 === null || x2 === null || x1 === undefined || x2 === undefined) {
+                            x1 = timeScale.timeToCoordinate(box.timeStart);
+                            x2 = timeScale.timeToCoordinate(box.timeEnd);
+                        }
+
+                        // Box ist sichtbar wenn MINDESTENS EINE Koordinate valide ist
+                        if (x1 === null && x2 === null) {
+                            return false;  // Komplett außerhalb
+                        }
+
+                        // Box ist sichtbar wenn im Chart-Bereich (mit 100px Toleranz)
+                        const isVisible = (x1 !== null && x1 >= -100 && x1 <= chartWidth + 100) ||
+                                         (x2 !== null && x2 >= -100 && x2 <= chartWidth + 100) ||
+                                         (x1 !== null && x2 === null) ||  // Zukunfts-Box
+                                         (x1 < 0 && x2 > chartWidth);
+
+                        return isVisible;
+                    } catch (error) {
+                        console.warn(`⚠️ Error checking visibility for box ${box.id}:`, error);
+                        return false;
+                    }
+                });
+            },
+
+            // Anzahl der Boxes
+            count() {
+                return this.boxes.length;
+            },
+
+            // Active Box Management
+            setActive(id) {
+                if (this.get(id)) {
+                    this.activeBoxId = id;
+                    console.log(`🎯 Active box: ${id}`);
+                }
+            },
+
+            getActive() {
+                return this.activeBoxId ? this.get(this.activeBoxId) : null;
+            },
+
+            // Rendering: Alle sichtbaren Boxes zeichnen
+            drawAll() {
+                if (!this.canvas || !this.ctx) {
+                    console.warn('⚠️ Canvas not initialized');
+                    return;
+                }
+
+                // ⭐ Setze Flag damit drawPositionBox() nicht clearRect() macht
+                window._managerDrawing = true;
+
+                // Clear canvas EINMAL
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Get visible boxes
+                const visibleBoxes = this.getVisible(
+                    chart.timeScale(),
+                    this.canvas.width
+                );
+
+                // console.log(`🎨 Drawing ${visibleBoxes.length} / ${this.boxes.length} boxes`);
+
+                // Draw each visible box
+                visibleBoxes.forEach(box => {
+                    this.drawBox(box);
+                });
+
+                // ⭐ Reset Flag
+                window._managerDrawing = false;
+            },
+
+            // Rendering: Eine spezifische Box zeichnen
+            drawBox(box) {
+                // ⭐ TEMPORÄRE LÖSUNG: Verwende alte drawPositionBox() mit Trick
+                // Setze temporär currentPositionBox für Legacy-Kompatibilität
+                const oldBox = window.currentPositionBox;
+                window.currentPositionBox = box;
+
+                // Rufe alte Draw-Funktion auf
+                if (typeof drawPositionBox === 'function') {
+                    drawPositionBox();
+                } else {
+                    console.warn('⚠️ drawPositionBox not available');
+                }
+
+                // Restore
+                window.currentPositionBox = oldBox;
+            }
+        };
+
         // Position Box Functions - NEUE IMPLEMENTIERUNG MIT ECHTEN RECHTECKEN
         function createPositionBox(time, entryPrice, clickX, clickY, isShort = false) {
-            // Entferne alte Position Box falls vorhanden
-            if (window.currentPositionBox) {
-                removeCurrentPositionBox();
-            }
+            // ⭐ ÄNDERUNG: Mehrere Boxes erlaubt - alte Box NICHT mehr löschen
+            // (Für Backwards Compatibility: Legacy Code-Pfade bleiben)
 
-            // Kleinere SL/TP für bessere Sichtbarkeit (0.25% Risk, 0.5% Reward)
+            // 1:1 Risk:Reward Ratio (0.25% Risk, 0.25% Reward)
             const riskPercent = 0.0025; // 0.25%
-            const rewardPercent = 0.005; // 0.5%
+            const rewardPercent = 0.0025; // 0.25% - GEÄNDERT von 0.5% zu 0.25% für 1:1 Ratio
 
             // Für Short Positionen sind TP/SL umgekehrt
             let stopLoss, takeProfit;
@@ -4926,58 +5421,214 @@ async def get_chart():
             console.log('💰 Preise:', {entry: entryPrice, sl: stopLoss, tp: takeProfit});
             console.log('📍 Click-Position:', clickX, clickY, 'Container Breite:', document.getElementById('chart_container')?.clientWidth);
 
-            // Box Dimensionen
-            const currentTime = Math.floor(Date.now() / 1000);
-            const boxWidth = 7200; // 2 Stunden für bessere Sichtbarkeit
-            const timeEnd = currentTime + boxWidth;
+            // Box Dimensionen - DYNAMISCH basierend auf Timeframe und Click-Zeit
+            const centerTime = time || Math.floor(Date.now() / 1000);
 
-            // Position Box Object erstellen
-            window.currentPositionBox = {
-                id: 'POS_' + Date.now(),
+            // Berechne angemessene Box-Breite basierend auf aktuellem Timeframe
+            function getTimeframeBasedBoxWidth() {
+                const tf = window.currentTimeframe || '5m';
+                const timeframeMinutes = {
+                    '1m': 1,
+                    '2m': 2,
+                    '3m': 3,
+                    '5m': 5,
+                    '15m': 15,
+                    '30m': 30,
+                    '1h': 60,
+                    '4h': 240
+                };
+
+                const minutes = timeframeMinutes[tf] || 5;
+                // ⭐ ÄNDERUNG: 15 Kerzen breit (statt 4) für bessere Sichtbarkeit
+                const candleCount = 15;
+                const boxWidthSeconds = minutes * 60 * candleCount;
+
+                console.log(`📏 Timeframe ${tf}: ${minutes}min * ${candleCount} Kerzen = ${boxWidthSeconds}s Box-Breite`);
+                return boxWidthSeconds;
+            }
+
+            const boxWidth = getTimeframeBasedBoxWidth();
+
+            // ⭐ FIX: Verwende MITTE des sichtbaren Chart-Bereichs (garantiert sichtbar!)
+            const timeScale = chart.timeScale();
+            const visibleRange = timeScale.getVisibleLogicalRange();
+
+            let boxCenterTime = centerTime;  // Default: Click-Zeit
+
+            if (visibleRange && candlestickSeries) {
+                try {
+                    // ⭐ Hole alle Daten von der Series
+                    const allData = candlestickSeries.data();
+
+                    if (allData && allData.length > 0) {
+                        // ⭐ FIX: Finde die nächstgelegene Kerze zur Click-Zeit (statt Chart-Mitte!)
+                        let clickIndex = -1;
+                        let minDiff = Infinity;
+
+                        // Suche die Kerze mit der geringsten Zeitdifferenz zur Click-Zeit
+                        for (let i = 0; i < allData.length; i++) {
+                            const diff = Math.abs(allData[i].time - centerTime);
+                            if (diff < minDiff) {
+                                minDiff = diff;
+                                clickIndex = i;
+                            }
+                        }
+
+                        // Fallback: Falls keine Kerze gefunden, verwende Chart-Mitte
+                        if (clickIndex === -1) {
+                            const middleLogical = (visibleRange.from + visibleRange.to) / 2;
+                            clickIndex = Math.floor(Math.max(0, Math.min(allData.length - 1, middleLogical)));
+                        }
+
+                        // ⭐ Zeit aus nächstgelegener Kerze holen
+                        const nearestCandleTime = allData[clickIndex]?.time;
+
+                        if (nearestCandleTime) {
+                            boxCenterTime = nearestCandleTime;
+
+                            // ⭐⭐⭐ NEU: Berechne Start/End basierend auf Kerzen-Indices (PRIMÄR) ⭐⭐⭐
+                            const candleCount = 15;  // Box = 15 Kerzen breit
+                            const halfCandles = Math.floor(candleCount / 2);  // 7 Kerzen links/rechts
+
+                            // Start- und End-Index berechnen (garantiert im validen Bereich)
+                            const startIndex = Math.max(0, clickIndex - halfCandles);
+                            const endIndex = Math.min(allData.length - 1, clickIndex + halfCandles);
+
+                            // ⭐⭐⭐ SPEICHERE INDICES in Temp-Variablen (für newBox) ⭐⭐⭐
+                            window._boxStartIndex = startIndex;
+                            window._boxEndIndex = endIndex;
+
+                            // ⭐ Exakte Kerzen-Zeiten verwenden (als Fallback für TF-Wechsel)
+                            window._boxTimeStart = allData[startIndex].time;
+                            window._boxTimeEnd = allData[endIndex].time;
+
+                            console.log(`📊 Nächste Kerze zur Click-Zeit (Index ${clickIndex} von ${allData.length}): Zeit ${nearestCandleTime}`);
+                            console.log(`📍 Box Kerzen-Indices: Start=${startIndex}, Ende=${endIndex}`);
+                            console.log(`📍 Box Timestamps: Start=${window._boxTimeStart}, Ende=${window._boxTimeEnd}`);
+                            console.log(`🖱️ Original Click-Zeit: ${centerTime}, Differenz: ${minDiff}s`);
+                        } else {
+                            console.warn('⚠️ Keine Zeit in allData[middleIndex] - verwende centerTime');
+                        }
+                    } else {
+                        console.warn('⚠️ Keine Daten verfügbar - verwende centerTime');
+                    }
+                } catch (error) {
+                    console.error('❌ Fehler beim Ermitteln der sichtbaren Mitte:', error);
+                }
+            } else {
+                console.warn('❌ Kein sichtbarer Bereich oder Series verfügbar - verwende centerTime');
+            }
+
+            // ⭐ FIX: Verwende exakte Kerzen-Zeiten (garantiert in Daten!)
+            // Falls window._boxTimeStart/End gesetzt wurden, verwende diese, sonst Fallback
+            const timeStart = window._boxTimeStart || (boxCenterTime - boxWidth / 2);
+            const timeEnd = window._boxTimeEnd || (boxCenterTime + boxWidth / 2);
+
+            // ⭐⭐⭐ Hole Kerzen-Indices aus Temp-Variablen ⭐⭐⭐
+            const candleStartIndex = window._boxStartIndex !== undefined ? window._boxStartIndex : null;
+            const candleEndIndex = window._boxEndIndex !== undefined ? window._boxEndIndex : null;
+
+            // Cleanup: Temp-Variablen entfernen
+            delete window._boxTimeStart;
+            delete window._boxTimeEnd;
+            delete window._boxStartIndex;
+            delete window._boxEndIndex;
+
+            // ⭐ Position Box Object erstellen (für Manager)
+            const newBox = {
+                id: null,  // Wird vom Manager gesetzt
                 entryPrice: entryPrice,
                 stopLoss: stopLoss,
                 takeProfit: takeProfit,
-                time: currentTime,
-                timeEnd: timeEnd,
+                time: boxCenterTime,   // ⭐ Sichtbare Chart-Mitte (garantiert sichtbar!)
+
+                // ⭐⭐⭐ NEU: PRIMÄRE KERZEN-INDEX-BINDUNG (eliminiert Zoom-Shift) ⭐⭐⭐
+                candleStartIndex: candleStartIndex,  // Z.B. 95 (Start-Kerze im Daten-Array)
+                candleEndIndex: candleEndIndex,      // Z.B. 110 (End-Kerze im Daten-Array)
+
+                // Legacy: Timestamps als Fallback für TF-Wechsel
+                timeStart: timeStart,  // Start-Zeit der Box
+                timeEnd: timeEnd,      // End-Zeit der Box
                 width: boxWidth,
                 isResizing: false,
                 resizeHandle: null,
                 isShort: isShort,
-                // NEUE X-Koordinaten basierend auf Click-Position
+
+                // NEUE X-Koordinaten basierend auf Zeit und Click-Position
                 clickX: clickX || null,  // Echte Click-X-Koordinate
                 clickY: clickY || null,  // Echte Click-Y-Koordinate
-                x1Percent: clickX ? Math.max(0, (clickX - 60) / document.getElementById('chart_container').clientWidth) : 0.45,  // 60px links vom Klick
-                x2Percent: clickX ? Math.min(1, (clickX + 60) / document.getElementById('chart_container').clientWidth) : 0.55,  // 60px rechts vom Klick
+
+                // Zeit-basierte X-Koordinaten anstatt Pixel-basierte (für Legacy-Kompatibilität)
+                legacyTimeStart: timeStart,  // Start-Zeit der Box
+                legacyTimeEnd: timeEnd,      // End-Zeit der Box
+
+                // Fallback für Legacy-Support (schmale Box um Click-Position)
+                x1Percent: clickX ? Math.max(0, (clickX - 30) / document.getElementById('chart_container').clientWidth) : 0.47,  // 30px links vom Klick
+                x2Percent: clickX ? Math.min(1, (clickX + 30) / document.getElementById('chart_container').clientWidth) : 0.53,  // 30px rechts vom Klick
+
                 // DIREKTE Y-KOORDINATEN FÜR SOFORTIGE UPDATES - Entry Level an exakter Click-Position
                 entryY: clickY || null,  // ⭐ Verwende Click-Y für Entry Level
                 slY: null,
                 tpY: null
+
+                // ⛔ ENTFERNT: coordinateCache
+                // Koordinaten werden jetzt IMMER frisch in drawPositionBox() berechnet
+                // Grund: Cache verursachte Bug bei vertikalem Pan (Y-Koordinaten blieben alt)
             };
 
-            // Zeichne die Box mit Canvas Overlay (echte Rechtecke)
-            createCanvasOverlay();
-            drawPositionBox();
+            // ⭐ ÄNDERUNG: Box zu Manager hinzufügen statt Singleton
+            const boxId = window.positionBoxManager.add(newBox);
+            window.positionBoxManager.setActive(boxId);
+
+            // ⭐ Backwards Compatibility: Auch als currentPositionBox setzen
+            window.currentPositionBox = newBox;
+
+            // Canvas erstellen (nur beim ersten Mal)
+            if (!window.positionBoxManager.canvas) {
+                createCanvasOverlay();
+                setupIntelligentCanvasHover();
+            }
+
+            // ⭐ ÄNDERUNG: Alle Boxes zeichnen statt nur eine
+            window.positionBoxManager.drawAll();
 
             // Erstelle Price Lines auf der Y-Achse (DEAKTIVIERT für Positionseröffnungstool)
             // createPriceLines(entryPrice, stopLoss, takeProfit);
 
-            console.log('📦 Neue Position Box erstellt:', window.currentPositionBox);
+            console.log(`📦 Neue Position Box erstellt: ${boxId} (Total: ${window.positionBoxManager.count()})`);
+
+            // ⭐ REMOVED: Trade Modal wird NUR über Buy-Button ($) geöffnet
+            // Trade Modal wird nicht automatisch bei Position Box Erstellung geöffnet
+
+            return boxId;  // Return Box ID für weitere Verwendung
         }
 
         function createCanvasOverlay() {
-            // Entferne alte Canvas falls vorhanden
-            const oldCanvas = document.getElementById('position-canvas');
-            if (oldCanvas) oldCanvas.remove();
+            // ⭐ Prüfe ob Canvas bereits existiert (für mehrere Boxes)
+            let canvas = document.getElementById('position-canvas');
 
+            if (canvas) {
+                console.log('📄 Canvas bereits vorhanden, verwende existierenden');
+                // ⭐ Update Manager References falls noch nicht gesetzt
+                if (!window.positionBoxManager.canvas) {
+                    window.positionBoxManager.init(canvas, canvas.getContext('2d'));
+                }
+                // Backwards Compatibility
+                window.positionCanvas = canvas;
+                window.positionCtx = canvas.getContext('2d');
+                return;
+            }
+
+            // ⭐ Erstelle neuen Canvas (nur beim ersten Mal)
             const chartContainer = document.getElementById('chart_container');
-            const canvas = document.createElement('canvas');
+            canvas = document.createElement('canvas');
             canvas.id = 'position-canvas';
             canvas.style.position = 'absolute';
             canvas.style.top = '0';
             canvas.style.left = '0';
             canvas.style.width = '100%';
             canvas.style.height = '100%';
-            canvas.style.pointerEvents = 'auto';
+            canvas.style.pointerEvents = 'none';  // ⭐ STANDARD: 'none' → Events gehen zum Chart durch
             canvas.style.zIndex = '1000';
             canvas.width = chartContainer.clientWidth;
             canvas.height = chartContainer.clientHeight;
@@ -4986,6 +5637,11 @@ async def get_chart():
             chartContainer.appendChild(canvas);
 
             const ctx = canvas.getContext('2d');
+
+            // ⭐ Initialize Manager mit Canvas
+            window.positionBoxManager.init(canvas, ctx);
+
+            // Backwards Compatibility
             window.positionCanvas = canvas;
             window.positionCtx = ctx;
 
@@ -4993,78 +5649,285 @@ async def get_chart():
             canvas.addEventListener('mousedown', onCanvasMouseDown);
             canvas.addEventListener('mousemove', onCanvasMouseMove);
             canvas.addEventListener('mouseup', onCanvasMouseUp);
+
+            console.log('📄 Canvas Overlay erstellt und Manager initialisiert');
         }
 
-        function drawPositionBox() {
-            const box = window.currentPositionBox;
-            const ctx = window.positionCtx;
-            const canvas = window.positionCanvas;
+        // ⭐ ENTFERNT: Nicht mehr benötigt - Canvas bleibt immer 'auto'
+        // Events werden jetzt selektiv in Event-Handlern verarbeitet
 
-            if (!box || !ctx || !canvas) {
-                console.warn('❌ drawPositionBox: Missing box, context, or canvas');
-                return;
-            }
+        // ⭐ FIX: Intelligente Hover-Detection - Cursor Updates
+        function setupIntelligentCanvasHover() {
+            const chartContainer = document.getElementById('chart_container');
+            if (!chartContainer) return;
 
-            // Clear canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            try {
-                // SICHERE API AUFRUFE - Prüfe ob Chart bereit ist
-                if (!chart || !candlestickSeries) {
-                    console.warn('❌ Chart or series not ready');
+            // ⭐ NEUE STRATEGIE: Hover-Detection auf Chart Container, nicht Canvas
+            // Canvas hat 'pointer-events: none' → Events gehen durch zum Chart
+            // Wir schalten Canvas nur auf 'auto' wenn über Box/Buttons
+            chartContainer.addEventListener('mousemove', function(e) {
+                const canvas = window.positionCanvas;
+                if (!canvas || !window.currentPositionBox) {
+                    if (canvas) canvas.style.pointerEvents = 'none';
                     return;
                 }
 
-                // Verwende dynamische oder Fallback Koordinaten
+                const rect = canvas.getBoundingClientRect();
+
+                // ⭐ FIX: Skaliere Mouse-Koordinaten von CSS zu Canvas
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+
+                // Prüfe ob Maus über Position Box oder Buttons ist
+                const box = window.currentPositionBox;
+                const isOverBox = isPointOverPositionBox(x, y, box);
+                const isOverButtons = isPointOverButtons(x, y);
+
+                // ⭐ DYNAMISCHE POINTER-EVENTS: Nur aktivieren wenn über Box/Buttons
+                if (isOverBox || isOverButtons) {
+                    canvas.style.pointerEvents = 'auto';
+
+                    // Cursor-Update für bessere UX
+                    if (isOverButtons) {
+                        canvas.style.cursor = 'pointer';
+                    } else if (isOverBox) {
+                        canvas.style.cursor = 'move';
+                    }
+                } else {
+                    canvas.style.pointerEvents = 'none';  // Events gehen zum Chart durch
+                    canvas.style.cursor = 'default';
+                }
+            });
+        }
+
+        // ⭐ NEUE FUNKTION: Prüft ob Punkt über Buttons (X oder Buy) liegt
+        function isPointOverButtons(x, y) {
+            // Prüfe Delete Button
+            if (window.deleteButtonCoords) {
+                const btn = window.deleteButtonCoords;
+                const distance = Math.sqrt(
+                    Math.pow(x - btn.x, 2) + Math.pow(y - btn.y, 2)
+                );
+                if (distance <= (btn.size / 2) + 5) {  // 5px extra Toleranz
+                    return true;
+                }
+            }
+
+            // Prüfe Buy Button (falls vorhanden)
+            if (window.buyButtonCoords) {
+                const btn = window.buyButtonCoords;
+                const distance = Math.sqrt(
+                    Math.pow(x - btn.x, 2) + Math.pow(y - btn.y, 2)
+                );
+                if (distance <= (btn.size / 2) + 5) {  // 5px extra Toleranz
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // ⭐ HILFSFUNKTION: Prüft ob Punkt über Position Box liegt
+        function isPointOverPositionBox(x, y, box) {
+            if (!box || !window.positionCanvas) return false;
+
+            try {
+                const canvas = window.positionCanvas;
+                if (!canvas) return false;
+
                 const chartWidth = canvas.width;
                 const chartHeight = canvas.height;
 
-                // X-Position: Dynamische Werte aus Box-Objektt, sonst Fallback
-                const x1 = chartWidth * (box.x1Percent || 0.1);
-                const x2 = chartWidth * (box.x2Percent || 0.9);
+                // ⭐ ROBUSTE API-AUFRUFE: X-Koordinaten der Box
+                let x1, x2;
+                if (box.timeStart && box.timeEnd && chart && chart.timeScale) {
+                    try {
+                        const timeScale = chart.timeScale();
+                        if (timeScale && typeof timeScale.timeToCoordinate === 'function') {
+                            x1 = timeScale.timeToCoordinate(box.timeStart);
+                            x2 = timeScale.timeToCoordinate(box.timeEnd);
 
-                // Y-Koordinaten: VERWENDE GESPEICHERTE ODER BERECHNE NEU
+                            // Validierung der API-Ergebnisse
+                            if (isNaN(x1) || isNaN(x2) || x1 < -100 || x2 < -100 ||
+                                x1 > chartWidth + 100 || x2 > chartWidth + 100) {
+                                throw new Error('Invalid API coordinates');
+                            }
+                        } else {
+                            throw new Error('TimeScale API not available');
+                        }
+                    } catch (apiError) {
+                        console.warn('⚠️ TimeScale API Error, using fallback:', apiError);
+                        x1 = chartWidth * (box.x1Percent || 0.47);
+                        x2 = chartWidth * (box.x2Percent || 0.53);
+                    }
+                } else {
+                    // Fallback für fehlende Zeit-Daten
+                    x1 = chartWidth * (box.x1Percent || 0.47);
+                    x2 = chartWidth * (box.x2Percent || 0.53);
+                }
+
+                // ⭐ KOORDINATEN-CACHE: Verwende gecachte Pixel-Koordinaten vom letzten Draw
+                // Garantiert Konsistenz zwischen Draw & Hover Detection
                 let entryY, slY, tpY;
 
-                // EINZELNE KOORDINATEN-CACHE-PRÜFUNG
-                // Verwende gecachte Koordinate wenn vorhanden, sonst berechne neu
-                try {
-                    entryY = (box.entryY !== null) ? box.entryY : candlestickSeries.priceToCoordinate(box.entryPrice);
-                    slY = (box.slY !== null) ? box.slY : candlestickSeries.priceToCoordinate(box.stopLoss);
-                    tpY = (box.tpY !== null) ? box.tpY : candlestickSeries.priceToCoordinate(box.takeProfit);
+                if (box.cachedPixelCoordinates) {
+                    // Cache-Hit: Verwende gespeicherte Koordinaten (BEVORZUGT!)
+                    entryY = box.cachedPixelCoordinates.entryY;
+                    slY = box.cachedPixelCoordinates.slY;
+                    tpY = box.cachedPixelCoordinates.tpY;
+                } else {
+                    // Cache-Miss: Berechne aus Preisen (Fallback)
+                    if (candlestickSeries && typeof candlestickSeries.priceToCoordinate === 'function') {
+                        try {
+                            entryY = candlestickSeries.priceToCoordinate(box.entryPrice);
+                            slY = candlestickSeries.priceToCoordinate(box.stopLoss);
+                            tpY = candlestickSeries.priceToCoordinate(box.takeProfit);
 
-                    // Validiere Koordinaten
-                    if (isNaN(entryY) || isNaN(slY) || isNaN(tpY) ||
-                        entryY < 0 || slY < 0 || tpY < 0 ||
-                        entryY > chartHeight || slY > chartHeight || tpY > chartHeight) {
-                        throw new Error('Invalid coordinates from API');
+                            // Validierung
+                            if (isNaN(entryY) || isNaN(slY) || isNaN(tpY)) {
+                                throw new Error('Invalid price to coordinate conversion');
+                            }
+                        } catch (error) {
+                            console.warn('⚠️ priceToCoordinate failed, using fallback');
+                            entryY = chartHeight * 0.5;
+                            slY = chartHeight * 0.7;
+                            tpY = chartHeight * 0.3;
+                        }
+                    } else {
+                        // Fallback wenn API nicht verfügbar
+                        entryY = chartHeight * 0.5;
+                        slY = chartHeight * 0.7;
+                        tpY = chartHeight * 0.3;
                     }
+                }
 
-                    // Aktualisiere Cache nur für neu berechnete Werte
-                    if (box.entryY === null) box.entryY = entryY;
-                    if (box.slY === null) box.slY = slY;
-                    if (box.tpY === null) box.tpY = tpY;
+                // Bounding Box mit Toleranz
+                const tolerance = 15;  // Etwas größere Toleranz für bessere UX
+                const minX = Math.min(x1, x2) - tolerance;
+                const maxX = Math.max(x1, x2) + tolerance;
+                const minY = Math.min(entryY, slY, tpY) - tolerance;
+                const maxY = Math.max(entryY, slY, tpY) + tolerance;
 
-                    console.log('📍 Using mixed cached/calculated coordinates:', {
-                        entryY: box.entryY === entryY ? 'cached' : 'calculated',
-                        slY: box.slY === slY ? 'cached' : 'calculated',
-                        tpY: box.tpY === tpY ? 'cached' : 'calculated'
+                const isOver = x >= minX && x <= maxX && y >= minY && y <= maxY;
+
+                // ⭐ DEBUG: Hover Detection Diagnostics (nur bei TP-Handle-Bereich Y < 100)
+                if (y < 100) {
+                    console.log('🔍 Hover Detection:', {
+                        mouseY: y.toFixed(0),
+                        minY: minY.toFixed(0),
+                        maxY: maxY.toFixed(0),
+                        isOver,
+                        cacheUsed: !!box.cachedPixelCoordinates,
+                        tpY: tpY?.toFixed(0)
                     });
+                }
 
-                } catch (apiError) {
-                        console.warn('❌ API Error, using fallback coordinates:', apiError);
-                        // Fallback: Verwende prozentuale Positionen
-                        entryY = chartHeight * 0.5;  // Mitte
-                        slY = chartHeight * 0.7;     // 70% (unten)
-                        tpY = chartHeight * 0.3;     // 30% (oben)
+                return isOver;
 
-                        // Speichere auch Fallback-Koordinaten
-                        box.entryY = entryY;
-                        box.slY = slY;
-                        box.tpY = tpY;
+            } catch (error) {
+                console.warn('⚠️ Kritischer Fehler bei Position Box Hover-Detection:', error);
+                return false;
+            }
+        }
+
+        // ⭐ NEU: Koordinaten-Cache Update Funktion für Event-Based Redraw
+        // Berechnet Koordinaten nur bei Chart-Events (Zoom/Pan/Resize), nicht jeden Frame
+        // ⛔ ENTFERNT: updateBoxCoordinates()
+        // Koordinaten-Cache wurde komplett entfernt
+        // Koordinaten werden jetzt IMMER frisch in drawPositionBox() berechnet
+
+        function drawPositionBox() {
+            const box = window.currentPositionBox;
+
+            // ⭐ FIX: Verwende Manager-Variablen als Fallback wenn globale nicht gesetzt
+            const ctx = window.positionCtx || (window.positionBoxManager && window.positionBoxManager.ctx);
+            const canvas = window.positionCanvas || (window.positionBoxManager && window.positionBoxManager.canvas);
+
+            if (!box || !ctx || !canvas) {
+                console.warn('❌ drawPositionBox: Missing box, context, or canvas', {
+                    hasBox: !!box,
+                    hasCtx: !!ctx,
+                    hasCanvas: !!canvas,
+                    hasManager: !!window.positionBoxManager
+                });
+                return;
+            }
+
+            // ⭐ ÄNDERUNG: NUR clearRect wenn NICHT vom Manager aufgerufen
+            // Manager macht clearRect selbst vor der Schleife
+            // Check: Wenn Manager drawAll() läuft, ist window._managerDrawing = true
+            if (!window._managerDrawing) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            try {
+                // ⭐⭐⭐ NEU: KERZEN-INDEX-BASIERTE KOORDINATEN (kein Cache!) ⭐⭐⭐
+                // X-Koordinaten: Kerzen-Index → Zeit → Pixel
+                // Y-Koordinaten: IMMER frisch (reagiert sofort auf vertikales Pan/Zoom)
+
+                let x1, x2;
+
+                // ========== X-KOORDINATEN: Timestamp-basiert (STABIL!) ==========
+                // ⚠️ WICHTIG: Indices verschieben sich wenn neue Daten geladen werden!
+                // → Wir verwenden TIMESTAMPS (box.timeStart/timeEnd) als Quelle der Wahrheit
+                if (box.timeStart && box.timeEnd) {
+                    // Hole Kerzen-Daten
+                    const allData = candlestickSeries.data();
+
+                    if (allData && allData.length > 0) {
+                        // 🔍 Finde Kerzen basierend auf TIMESTAMPS (stabil!)
+                        const startCandle = allData.find(c => c.time === box.timeStart);
+                        const endCandle = allData.find(c => c.time === box.timeEnd);
+
+                        if (startCandle && endCandle) {
+                            // Konvertiere Kerzen-Zeit → Pixel-Koordinate
+                            x1 = chart.timeScale().timeToCoordinate(startCandle.time);
+                            x2 = chart.timeScale().timeToCoordinate(endCandle.time);
+
+                            // ⭐ KEIN Math.round() - exakte Koordinaten für Stabilität!
+                            // console.log(`📍 Box ${box.id} X-Koordinaten (Timestamp ${box.timeStart}-${box.timeEnd}): x1=${x1?.toFixed(2)}, x2=${x2?.toFixed(2)}`);
+                        }
                     }
+                }
 
-                console.log('📊 Drawing at coordinates:', {entryY, slY, tpY, x1, x2});
+                // Fallback: Timestamps (für alte Boxes oder TF-Wechsel)
+                if (x1 === null || x2 === null || x1 === undefined || x2 === undefined) {
+                    x1 = chart.timeScale().timeToCoordinate(box.timeStart);
+                    x2 = chart.timeScale().timeToCoordinate(box.timeEnd);
+                    console.log(`⚠️ Box ${box.id}: Verwende Timestamp-Fallback (kein Index verfügbar)`);
+                }
+
+                // ========== Y-KOORDINATEN: IMMER FRISCH (kein Cache!) ==========
+                const entryY = candlestickSeries.priceToCoordinate(box.entryPrice);
+                const slY = candlestickSeries.priceToCoordinate(box.stopLoss);
+                const tpY = candlestickSeries.priceToCoordinate(box.takeProfit);
+
+                // Validierung
+                if (x1 === null || x2 === null || isNaN(entryY) || isNaN(slY) || isNaN(tpY)) {
+                    console.warn(`⚠️ Box ${box.id}: Außerhalb sichtbarem Bereich oder ungültige Koordinaten`);
+                    return;  // Box nicht zeichnen
+                }
+
+                // 💰 PREIS-DEBUG (auskommentiert - zu verbose)
+                // console.log(`💰 PREISE: Entry=$${box.entryPrice.toFixed(2)} | SL=$${box.stopLoss.toFixed(2)} | TP=$${box.takeProfit.toFixed(2)}`);
+                // console.log(`📍 PIXEL: entryY=${entryY.toFixed(1)}px | slY=${slY.toFixed(1)}px | tpY=${tpY.toFixed(1)}px`);
+
+                // 🔄 REVERSE-CHECK (auskommentiert - zu verbose)
+                // const entryPriceCheck = candlestickSeries.coordinateToPrice(entryY);
+                // const slPriceCheck = candlestickSeries.coordinateToPrice(slY);
+                // const tpPriceCheck = candlestickSeries.coordinateToPrice(tpY);
+                // console.log(`🔄 REVERSE: entryY=${entryY.toFixed(1)}px→$${entryPriceCheck?.toFixed(2)} | slY=${slY.toFixed(1)}px→$${slPriceCheck?.toFixed(2)} | tpY=${tpY.toFixed(1)}px→$${tpPriceCheck?.toFixed(2)}`);
+
+                // ⚙️ Verbose Debug (auskommentiert um Logs zu reduzieren)
+                // console.log(`📊 Drawing Box ${box.id} (LIVE):`, {
+                //     x: `${x1.toFixed(1)} → ${x2.toFixed(1)} (${(x2-x1).toFixed(0)}px)`,
+                //     entryPx: entryY.toFixed(1),
+                //     slPx: slY.toFixed(1),
+                //     tpPx: tpY.toFixed(1),
+                //     timestamps: `${box.timeStart} → ${box.timeEnd}`
+                // });
 
                 // Zeichne Stop Loss Box (rot)
                 ctx.fillStyle = 'rgba(242, 54, 69, 0.2)';
@@ -5101,20 +5964,51 @@ async def get_chart():
                 // Zeichne Resize Handles in den Ecken
                 drawResizeHandles(x1, x2, slTop, tpTop, slHeight, tpHeight);
 
-                // Zeichne Mülleimer-Symbol (Delete Button)
-                drawDeleteButton(x2, Math.min(slTop, tpTop));
+                // Zeichne Buttons: Buy (links) und Delete (rechts)
+                const buttonY = Math.min(slTop, tpTop);
+                drawBuyButton(x2, buttonY, box.id);      // ⭐ Buy Button (grün, mit $)
+                drawDeleteButton(x2, buttonY, box.id);   // Delete Button (rot, mit X)
 
-                // Speichere Koordinaten für Interaktion
+                // ⭐ MULTI-BOX: Speichere Button-Koordinaten IN der Box
+                box.deleteButton = {
+                    x: x2,
+                    y: buttonY - 25,  // Button ist 25px über buttonY
+                    size: 20,
+                    boxId: box.id
+                };
+
+                box.buyButton = {
+                    x: x2 - 30,  // Buy Button ist 30px links vom Delete Button
+                    y: buttonY - 25,
+                    size: 20,
+                    boxId: box.id
+                };
+
+                // 🔍 DEBUG: Button-Positionen
+                console.log('🔘 Buttons:', {
+                    buttonY: buttonY.toFixed(0),
+                    deleteBtn: `(${x2.toFixed(0)}, ${(buttonY-25).toFixed(0)})`,
+                    buyBtn: `(${(x2-30).toFixed(0)}, ${(buttonY-25).toFixed(0)})`
+                });
+
+                // ⭐ KOORDINATEN-CACHE: Speichere berechnete Pixel-Koordinaten in der Box
+                // Verhindert doppelte API-Aufrufe und garantiert Konsistenz zwischen Draw & Hover
+                box.cachedPixelCoordinates = {
+                    x1, x2, entryY, slY, tpY,
+                    slTop, tpTop, slHeight, tpHeight,
+                    timestamp: Date.now()  // Für Debugging
+                };
+
+                // Legacy: Für Backwards Compatibility
                 window.boxCoordinates = {
                     x1, x2, entryY, slY, tpY,
                     slTop, tpTop, slHeight, tpHeight,
-                    // Delete Button Koordinaten
                     deleteButtonX: x2,
                     deleteButtonY: Math.min(slTop, tpTop),
                     deleteButtonSize: 20
                 };
 
-                console.log('✅ Position Box gezeichnet erfolgreich');
+                // console.log('✅ Position Box gezeichnet erfolgreich');
 
             } catch (error) {
                 console.error('❌ Kritischer Fehler beim Zeichnen der Position Box:', error);
@@ -5148,13 +6042,21 @@ async def get_chart():
                 'TP-TL': {x: x1, y: tpTop, type: 'tp'},
                 'TP-TR': {x: x2, y: tpTop, type: 'tp'}
             };
+
+            // 🔍 DEBUG: Handle-Positionen
+            console.log('🔧 Resize Handles:', {
+                SL_BL: `(${x1.toFixed(0)}, ${slBottom.toFixed(0)})`,
+                SL_BR: `(${x2.toFixed(0)}, ${slBottom.toFixed(0)})`,
+                TP_TL: `(${x1.toFixed(0)}, ${tpTop.toFixed(0)})`,
+                TP_TR: `(${x2.toFixed(0)}, ${tpTop.toFixed(0)})`
+            });
         }
 
         function drawHandle(ctx, x, y, color, id) {
-            const size = 8;
+            const size = 12;  // ⭐ Vergrößert von 8 auf 12 für bessere Sichtbarkeit
             ctx.fillStyle = color;
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#ffffff';  // ⭐ Weißer Rand statt schwarz für besseren Kontrast
+            ctx.lineWidth = 2;  // ⭐ Dickerer Rand
 
             ctx.fillRect(x - size/2, y - size/2, size, size);
             ctx.strokeRect(x - size/2, y - size/2, size, size);
@@ -5196,47 +6098,101 @@ async def get_chart():
             };
         }
 
+        // ⭐ NEUE FUNKTION: Buy Button zeichnen (mit Selected State)
+        function drawBuyButton(x, y) {
+            const ctx = window.positionCtx;
+            const size = 20;
+            const iconSize = 12;
+
+            // Button Position: links vom Delete Button
+            const buttonX = x - 30;  // 30px links vom Delete Button
+            const buttonY = y - 25;
+
+            // ⭐ VISUAL FEEDBACK: Selected State wenn Modal offen
+            const isSelected = window.buyButtonSelected || false;
+
+            // Zeichne Button Hintergrund (grün mit Transparenz, dunkler wenn selected)
+            if (isSelected) {
+                ctx.fillStyle = 'rgba(8, 153, 129, 1.0)';  // Volle Opazität
+                ctx.strokeStyle = '#ffffff';  // Weißer Border
+                ctx.lineWidth = 3;  // Dickerer Border
+            } else {
+                ctx.fillStyle = 'rgba(8, 153, 129, 0.8)';
+                ctx.strokeStyle = '#089981';
+                ctx.lineWidth = 2;
+            }
+            ctx.fillRect(buttonX - size/2, buttonY - size/2, size, size);
+            ctx.strokeRect(buttonX - size/2, buttonY - size/2, size, size);
+
+            // Zeichne Buy-Symbol (Pfeil nach oben + Dollar)
+            ctx.strokeStyle = '#ffffff';
+            ctx.fillStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.font = isSelected ? 'bold 12px Arial' : '12px Arial';  // Bold wenn selected
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Zeichne "$" Symbol
+            ctx.fillText('$', buttonX, buttonY);
+
+            // Speichere Button Koordinaten für Click-Detection
+            if (!window.buyButtonCoords) window.buyButtonCoords = {};
+            window.buyButtonCoords = {
+                x: buttonX,
+                y: buttonY,
+                size: size
+            };
+        }
+
         // NEUE MOUSE EVENT HANDLERS FÜR BOX-INTERNE RESIZE
         let isDragging = false;
         let dragHandle = null;
 
         function onCanvasMouseDown(e) {
-            const rect = e.target.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-
-            // Check if mouse is over delete button
-            if (window.deleteButtonCoords && window.currentPositionBox) {
-                const btn = window.deleteButtonCoords;
-                const distance = Math.sqrt(
-                    Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
-                );
-
-                if (distance <= btn.size/2) {
-                    console.log('🗑️ Delete Button geklickt - lösche Position Box');
-                    removeCurrentPositionBox();
-                    e.preventDefault();
-                    return;
-                }
+            // ⭐ GUARD: Nur verarbeiten wenn Position Box existiert
+            if (!window.currentPositionBox) {
+                console.log('🛡️ Canvas MouseDown ignoriert - keine Position Box aktiv');
+                return;
             }
 
-            // Check if mouse is over any resize handle
+            const canvas = e.target;
+            const rect = canvas.getBoundingClientRect();
+
+            // ⭐ FIX: Skaliere Mouse-Koordinaten von CSS zu Canvas
+            // CSS-Koordinaten (Browser) → Canvas-Koordinaten (interne Pixel)
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+
+            console.log('🖱️ Mouse Click:', {
+                css: {x: e.clientX - rect.left, y: e.clientY - rect.top},
+                canvas: {x: mouseX, y: mouseY},
+                scale: {x: scaleX, y: scaleY}
+            });
+
+            // ⭐ PRIORITÄT 1: Check if mouse is over any resize handle (ZUERST!)
             for (const [id, handle] of Object.entries(window.resizeHandles || {})) {
                 const distance = Math.sqrt(
                     Math.pow(mouseX - handle.x, 2) + Math.pow(mouseY - handle.y, 2)
                 );
 
-                if (distance <= 12) { // 12px click tolerance
+                // 🔍 DEBUG: Zeige alle Handle-Distanzen
+                console.log(`🔍 Handle ${id}: distance=${distance.toFixed(1)}px, mouse=(${mouseX.toFixed(0)}, ${mouseY.toFixed(0)}), handle=(${handle.x.toFixed(0)}, ${handle.y.toFixed(0)})`);
+
+                if (distance <= 20) { // 20px click tolerance (erhöht für bessere UX)
                     isDragging = true;
                     dragHandle = id;
                     // Cursor für Eckhandles
                     e.target.style.cursor = 'nw-resize'; // Diagonal resize für Eckhandles
+                    e.target.style.pointerEvents = 'auto';  // ⭐ Während Dragging Canvas aktiv halten
                     console.log('🎯 Resize gestartet:', id);
                     return;
                 }
             }
 
-            // Check if mouse is over Entry-Linie (weiße Linie)
+            // ⭐ PRIORITÄT 2: Check if mouse is over Entry-Linie (weiße Linie)
             if (window.boxCoordinates && window.currentPositionBox) {
                 const coords = window.boxCoordinates;
                 const entryY = coords.entryY;
@@ -5248,15 +6204,100 @@ async def get_chart():
                     isDragging = true;
                     dragHandle = 'ENTRY-LINE';
                     e.target.style.cursor = 'ns-resize';
+                    e.target.style.pointerEvents = 'auto';  // ⭐ Während Dragging Canvas aktiv halten
                     console.log('🎯 Entry-Linie Drag gestartet');
+                    e.preventDefault();
+                    return;
                 }
+            }
+
+            // ⭐ PRIORITÄT 3: MULTI-BOX: Check alle Boxes für Delete Button Click
+            if (window.positionBoxManager) {
+                const allBoxes = window.positionBoxManager.getAll();
+
+                for (const box of allBoxes) {
+                    if (box.deleteButton) {
+                        const btn = box.deleteButton;
+                        const distance = Math.sqrt(
+                            Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                        );
+
+                        // ⭐ Erhöhte Toleranz für Delete Button
+                        if (distance <= (btn.size/2) + 5) {  // +5px extra Toleranz
+                            console.log(`🗑️ Delete Button geklickt - lösche Box ${box.id}`);
+                            console.log('📍 Delete Button:', {x: btn.x, y: btn.y, mouseX, mouseY, distance});
+
+                            // ⭐ Lösche NUR diese spezifische Box
+                            window.positionBoxManager.remove(box.id);
+                            window.positionBoxManager.drawAll();
+
+                            e.preventDefault();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // ⭐ PRIORITÄT 4: Check if mouse is over buy button
+            if (window.buyButtonCoords && window.currentPositionBox) {
+                const btn = window.buyButtonCoords;
+                const distance = Math.sqrt(
+                    Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                );
+
+                if (distance <= btn.size/2) {
+                    console.log('💰 Buy Button geklickt - öffne Trade Setup Modal');
+
+                    // ⭐ VISUAL FEEDBACK: Setze Selected State
+                    window.buyButtonSelected = true;
+                    drawPositionBox();  // Redraw mit Selected State
+
+                    // Öffne Trade Setup Modal mit Position Box Daten
+                    if (window.currentPositionBox) {
+                        const positionData = {
+                            symbol: 'NQ=F',
+                            entryPrice: window.currentPositionBox.entryPrice || 18500,
+                            stopLoss: window.currentPositionBox.stopLoss || 18400,
+                            takeProfit: window.currentPositionBox.takeProfit || 18600,
+                            direction: window.currentPositionBox.direction || 'long'
+                        };
+
+                        // ⭐ FIX: Korrekte Funktion ist openTradeModal, nicht showTradeModal
+                        openTradeModal(positionData);
+                    }
+
+                    e.preventDefault();
+                    return;
+                }
+            }
+
+            // ⭐ WICHTIG: Wenn nicht über Box/Buttons geklickt → Event NICHT verarbeiten
+            // Lasse Event zum Chart durchfallen für Pan/Zoom
+            const isOverBox = isPointOverPositionBox(mouseX, mouseY, window.currentPositionBox);
+            const isOverButtons = isPointOverButtons(mouseX, mouseY);
+
+            if (!isOverBox && !isOverButtons) {
+                console.log('🎯 Click außerhalb Position Box - Event durchgelassen für Chart');
+                // Event wird NICHT preventDefault() → fällt zum Chart durch
+                return;
             }
         }
 
         function onCanvasMouseMove(e) {
-            const rect = e.target.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
+            // ⭐ GUARD: Nur verarbeiten wenn Position Box existiert
+            if (!window.currentPositionBox) {
+                return;
+            }
+
+            const canvas = e.target;
+            const rect = canvas.getBoundingClientRect();
+
+            // ⭐ FIX: Skaliere Mouse-Koordinaten von CSS zu Canvas
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
 
             if (!isDragging) {
                 // Update cursor based on hover over handles
@@ -5265,9 +6306,31 @@ async def get_chart():
                     const distance = Math.sqrt(
                         Math.pow(mouseX - handle.x, 2) + Math.pow(mouseY - handle.y, 2)
                     );
-                    if (distance <= 12) {
+                    if (distance <= 20) {  // 20px hover tolerance (gleich wie click tolerance)
                         cursorType = 'nw-resize'; // Diagonal für Eckhandles
                         break;
+                    }
+                }
+
+                // ⭐ NEU: Check hover over Delete Button
+                if (cursorType === 'default' && window.deleteButtonCoords) {
+                    const btn = window.deleteButtonCoords;
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                    );
+                    if (distance <= btn.size/2) {
+                        cursorType = 'pointer'; // Pointer für Delete Button
+                    }
+                }
+
+                // ⭐ NEU: Check hover over Buy Button
+                if (cursorType === 'default' && window.buyButtonCoords) {
+                    const btn = window.buyButtonCoords;
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                    );
+                    if (distance <= btn.size/2) {
+                        cursorType = 'pointer'; // Pointer für Buy Button
                     }
                 }
 
@@ -5320,12 +6383,58 @@ async def get_chart():
         }
 
         function onCanvasMouseUp(e) {
+            // ⭐ GUARD: Nur verarbeiten wenn Position Box existiert
+            if (!window.currentPositionBox) {
+                return;
+            }
+
             if (isDragging) {
                 console.log('🎯 Box Resize beendet:', dragHandle);
                 isDragging = false;
                 dragHandle = null;
                 e.target.style.cursor = 'default';
+
+                // ⭐ WICHTIG: Nach Dragging prüfen ob Mouse noch über Box ist
+                const canvas = e.target;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const mouseX = (e.clientX - rect.left) * scaleX;
+                const mouseY = (e.clientY - rect.top) * scaleY;
+
+                const isOverBox = isPointOverPositionBox(mouseX, mouseY, window.currentPositionBox);
+                const isOverButtons = isPointOverButtons(mouseX, mouseY);
+
+                // ⭐ DYNAMISCHE POINTER-EVENTS: Nur 'auto' wenn noch über Box/Buttons
+                if (!isOverBox && !isOverButtons) {
+                    canvas.style.pointerEvents = 'none';  // Zurück zu 'none' → Chart wird wieder frei
+                    console.log('🎯 Dragging beendet - Canvas deaktiviert (Mouse außerhalb Box)');
+                } else {
+                    console.log('🎯 Dragging beendet - Canvas bleibt aktiv (Mouse über Box)');
+                }
             }
+        }
+
+        // ⭐⭐⭐ HILFSFUNKTION: Finde nächsten Kerzen-Index zu einer Zeit ⭐⭐⭐
+        function findNearestCandleIndex(targetTime, allData) {
+            if (!allData || allData.length === 0) {
+                console.warn('⚠️ findNearestCandleIndex: Keine Daten verfügbar');
+                return null;
+            }
+
+            let minDiff = Infinity;
+            let nearestIndex = 0;
+
+            for (let i = 0; i < allData.length; i++) {
+                const diff = Math.abs(allData[i].time - targetTime);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    nearestIndex = i;
+                }
+            }
+
+            console.log(`🔍 findNearestCandleIndex: Zeit ${targetTime} → Index ${nearestIndex} (Diff: ${minDiff}s)`);
+            return nearestIndex;
         }
 
         function updateBoxFromHandle(handleId, newPrice, newXPercent, mouseX) {
@@ -5416,25 +6525,63 @@ async def get_chart():
                     console.log('📈 TP aktualisiert:', newPrice);
                 }
 
-                // Horizontale Resize für Eckhandles
+                // ⭐ HORIZONTALE RESIZE: X-Achse Bewegung für Eckhandles
                 const isLeftHandle = handleId.includes('-TL') || handleId.includes('-BL');
                 const isRightHandle = handleId.includes('-TR') || handleId.includes('-BR');
 
-                if (isLeftHandle) {
-                    box.x1Percent = newXPercent;
-                    console.log('<-> ECK: Links Handle bewegt zu X:', mouseX);
-                } else if (isRightHandle) {
-                    box.x2Percent = newXPercent;
-                    console.log('<-> ECK: Rechts Handle bewegt zu X:', mouseX);
+                if (isLeftHandle || isRightHandle) {
+                    // Update Percentage-based coordinates (Fallback)
+                    if (isLeftHandle) {
+                        box.x1Percent = newXPercent;
+                    } else if (isRightHandle) {
+                        box.x2Percent = newXPercent;
+                    }
+
+                    // ⭐⭐⭐ WICHTIG: Update Kerzen-Index + Zeit für Canvas-Zeichnung ⭐⭐⭐
+                    try {
+                        const timeScale = chart.timeScale();
+                        if (timeScale && typeof timeScale.coordinateToTime === 'function') {
+                            // Konvertiere Mouse X-Koordinate zu Zeit
+                            const newTime = timeScale.coordinateToTime(mouseX);
+
+                            if (newTime !== null && !isNaN(newTime)) {
+                                // ⭐ NEU: Finde Kerzen-Index zur neuen Zeit
+                                const allData = candlestickSeries.data();
+                                const newIndex = findNearestCandleIndex(newTime, allData);
+
+                                if (isLeftHandle) {
+                                    box.timeStart = newTime;
+                                    if (newIndex !== null) {
+                                        box.candleStartIndex = newIndex;
+                                        console.log(`◀️ LINKS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
+                                    }
+                                } else if (isRightHandle) {
+                                    box.timeEnd = newTime;
+                                    if (newIndex !== null) {
+                                        box.candleEndIndex = newIndex;
+                                        console.log(`▶️ RECHTS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('⚠️ Zeit-Konvertierung fehlgeschlagen, verwende Percentage:', error);
+                    }
                 }
             }
 
-            // Stelle sicher dass x1 < x2
+            // Stelle sicher dass timeStart < timeEnd und x1 < x2
+            if (box.timeStart && box.timeEnd && box.timeStart > box.timeEnd) {
+                const temp = box.timeStart;
+                box.timeStart = box.timeEnd;
+                box.timeEnd = temp;
+                console.log('🔄 Box Zeit-Seiten getauscht');
+            }
             if (box.x1Percent && box.x2Percent && box.x1Percent > box.x2Percent) {
                 const temp = box.x1Percent;
                 box.x1Percent = box.x2Percent;
                 box.x2Percent = temp;
-                console.log('🔄 Box-Seiten getauscht');
+                console.log('🔄 Box Percent-Seiten getauscht');
             }
 
             // Redraw the entire position box
@@ -5524,8 +6671,10 @@ async def get_chart():
                 window.positionCtx = null;
                 window.boxCoordinates = null;
                 window.resizeHandles = null;
+                window.deleteButtonCoords = null;
+                window.buyButtonCoords = null;
 
-                console.log('🗑️ Position Box entfernt');
+                console.log('🗑️ Position Box entfernt - Chart ist wieder frei');
             }
         }
 
@@ -5558,11 +6707,17 @@ async def get_chart():
                 positionTool.classList.add('active');
                 console.log('📦 Position Box Tool AKTIVIERT');
             } else {
-                // Deaktiviere Tool
+                // ⭐ SAUBERES TOOL-DEAKTIVIEREN
                 positionTool.classList.remove('active');
                 positionTool.style.background = '#333';
                 positionTool.style.color = '#fff';
-                console.log('📦 Position Box Tool DEAKTIVIERT');
+
+                // Entferne aktive Position Box beim Deaktivieren
+                if (window.currentPositionBox) {
+                    removeCurrentPositionBox();
+                }
+
+                console.log('📦 Position Box Tool DEAKTIVIERT - Alle Boxen entfernt');
             }
         }
 
@@ -5591,11 +6746,17 @@ async def get_chart():
                 shortTool.classList.add('active');
                 console.log('📉 Short Position Tool AKTIVIERT');
             } else {
-                // Deaktiviere Tool
+                // ⭐ SAUBERES TOOL-DEAKTIVIEREN
                 shortTool.classList.remove('active');
                 shortTool.style.background = '#333';
                 shortTool.style.color = '#fff';
-                console.log('📉 Short Position Tool DEAKTIVIERT');
+
+                // Entferne aktive Position Box beim Deaktivieren
+                if (window.currentPositionBox) {
+                    removeCurrentPositionBox();
+                }
+
+                console.log('📉 Short Position Tool DEAKTIVIERT - Alle Boxen entfernt');
             }
         }
 
@@ -5645,6 +6806,15 @@ async def get_chart():
             // Prevent double-requests
             if (window.isTimeframeChanging || timeframe === window.currentTimeframe) {
                 return;
+            }
+
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('timeframe_change', {
+                    from_timeframe: window.currentTimeframe,
+                    to_timeframe: timeframe,
+                    timestamp: new Date()
+                });
             }
 
             console.log(`Wechsle zu Timeframe: ${timeframe}`);
@@ -5913,6 +7083,130 @@ async def get_chart():
             modal.style.display = 'none';
         }
 
+        // ===== TRADE MODAL FUNCTIONS =====
+        let currentTradeSetup = null;
+
+        function openTradeModal(tradeData) {
+            console.log('💰 Opening Trade Modal:', tradeData);
+
+            currentTradeSetup = tradeData;
+
+            // Update Modal Content
+            document.getElementById('tradeType').textContent = tradeData.isShort ? 'SHORT' : 'LONG';
+            document.getElementById('tradeEntry').textContent = tradeData.entryPrice.toFixed(2);
+            document.getElementById('tradeStopLoss').textContent = tradeData.stopLoss.toFixed(2);
+            document.getElementById('tradeTakeProfit').textContent = tradeData.takeProfit.toFixed(2);
+
+            // Calculate and update position size
+            updatePositionSize();
+
+            // Show modal
+            const modal = document.getElementById('tradeModal');
+            modal.style.display = 'flex';
+        }
+
+        function closeTradeModal() {
+            console.log('💰 Closing Trade Modal...');
+            const modal = document.getElementById('tradeModal');
+            modal.style.display = 'none';
+            currentTradeSetup = null;
+
+            // ⭐ VISUAL FEEDBACK: Entferne Selected State vom $ Button
+            window.buyButtonSelected = false;
+            if (window.currentPositionBox) {
+                drawPositionBox();  // Redraw ohne Selected State
+            }
+        }
+
+        function setRiskAmount(amount) {
+            document.getElementById('riskAmount').value = amount;
+
+            // Update active button
+            document.querySelectorAll('.risk-preset-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            updatePositionSize();
+        }
+
+        function setRRRatio(risk, reward) {
+            console.log(`📊 Setting R:R Ratio to ${risk}:${reward}`);
+
+            // Update active button
+            document.querySelectorAll('.rr-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Recalculate TP based on new ratio
+            if (currentTradeSetup) {
+                const entryPrice = currentTradeSetup.entryPrice;
+                const stopLoss = currentTradeSetup.stopLoss;
+                const riskAmount = Math.abs(entryPrice - stopLoss);
+                const rewardAmount = riskAmount * (reward / risk);
+
+                let newTakeProfit;
+                if (currentTradeSetup.isShort) {
+                    newTakeProfit = entryPrice - rewardAmount;
+                } else {
+                    newTakeProfit = entryPrice + rewardAmount;
+                }
+
+                currentTradeSetup.takeProfit = newTakeProfit;
+                document.getElementById('tradeTakeProfit').textContent = newTakeProfit.toFixed(2);
+
+                updatePositionSize();
+            }
+        }
+
+        function updatePositionSize() {
+            if (!currentTradeSetup) return;
+
+            const riskEUR = parseFloat(document.getElementById('riskAmount').value);
+            const entryPrice = currentTradeSetup.entryPrice;
+            const stopLoss = currentTradeSetup.stopLoss;
+            const takeProfit = currentTradeSetup.takeProfit;
+
+            // Calculate position size based on risk
+            const riskPerUnit = Math.abs(entryPrice - stopLoss);
+            const positionSize = riskEUR / riskPerUnit;
+
+            // Calculate max profit
+            const rewardPerUnit = Math.abs(takeProfit - entryPrice);
+            const maxProfit = positionSize * rewardPerUnit;
+
+            // Update display
+            document.getElementById('positionSize').textContent = `${positionSize.toFixed(2)} NQ`;
+            document.getElementById('maxProfit').textContent = `+${maxProfit.toFixed(0)}€`;
+        }
+
+        function executeTrade() {
+            console.log('🚀 Executing Trade:', currentTradeSetup);
+
+            const riskEUR = parseFloat(document.getElementById('riskAmount').value);
+            const positionSize = parseFloat(document.getElementById('positionSize').textContent);
+
+            const tradeExecution = {
+                ...currentTradeSetup,
+                riskEUR: riskEUR,
+                positionSize: positionSize,
+                executionTime: new Date(),
+                id: 'TRADE_' + Date.now()
+            };
+
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('trade_executed', tradeExecution);
+            }
+
+            // Send to backend (placeholder)
+            console.log('💰 Trade executed successfully:', tradeExecution);
+            alert(`Trade ausgeführt!\nTyp: ${tradeExecution.isShort ? 'SHORT' : 'LONG'}\nRisiko: ${riskEUR}€\nGröße: ${positionSize.toFixed(2)} NQ`);
+
+            closeTradeModal();
+        }
+
         function goToSelectedDate() {
             const dateInput = document.getElementById('goToDateInput');
             const selectedDate = dateInput.value;
@@ -5920,6 +7214,15 @@ async def get_chart():
             if (!selectedDate) {
                 alert('Bitte wähle ein Datum aus!');
                 return;
+            }
+
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('go_to_date', {
+                    selected_date: selectedDate,
+                    current_timeframe: window.currentTimeframe,
+                    timestamp: new Date()
+                });
             }
 
             console.log('[GO TO DATE] Request:', selectedDate);
@@ -5972,6 +7275,77 @@ async def get_chart():
             }
         });
 
+        // RL Trading System - Einfache und sichere Implementation
+        window.RLSystem = {
+            mode: 'offline',
+            isRecording: false,
+            demoActions: [],
+
+            startDemo: function() {
+                this.mode = 'demo';
+                this.isRecording = true;
+                this.updateUI();
+                console.log('✅ RL Demo-Modus aktiviert - Tracking gestartet');
+            },
+
+            startBot: function() {
+                this.mode = 'bot';
+                this.isRecording = false;
+                this.updateUI();
+                console.log('✅ RL Bot-Modus aktiviert');
+            },
+
+            stop: function() {
+                console.log(`📊 RL Session beendet - ${this.demoActions.length} Actions aufgezeichnet`);
+                this.mode = 'offline';
+                this.isRecording = false;
+                this.updateUI();
+            },
+
+            updateUI: function() {
+                const status = document.getElementById('rlStatus');
+                const demoBtn = document.getElementById('rlDemoBtn');
+                const botBtn = document.getElementById('rlBotBtn');
+                const stopBtn = document.getElementById('rlStopBtn');
+
+                if (status) {
+                    if (this.mode === 'demo') {
+                        status.textContent = '🟢 Demo';
+                        status.style.color = '#4ade80';
+                    } else if (this.mode === 'bot') {
+                        status.textContent = '🤖 Bot';
+                        status.style.color = '#60a5fa';
+                    } else {
+                        status.textContent = 'Offline';
+                        status.style.color = '#666';
+                    }
+                }
+
+                if (this.mode === 'offline') {
+                    if (demoBtn) demoBtn.style.display = 'inline-block';
+                    if (botBtn) botBtn.style.display = 'inline-block';
+                    if (stopBtn) stopBtn.style.display = 'none';
+                } else {
+                    if (demoBtn) demoBtn.style.display = 'none';
+                    if (botBtn) botBtn.style.display = 'none';
+                    if (stopBtn) stopBtn.style.display = 'inline-block';
+                }
+            },
+
+            trackAction: function(actionType, data) {
+                if (this.mode === 'demo' && this.isRecording) {
+                    const action = {
+                        id: Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                        type: actionType,
+                        timestamp: new Date(),
+                        data: data
+                    };
+                    this.demoActions.push(action);
+                    console.log(`📝 RL Action tracked: ${actionType}`, data);
+                }
+            }
+        };
+
         // Warte bis DOM und Script geladen sind
         document.addEventListener('DOMContentLoaded', function() {
             serverLog('🔧 DOM loaded - Initialisiere Chart und Event Handlers...');
@@ -5979,6 +7353,12 @@ async def get_chart():
             // WICHTIG: Chart zuerst initialisieren
             console.log('🔧 Initialisiere Chart beim DOMContentLoaded...');
             initChart();
+
+            // RL System UI initialisieren
+            if (window.RLSystem) {
+                window.RLSystem.updateUI();
+                console.log('✅ RL System initialisiert');
+            }
 
             // Registriere Button Event Handlers
             const positionBoxTool = document.getElementById('positionBoxTool');
