@@ -150,6 +150,58 @@ class CandleFactory:
         )
 
     @staticmethod
+    def from_dataframe_row(row: pd.Series) -> Candle:
+        """
+        Erstellt Kerze aus Pandas DataFrame Row (flexible Spalten-Namen)
+        Unterstützt sowohl uppercase (Open, High, Low, Close) als auch lowercase
+
+        Args:
+            row: Pandas Series mit Kerzen-Daten
+
+        Returns:
+            Candle-Objekt
+        """
+        # Flexible Spalten-Namen (uppercase oder lowercase)
+        def get_column_value(row, *possible_names):
+            for name in possible_names:
+                if name in row.index:
+                    return row[name]
+            raise KeyError(f"Keine der Spalten {possible_names} gefunden")
+
+        # Zeit-Handling
+        time_val = get_column_value(row, 'time', 'Time')
+        if isinstance(time_val, pd.Timestamp):
+            time_val = int(time_val.timestamp())
+        elif not isinstance(time_val, (int, float)):
+            time_val = int(pd.Timestamp(time_val).timestamp())
+        else:
+            time_val = int(time_val)
+
+        # OHLC Werte (flexible Spalten-Namen)
+        open_val = float(get_column_value(row, 'open', 'Open'))
+        high_val = float(get_column_value(row, 'high', 'High'))
+        low_val = float(get_column_value(row, 'low', 'Low'))
+        close_val = float(get_column_value(row, 'close', 'Close'))
+
+        # Volume (optional)
+        volume_val = None
+        try:
+            vol = get_column_value(row, 'volume', 'Volume')
+            if pd.notna(vol):
+                volume_val = float(vol)
+        except KeyError:
+            pass
+
+        return Candle(
+            time=time_val,
+            open=open_val,
+            high=high_val,
+            low=low_val,
+            close=close_val,
+            volume=volume_val
+        )
+
+    @staticmethod
     def from_list(candles_data: List[Dict[str, Any]]) -> List[Candle]:
         """
         Erstellt Liste von Kerzen aus Liste von Dictionaries
