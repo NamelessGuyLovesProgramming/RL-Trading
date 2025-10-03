@@ -2094,6 +2094,42 @@ position_service = PositionService(
 
 print("[PHASE 4] Services initialized successfully")
 
+# REFACTOR PHASE 5: Router-Integration
+print("[PHASE 5] Initializing Routes Layer...")
+
+from charts.routes import debug as debug_routes
+from charts.routes import chart as chart_routes
+from charts.routes import static as static_routes
+
+# Setup Debug-Router
+debug_routes.setup_debug_routes(
+    app=app,
+    debug_service=debug_service,
+    navigation_service=navigation_service,
+    unified_time_manager=unified_time_manager,
+    manager=manager,
+    debug_controller=debug_controller
+)
+
+# Setup Chart-Router
+chart_routes.setup_chart_routes(
+    app=app,
+    timeframe_service=timeframe_service,
+    manager=manager,
+    chart_lifecycle_manager=chart_lifecycle_manager,
+    unified_time_manager=unified_time_manager,
+    data_validator=data_validator,
+    timeframe_data_repository=timeframe_data_repository,
+    DataIntegrityGuard=DataIntegrityGuard,
+    global_skip_events=global_skip_events,
+    universal_renderer=universal_renderer
+)
+
+# Setup Static-Router
+static_routes.setup_static_routes(app=app)
+
+print("[PHASE 5] Routes Layer initialized successfully ✅")
+
 # Background Task für Auto-Play Modus
 async def auto_play_loop():
     """Background-Task für kontinuierliches Skip im Play-Modus"""
