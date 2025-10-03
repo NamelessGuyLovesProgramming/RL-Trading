@@ -51,6 +51,13 @@ sys.path.append(os.path.join(parent_dir, 'src'))
 # FastAPI App (Importiere Module später um Startup-Deadlock zu vermeiden)
 app = FastAPI(title="RL Trading Chart Server", version="1.0.0")
 
+# REFACTOR PHASE 3: Import extrahierter Core-Klassen
+from core import (
+    ChartDataCache,
+    ChartSeriesLifecycleManager,
+    DebugController
+)
+
 # Globale Variablen (werden nach Startup initialisiert)
 nq_loader = None
 nq_data_loader = None  # NQDataLoader für Go To Date Funktionalität
@@ -853,260 +860,8 @@ class TimeframeAggregator:
         return result
 
 # High-Performance Memory-basierte Chart Data Cache
-class ChartDataCache:
-    """
-    Ultra-schneller Memory-basierter Data Cache für alle Timeframes
-    Lädt alle CSV-Dateien einmalig beim Start -> Sub-Millisekunden Navigation
-    """
-
-    def __init__(self):
-        """Initialisiert leeren Cache"""
-        self.timeframe_data = {}  # {timeframe: pandas.DataFrame}
-        self.loaded_timeframes = set()
-        self.available_timeframes = ["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h"]  # CORRECTED: Alle Timeframe-Ordner verfügbar
-        print("[CACHE] ChartDataCache initialisiert")
-
-    def load_all_timeframes(self):
-        """Lädt alle verfügbaren Timeframes in Memory - einmalig beim Server-Start"""
-        import pandas as pd
-        from pathlib import Path
-
-        print("[CACHE] Starte Memory-Loading aller Timeframes...")
-
-        for timeframe in self.available_timeframes:
-            csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
-
-            if csv_path.exists():
-                try:
-                    # CSV mit neuer Struktur laden (Date, Time, OHLCV)
-                    df = pd.read_csv(csv_path)
-
-                    # DateTime kombinieren und als zusätzliche Spalte hinzufügen
-                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
-                    df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
-
-                    # Sortierung nach Datum sicherstellen
-                    df = df.sort_values('datetime')
-
-                    self.timeframe_data[timeframe] = df
-                    self.loaded_timeframes.add(timeframe)
-
-                    # Debug Info
-                    start_time = df['datetime'].iloc[0]
-                    end_time = df['datetime'].iloc[-1]
-
-                    print(f"[CACHE] SUCCESS {timeframe} loaded: {len(df)} candles ({start_time} bis {end_time})")
-
-                except Exception as e:
-                    print(f"[CACHE] ERROR beim Laden {timeframe}: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"[CACHE] WARNING CSV nicht gefunden: {csv_path}")
-
-        print(f"[CACHE] Memory-Loading abgeschlossen: {len(self.loaded_timeframes)} Timeframes geladen")
-        return len(self.loaded_timeframes) > 0
-
-    def load_priority_timeframes(self, priority_list):
-        """Lädt nur prioritäre Timeframes für schnellen Server-Start"""
-        import pandas as pd
-        from pathlib import Path
-
-        print(f"[CACHE] Lade Priority Timeframes: {priority_list}")
-
-        for timeframe in priority_list:
-            if timeframe not in self.available_timeframes:
-                continue
-
-            csv_path = Path(f"src/data/aggregated/{timeframe}/nq-2024.csv")
-
-            if csv_path.exists():
-                try:
-                    # CSV mit neuer Struktur laden (Date, Time, OHLCV)
-                    df = pd.read_csv(csv_path)
-
-                    # DateTime kombinieren und als zusätzliche Spalte hinzufügen
-                    df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
-                    df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
-
-                    # Sortierung nach Datum sicherstellen
-                    df = df.sort_values('datetime')
-
-                    self.timeframe_data[timeframe] = df
-                    self.loaded_timeframes.add(timeframe)
-
-                    # Debug Info
-                    start_time = df['datetime'].iloc[0]
-                    end_time = df['datetime'].iloc[-1]
-
-                    print(f"[CACHE] SUCCESS {timeframe} loaded: {len(df)} candles ({start_time.strftime('%Y-%m-%d')} bis {end_time.strftime('%Y-%m-%d')})")
-
-                except Exception as e:
-                    print(f"[CACHE] ERROR beim Laden {timeframe}: {e}")
-            else:
-                print(f"[CACHE] WARNING CSV nicht gefunden: {csv_path}")
-
-        print(f"[CACHE] Priority Loading abgeschlossen: {len(self.loaded_timeframes)} von {len(priority_list)} geladen")
-        return len(self.loaded_timeframes) > 0
-
-    def find_best_date_index(self, target_date, timeframe):
-        """
-        Findet den besten Index für ein Zieldatum mit intelligenten Fallback-Strategien
-
-        Args:
-            target_date: datetime object
-            timeframe: string (z.B. '5m')
-
-        Returns:
-            int: Index im DataFrame der am besten zum Zieldatum passt
-        """
-        if timeframe not in self.timeframe_data:
-            raise ValueError(f"Timeframe {timeframe} nicht geladen!")
-
-        df = self.timeframe_data[timeframe]
-        target_timestamp = int(target_date.timestamp())
-
-        # Check if target is before CSV data range
-        if target_timestamp < df['time'].iloc[0]:
-            print(f"[CACHE] Datum {target_date} vor CSV-Bereich - verwende ersten verfügbaren Index (0)")
-            return 0  # FIXED: Verwende ersten verfügbaren Datenpunkt statt willkürlichen Index 199
-
-        # Check if target is after CSV data range
-        elif target_timestamp > df['time'].iloc[-1]:
-            print(f"[CACHE] Datum {target_date} nach CSV-Bereich - verwende letzten Index")
-            return len(df) - 1
-
-        # Find nearest timestamp match
-        else:
-            time_diffs = (df['time'] - target_timestamp).abs()
-            best_index = time_diffs.idxmin()
-
-            matched_time = pd.to_datetime(df.iloc[best_index]['time'], unit='s')
-            print(f"[CACHE] Exakte Übereinstimmung: Index {best_index} -> {matched_time}")
-
-            return best_index
-
-    def get_candles_range(self, timeframe, center_index, total_candles=10, visible_candles=5):
-        """
-        Holt einen Bereich von Kerzen rund um center_index
-
-        Args:
-            timeframe: string
-            center_index: int - Zentrum des Bereichs
-            total_candles: int - Gesamt zu ladende Kerzen (200)
-            visible_candles: int - Sichtbare Kerzen im Chart (5)
-
-        Returns:
-            dict: {
-                'data': list - Chart-formatierte Daten (5 Kerzen),
-                'visible_start': int - Index der ersten sichtbaren Kerze,
-                'visible_end': int - Index der letzten sichtbaren Kerze,
-                'center_index': int - Ursprungsindex,
-                'total_count': int
-            }
-        """
-        if timeframe not in self.timeframe_data:
-            raise ValueError(f"Timeframe {timeframe} nicht geladen!")
-
-        df = self.timeframe_data[timeframe]
-        df_length = len(df)
-
-        # Berechne Start/End Index für total_candles (200) Kerzen VOR center_index
-        start_idx = max(0, center_index - total_candles + 1)  # 199 Kerzen davor + 1 center = 200
-        end_idx = center_index + 1  # Bis einschließlich center_index
-
-        # Falls nicht genug Daten vor center_index, fülle nach vorne auf
-        if end_idx - start_idx < total_candles:
-            needed = total_candles - (end_idx - start_idx)
-            end_idx = min(df_length, end_idx + needed)
-
-        # Extrahiere DataFrame-Bereich
-        result_df = df.iloc[start_idx:end_idx]
-
-        # Konvertiere zu Chart-Format
-        chart_data = []
-        for _, row in result_df.iterrows():
-            chart_data.append({
-                'time': int(row['time']),
-                'open': float(row['Open']),
-                'high': float(row['High']),
-                'low': float(row['Low']),
-                'close': float(row['Close']),
-                'volume': int(row['Volume'])
-            })
-
-        # Berechne sichtbaren Bereich (letzten visible_candles von total_candles)
-        data_count = len(chart_data)
-        visible_start = max(0, data_count - visible_candles)
-        visible_end = data_count - 1
-
-        print(f"[CACHE] Kerzen-Bereich: {data_count} total, sichtbar {visible_start}-{visible_end} (CSV Index {start_idx}-{end_idx-1})")
-
-        return {
-            'data': chart_data,
-            'visible_start': visible_start,
-            'visible_end': visible_end,
-            'center_index': center_index,
-            'total_count': data_count,
-            'csv_range': (start_idx, end_idx - 1)
-        }
-
-    def get_next_candle(self, timeframe, current_index):
-        """
-        Holt die nächste Kerze für Skip-Operation
-
-        Args:
-            timeframe: string
-            current_index: int - Aktueller Index im DataFrame
-
-        Returns:
-            dict: {'candle': {chart_data}, 'new_index': int} oder None wenn Ende erreicht
-        """
-        if timeframe not in self.timeframe_data:
-            raise ValueError(f"Timeframe {timeframe} nicht geladen!")
-
-        df = self.timeframe_data[timeframe]
-        next_index = current_index + 1
-
-        if next_index >= len(df):
-            print(f"[CACHE] Ende der {timeframe} Daten erreicht (Index {current_index})")
-            return None
-
-        # Nächste Kerze extrahieren
-        next_row = df.iloc[next_index]
-        next_candle = {
-            'time': int(next_row['time']),
-            'open': float(next_row['Open']),
-            'high': float(next_row['High']),
-            'low': float(next_row['Low']),
-            'close': float(next_row['Close']),
-            'volume': int(next_row['Volume'])
-        }
-
-        next_time = pd.to_datetime(next_row['time'], unit='s')
-        print(f"[CACHE] Skip: Index {current_index} -> {next_index} ({next_time})")
-
-        return {
-            'candle': next_candle,
-            'new_index': next_index
-        }
-
-    def get_timeframe_info(self, timeframe):
-        """Gibt Info über einen geladenen Timeframe zurück"""
-        if timeframe not in self.timeframe_data:
-            return None
-
-        df = self.timeframe_data[timeframe]
-        start_time = pd.to_datetime(df['time'].iloc[0], unit='s')
-        end_time = pd.to_datetime(df['time'].iloc[-1], unit='s')
-
-        return {
-            'timeframe': timeframe,
-            'total_candles': len(df),
-            'start_time': start_time,
-            'end_time': end_time,
-            'loaded': True
-        }
+# REFACTOR PHASE 3: Klasse verschoben nach charts/core/cache_manager.py
+# Import siehe oben
 
 # Timeframe Synchronization Manager
 class TimeframeSyncManager:
@@ -1736,6 +1491,14 @@ class UnifiedTimeManager:
 # Global Unified Time Manager Instance
 unified_time_manager = UnifiedTimeManager()
 
+# REFACTOR PHASE 3 FIX: Initialisiere globale Zeit mit initial_chart_data beim Server-Start
+if initial_chart_data and len(initial_chart_data) > 0:
+    last_candle_time = initial_chart_data[-1]['time']
+    unified_time_manager.initialize_time(last_candle_time)
+    print(f"[INIT] Globale Zeit initialisiert mit letzter Kerze: {datetime.fromtimestamp(last_candle_time)}")
+else:
+    print("[INIT] WARNING: initial_chart_data leer - globale Zeit nicht initialisiert")
+
 # ===== TEMPORAL STATE COMMAND PATTERN =====
 class TemporalCommand:
     """
@@ -1994,10 +1757,15 @@ class TimeframeDataRepository:
             # Datetime format
             if df[time_column].dtype == 'object':
                 df[time_column] = pd.to_datetime(df[time_column])
-            if end_date:
-                filtered_df = df[(df[time_column] >= start_date) & (df[time_column] <= end_date)]
+
+            # REFACTOR PHASE 3 FIX: Konvertiere date zu Timestamp für Pandas Kompatibilität
+            start_ts = pd.Timestamp(start_date)
+            end_ts = pd.Timestamp(end_date) if end_date else None
+
+            if end_ts:
+                filtered_df = df[(df[time_column] >= start_ts) & (df[time_column] <= end_ts)]
             else:
-                filtered_df = df[df[time_column] >= start_date]
+                filtered_df = df[df[time_column] >= start_ts]
 
         # Limitiere Anzahl der Kerzen
         if len(filtered_df) > max_candles:
@@ -2245,480 +2013,32 @@ class DataIntegrityGuard:
 data_guard = DataIntegrityGuard()
 
 # ===== CHART SERIES LIFECYCLE MANAGER =====
-class ChartSeriesLifecycleManager:
-    """
-    🚀 REVOLUTIONARY: Chart Series State Machine & Factory Pattern
-    Komplett löst das "Value is null" Problem durch saubere Chart-Recreation
-
-    Problem: Skip-generierte Kerzen korruption Chart Series interne State
-    Lösung: Komplette Chart Series Destruction & Recreation bei Timeframe-Wechseln
-    """
-
-    def __init__(self):
-        # Chart Series States
-        self.STATES = {
-            'CLEAN': 'clean',           # Sauberer Zustand nach Initialization
-            'DATA_LOADED': 'data_loaded', # Data geladen und validiert
-            'SKIP_MODIFIED': 'skip_modified', # Skip-Operationen haben State modifiziert
-            'CORRUPTED': 'corrupted',   # Chart Series korrupt, braucht Recreation
-            'TRANSITIONING': 'transitioning'  # Gerade während Timeframe-Wechsel
-        }
-
-        # Current Chart State
-        self.current_state = self.STATES['CLEAN']
-        self.last_timeframe = None
-        self.skip_operations_count = 0
-        self.chart_series_version = 1  # Inkrementiert bei jeder Recreation
-
-        print("[CHART-LIFECYCLE] Initialized - State: CLEAN")
-
-    def track_skip_operation(self, timeframe):
-        """Trackt Skip-Operationen und markiert Chart als potentiell korrupt"""
-        if self.current_state == self.STATES['CLEAN']:
-            self.current_state = self.STATES['SKIP_MODIFIED']
-
-        self.skip_operations_count += 1
-        self.last_timeframe = timeframe
-
-        print(f"[CHART-LIFECYCLE] Skip operation tracked (#{self.skip_operations_count}) - State: {self.current_state}")
-
-    def prepare_timeframe_transition(self, from_timeframe, to_timeframe):
-        """Bereitet sauberen Timeframe-Übergang vor"""
-
-        # CRITICAL FIX: Prüfe State BEVOR er auf TRANSITIONING gesetzt wird
-        was_corrupted = self.current_state == self.STATES['CORRUPTED']
-        was_skip_modified = self.current_state == self.STATES['SKIP_MODIFIED']
-        has_skip_operations = self.skip_operations_count > 0
-
-        print(f"[CHART-LIFECYCLE] Pre-transition state check: corrupted={was_corrupted}, skip_modified={was_skip_modified}, skip_count={has_skip_operations}")
-
-        self.current_state = self.STATES['TRANSITIONING']
-
-        # ENHANCED LOGIC: Chart Recreation bei verschiedenen Corruptions-Szenarien
-        needs_recreation = (
-            has_skip_operations or          # Skip-Operationen haben State modifiziert
-            was_corrupted or               # Chart war bereits als korrupt markiert
-            was_skip_modified              # Chart war im SKIP_MODIFIED State
-        )
-
-        transition_plan = {
-            'needs_recreation': needs_recreation,
-            'from_timeframe': from_timeframe,
-            'to_timeframe': to_timeframe,
-            'skip_count': self.skip_operations_count,
-            'reason': 'skip_contamination' if self.skip_operations_count > 0 else 'corruption_detected'
-        }
-
-        recreation_reason = []
-        if has_skip_operations:
-            recreation_reason.append(f"skip_operations({self.skip_operations_count})")
-        if was_corrupted:
-            recreation_reason.append("was_corrupted")
-        if was_skip_modified:
-            recreation_reason.append("was_skip_modified")
-
-        reason_text = " + ".join(recreation_reason) if recreation_reason else "no_recreation_needed"
-
-        print(f"[CHART-LIFECYCLE] Transition plan: {from_timeframe} -> {to_timeframe}, Recreation: {needs_recreation} ({reason_text})")
-        return transition_plan
-
-    def get_chart_recreation_command(self):
-        """Factory Method: Erstellt Command für Chart Recreation"""
-        self.chart_series_version += 1
-
-        return {
-            'action': 'recreate_chart_series',
-            'version': self.chart_series_version,
-            'clear_strategy': 'complete_destruction',  # Komplett zerstören, nicht nur clearen
-            'validation_level': 'ultra_strict',
-            'recovery_fallback': 'emergency_reload'
-        }
-
-    def complete_timeframe_transition(self, success=True):
-        """Schließt Timeframe-Übergang ab und setzt neuen State"""
-        if success:
-            self.current_state = self.STATES['DATA_LOADED']
-            self.skip_operations_count = 0  # Reset nach erfolgreichem Übergang
-            print(f"[CHART-LIFECYCLE] Transition completed successfully - State: DATA_LOADED (v{self.chart_series_version})")
-        else:
-            self.current_state = self.STATES['CORRUPTED']
-            print(f"[CHART-LIFECYCLE] Transition FAILED - State: CORRUPTED")
-
-    def mark_chart_corrupted(self, reason="unknown"):
-        """Markiert Chart als korrupt - erzwingt Recreation beim nächsten Übergang"""
-        self.current_state = self.STATES['CORRUPTED']
-        print(f"[CHART-LIFECYCLE] Chart marked as CORRUPTED: {reason}")
-
-    def reset_to_clean_state(self):
-        """Reset zu sauberem Zustand (z.B. nach Go To Date)"""
-        print(f"[CHART-LIFECYCLE] Starting CLEAN RESET - Previous state: {self.current_state}, Skip count: {self.skip_operations_count}")
-
-        self.current_state = self.STATES['CLEAN']
-        self.skip_operations_count = 0
-        self.chart_series_version += 1
-
-        print(f"[CHART-LIFECYCLE] CLEAN RESET COMPLETE - Version: {self.chart_series_version}, State: CLEAN")
-
-        # ENHANCED: Verify clean state
-        if self.skip_operations_count == 0 and self.current_state == self.STATES['CLEAN']:
-            print(f"[CHART-LIFECYCLE] CLEAN STATE VERIFIED: Ready for timeframe operations")
-        else:
-            print(f"[CHART-LIFECYCLE] WARNING: Reset verification failed!")
-
-    def force_chart_recreation_on_next_transition(self):
-        """EMERGENCY: Forciert Chart Recreation beim nächsten Timeframe-Wechsel"""
-        self.current_state = self.STATES['CORRUPTED']
-        print(f"[CHART-LIFECYCLE] EMERGENCY: Forced chart recreation on next transition")
-
-    def get_state_info(self):
-        """Debug Info über aktuellen Chart State"""
-        return {
-            'state': self.current_state,
-            'skip_count': self.skip_operations_count,
-            'version': self.chart_series_version,
-            'last_timeframe': self.last_timeframe
-        }
+# REFACTOR PHASE 3: ChartSeriesLifecycleManager verschoben nach charts/core/series_manager.py
+# Import siehe oben
 
 # Global Chart Lifecycle Manager Instance
 chart_lifecycle_manager = ChartSeriesLifecycleManager()
 
 # Debug Controller für Debug-Funktionalität
-class DebugController:
-    """Verwaltet Debug-Funktionalität mit intelligenter Timeframe-Aggregation"""
-
-    def __init__(self):
-        # INTEGRATION: Verwende UnifiedTimeManager für Zeit-Koordination
-        self.unified_time = unified_time_manager  # Reference zum globalen Time Manager
-        self.current_time = None  # Legacy compatibility - wird von unified_time_manager synchronisiert
-        self.timeframe = "5m"
-        self.play_mode = False
-        self.speed = 2  # Linear 1-15
-
-        # CSVLoader für Multi-Timeframe Support
-        self.csv_loader = CSVLoader()
-
-        # TimeframeSyncManager für synchronisierte Multi-TF Navigation
-        self.sync_manager = TimeframeSyncManager(self.csv_loader)
-
-        # TimeframeAggregator für intelligente Kerzen-Logik (Legacy, wird durch SyncManager ersetzt)
-        self.aggregator = TimeframeAggregator()
-
-        # Initialisiere mit aktuellstem Zeitpunkt aus CSV-Daten
-        if initial_chart_data:
-            # Hole letzten Zeitpunkt aus den initialen Daten
-            last_candle = initial_chart_data[-1]
-            # Setze Debug-Zeit auf 30. Dezember 2024, 16:55 (1 Tag vor den CSV-Daten)
-            self.current_time = datetime(2024, 12, 30, 16, 55, 0)
-            print(f"DEBUG INIT: Startzeit gesetzt auf {self.current_time} (30. Dezember)")
-
-    def skip_minute(self):
-        """Skip +1 Minute mit intelligenter Timeframe-Aggregation"""
-        if not self.current_time:
-            # Fallback: Verwende aktuellste Zeit aus Chart-Daten
-            if initial_chart_data:
-                last_candle = initial_chart_data[-1]
-                self.current_time = datetime.fromtimestamp(last_candle['time'])
-            else:
-                self.current_time = datetime.now()
-
-        # +1 Minute
-        self.current_time += timedelta(minutes=1)
-
-        print(f"DEBUG SKIP: Neue Zeit: {self.current_time} (Timeframe: {self.timeframe})")
-
-        # Verwende TimeframeAggregator für intelligente Kerzen-Logik
-        if initial_chart_data:
-            last_candle = initial_chart_data[-1]
-        else:
-            last_candle = {'close': 18500}  # Fallback
-
-        # Nutze Aggregator für +1 Minute Skip
-        complete_candle, incomplete_candle, is_complete = self.aggregator.add_minute_to_timeframe(
-            self.current_time - timedelta(minutes=1),  # Aktuelle Zeit vor dem Skip
-            self.timeframe,
-            last_candle
-        )
-
-        if is_complete:
-            # Vollständige Kerze - zum Chart hinzufügen
-            print(f"DEBUG: Vollständige {self.timeframe} Kerze generiert: {complete_candle['time']}")
-            return {
-                'type': 'complete_candle',
-                'candle': complete_candle,
-                'timeframe': self.timeframe
-            }
-        else:
-            # Unvollständige Kerze - mit weißem Rand markieren
-            print(f"DEBUG: Unvollständige {self.timeframe} Kerze: {incomplete_candle['minutes_elapsed']}/{self.aggregator.timeframes[self.timeframe]} min")
-            return {
-                'type': 'incomplete_candle',
-                'candle': incomplete_candle,
-                'timeframe': self.timeframe
-            }
-
-    def set_timeframe(self, timeframe):
-        """Ändert den Timeframe und behält Zeitpunkt bei"""
-        self.timeframe = timeframe
-        print(f"DEBUG TIMEFRAME: Gewechselt zu {timeframe}")
-
-    def set_speed(self, speed):
-        """Setzt die Play-Geschwindigkeit (1-15)"""
-        self.speed = max(1, min(15, speed))
-        print(f"DEBUG SPEED: Geschwindigkeit auf {self.speed}x gesetzt")
-
-    def set_start_time(self, start_datetime):
-        """Setzt eine neue Start-Zeit für das Chart (Go To Date Funktionalität) - UNIFIED TIME ARCHITECTURE"""
-        # UNIFIED TIME MANAGEMENT: Setze Zeit über globalen Manager
-        self.unified_time.set_time(start_datetime, source="goto_date")
-        # Legacy Compatibility
-        self.current_time = self.unified_time.get_current_time()
-        print(f"[UNIFIED-GOTO] Start-Zeit gesetzt auf {self.current_time}")
-
-    def skip_minutes(self, minutes):
-        """Skip +X Minuten für verschiedene Timeframes (2m, 3m, 5m, 15m, 30m)"""
-        if not self.current_time:
-            # Fallback: Verwende aktuellste Zeit aus Chart-Daten
-            if initial_chart_data:
-                last_candle = initial_chart_data[-1]
-                self.current_time = datetime.fromtimestamp(last_candle['time'])
-            else:
-                self.current_time = datetime.now()
-
-        # +X Minuten
-        self.current_time += timedelta(minutes=minutes)
-
-        print(f"DEBUG SKIP {minutes}m: Neue Zeit: {self.current_time} (Timeframe: {self.timeframe})")
-
-        # Verwende TimeframeAggregator für intelligente Kerzen-Logik
-        if initial_chart_data:
-            last_candle = initial_chart_data[-1]
-        else:
-            last_candle = {'close': 18500}  # Fallback
-
-        # Nutze Aggregator für +X Minuten Skip
-        complete_candle, incomplete_candle, is_complete = self.aggregator.add_minute_to_timeframe(
-            self.current_time - timedelta(minutes=minutes),  # Aktuelle Zeit vor dem Skip
-            self.timeframe,
-            last_candle
-        )
-
-        if is_complete:
-            # Vollständige Kerze - zum Chart hinzufügen
-            print(f"DEBUG: Vollständige {self.timeframe} Kerze generiert: {complete_candle['time']}")
-            return {
-                'type': 'complete_candle',
-                'candle': complete_candle,
-                'timeframe': self.timeframe
-            }
-        else:
-            # Unvollständige Kerze - mit weißem Rand markieren
-            print(f"DEBUG: Unvollständige {self.timeframe} Kerze: {incomplete_candle['minutes_elapsed']}/{self.aggregator.timeframes[self.timeframe]} min")
-            return {
-                'type': 'incomplete_candle',
-                'candle': incomplete_candle,
-                'timeframe': self.timeframe
-            }
-
-    def skip_hours(self, hours):
-        """Skip +X Stunden für Stunden-Timeframes (1h, 4h)"""
-        if not self.current_time:
-            # Fallback: Verwende aktuellste Zeit aus Chart-Daten
-            if initial_chart_data:
-                last_candle = initial_chart_data[-1]
-                self.current_time = datetime.fromtimestamp(last_candle['time'])
-            else:
-                self.current_time = datetime.now()
-
-        # +X Stunden
-        self.current_time += timedelta(hours=hours)
-
-        print(f"DEBUG SKIP {hours}h: Neue Zeit: {self.current_time} (Timeframe: {self.timeframe})")
-
-        # Verwende TimeframeAggregator für intelligente Kerzen-Logik
-        if initial_chart_data:
-            last_candle = initial_chart_data[-1]
-        else:
-            last_candle = {'close': 18500}  # Fallback
-
-        # Nutze Aggregator für +X Stunden Skip
-        complete_candle, incomplete_candle, is_complete = self.aggregator.add_minute_to_timeframe(
-            self.current_time - timedelta(hours=hours),  # Aktuelle Zeit vor dem Skip
-            self.timeframe,
-            last_candle
-        )
-
-        if is_complete:
-            # Vollständige Kerze - zum Chart hinzufügen
-            print(f"DEBUG: Vollständige {self.timeframe} Kerze generiert: {complete_candle['time']}")
-            return {
-                'type': 'complete_candle',
-                'candle': complete_candle,
-                'timeframe': self.timeframe
-            }
-        else:
-            # Unvollständige Kerze - mit weißem Rand markieren
-            print(f"DEBUG: Unvollständige {self.timeframe} Kerze: {incomplete_candle['minutes_elapsed']}/{self.aggregator.timeframes[self.timeframe]} min")
-            return {
-                'type': 'incomplete_candle',
-                'candle': incomplete_candle,
-                'timeframe': self.timeframe
-            }
-
-    def skip_with_real_data(self, timeframe):
-        """Skip mit echten CSV-Daten und Multi-Timeframe Synchronisation - UNIFIED TIME ARCHITECTURE"""
-        # UNIFIED TIME MANAGEMENT: Verwende globalen Time Manager
-        if not self.unified_time.initialized:
-            # Fallback: Initialisiere mit letzter Chart-Kerze
-            if initial_chart_data:
-                last_candle = initial_chart_data[-1]
-                self.unified_time.initialize_time(last_candle['time'])
-            else:
-                self.unified_time.initialize_time(datetime.now())
-
-        current_time = self.unified_time.get_current_time()
-        print(f"[UNIFIED-SKIP] Starting synchronized skip for {timeframe} from {current_time}")
-
-        # Initialize SyncManager with current time if not already set
-        if timeframe not in self.sync_manager.timeframe_positions:
-            self.sync_manager.set_base_time(current_time)
-
-        # REVOLUTIONARY: Use TimeframeSyncManager for multi-TF coordination
-        try:
-            sync_result = self.sync_manager.skip_timeframe(timeframe, sync_others=True)
-
-            if sync_result is None:
-                print(f"[UNIFIED-SKIP] No next {timeframe} candle available")
-                return None
-
-            primary_result = sync_result['primary_result']
-
-            # UNIFIED TIME UPDATE: Rücke globale Zeit vor
-            timeframe_minutes = self.unified_time._get_timeframe_minutes(timeframe)
-            new_time = self.unified_time.advance_time(timeframe_minutes, timeframe)
-
-            # Legacy Compatibility: Synchronisiere local time
-            self.current_time = new_time
-
-            # CRITICAL: Update UnifiedStateManager - Löst CSV vs DebugController Konflikt
-            unified_state.update_skip_position(self.current_time, source="skip")
-
-            # Check if current timeframe shows incomplete candle
-            incomplete_info = self.sync_manager.get_incomplete_candle_info(timeframe)
-
-            candle_type = 'complete_candle'
-            if incomplete_info and not incomplete_info['is_complete']:
-                candle_type = 'incomplete_candle'
-                print(f"[SKIP-SYNC] INCOMPLETE {timeframe} candle: {incomplete_info['elapsed_minutes']:.1f}/{incomplete_info['total_minutes']} min")
-
-            # SERVER-SIDE VALIDATION: Prevent corrupted OHLC values from reaching frontend
-            candle = primary_result['candle'].copy()
-
-            # Fix extreme/corrupted values (likely timestamp contamination)
-            # Enhanced detection for timestamp-like values (e.g., 22089.0, 173439xxxx fragments)
-            close_val = candle.get('close', 0)
-            if (close_val > 50000 or close_val < 1000 or
-                (close_val > 20000 and close_val < 30000)):  # Catch timestamp fragments like 22089
-                print(f"[SKIP-SYNC] CORRUPTED Close detected: {close_val} -> Fixed to 18500")
-                candle['close'] = 18500.0  # Realistic NQ price
-
-            open_val = candle.get('open', 0)
-            if (open_val > 50000 or open_val < 1000 or
-                (open_val > 20000 and open_val < 30000)):
-                print(f"[SKIP-SYNC] CORRUPTED Open detected: {open_val} -> Fixed to close")
-                candle['open'] = candle['close']
-
-            high_val = candle.get('high', 0)
-            if (high_val > 50000 or high_val < 1000 or
-                (high_val > 20000 and high_val < 30000)):
-                print(f"[SKIP-SYNC] CORRUPTED High detected: {high_val} -> Fixed")
-                candle['high'] = max(candle['open'], candle['close']) + 5
-
-            low_val = candle.get('low', 0)
-            if (low_val > 50000 or low_val < 1000 or
-                (low_val > 20000 and low_val < 30000)):
-                print(f"[SKIP-SYNC] CORRUPTED Low detected: {low_val} -> Fixed")
-                candle['low'] = min(candle['open'], candle['close']) - 5
-
-            print(f"[SKIP-SYNC] SUCCESS {timeframe}: {primary_result['datetime']} -> Close: {candle['close']} ({candle_type})")
-
-            return {
-                'type': candle_type,
-                'candle': candle,  # Use validated candle
-                'timeframe': timeframe,
-                'source': primary_result['source'],
-                'sync_status': sync_result['sync_results'],
-                'incomplete_info': incomplete_info
-            }
-
-        except Exception as e:
-            try:
-                print(f"[CSV-SKIP] ERROR Fehler beim CSV-Laden: {e}")
-            except UnicodeEncodeError:
-                print(f"[CSV-SKIP] ERROR beim CSV-Laden")
-            return None
-
-    @property
-    def current_timeframe(self):
-        """Gibt den aktuellen Timeframe zurück"""
-        return self.timeframe
-
-    @property
-    def current_index(self):
-        """Gibt den aktuellen Index zurück (für Kompatibilität)"""
-        return getattr(self, '_current_index', 0)
-
-    @current_index.setter
-    def current_index(self, value):
-        """Setzt den aktuellen Index (für Kompatibilität)"""
-        self._current_index = value
-
-    def toggle_play_mode(self):
-        """Toggle Play/Pause Modus"""
-        self.play_mode = not self.play_mode
-        print(f"DEBUG PLAY: Play-Modus {'aktiviert' if self.play_mode else 'deaktiviert'}")
-        return self.play_mode
-
-    def _generate_next_candle(self):
-        """Generiert nächste Kerze basierend auf aktuellem Timeframe"""
-        # Einfache Mock-Kerze für jetzt - wird später durch echte Aggregations-Logik ersetzt
-        timestamp = int(self.current_time.timestamp())
-
-        # Basis-Preis aus letzter Kerze wenn verfügbar
-        base_price = 18000  # NQ Standard-Preis
-        if initial_chart_data:
-            base_price = initial_chart_data[-1]['close']
-
-        # Simuliere leichte Preisbewegung (+/- 0.1%)
-        import random
-        price_change = random.uniform(-0.001, 0.001)
-        new_price = base_price * (1 + price_change)
-
-        return {
-            'time': timestamp,
-            'open': base_price,
-            'high': max(base_price, new_price) + random.uniform(0, base_price * 0.0005),
-            'low': min(base_price, new_price) - random.uniform(0, base_price * 0.0005),
-            'close': new_price,
-            'volume': random.randint(1000, 5000)
-        }
-
-    def get_state(self):
-        """Gibt aktuellen Debug-Status zurück"""
-        return {
-            'current_time': self.current_time.isoformat() if self.current_time else None,
-            'timeframe': self.timeframe,
-            'play_mode': self.play_mode,
-            'speed': self.speed,
-            'incomplete_candles': len(self.aggregator.incomplete_candles),
-            'aggregator_state': self.aggregator.get_all_incomplete_candles()
-        }
+# REFACTOR PHASE 3: DebugController verschoben nach charts/core/debug_controller.py
+# Import siehe oben
 
 # Global Connection Manager und Debug Controller
 manager = ConnectionManager()
-debug_controller = DebugController()
+
+# REFACTOR PHASE 3 FIX: CSVLoader erstellen bevor DebugController
+csv_loader_for_debug = CSVLoader()
+
+# DebugController mit allen notwendigen Parametern initialisieren
+debug_controller = DebugController(
+    unified_time_manager=unified_time_manager,
+    csv_loader=csv_loader_for_debug,
+    initial_chart_data=initial_chart_data,
+    unified_state=unified_state
+)
 
 # Initialize Global Data Repository with CSV Loader
-timeframe_data_repository = TimeframeDataRepository(debug_controller.csv_loader, unified_time_manager)
+timeframe_data_repository = TimeframeDataRepository(csv_loader_for_debug, unified_time_manager)
 
 # Background Task für Auto-Play Modus
 async def auto_play_loop():
@@ -7846,12 +7166,27 @@ async def change_timeframe(request: Request):
             )
             print(f"[SKIP-TF-SYNC] CSV data loaded from {lookback_time} to {current_global_time}")
         else:
-            end_date = datetime.now().date()
-            start_date = end_date - timedelta(days=7)
+            # REFACTOR PHASE 3 FIX: Fallback mit Zeit-Synchronisation (nicht nur Datum!)
+            if initial_chart_data and len(initial_chart_data) > 0:
+                # Verwende exakte Zeit (inkl. Uhrzeit) für Synchronisation
+                end_datetime = datetime.fromtimestamp(initial_chart_data[-1]['time'])
+
+                # Berechne lookback basierend auf Timeframe für Zeit-Synchronisation
+                timeframe_minutes = unified_time_manager._get_timeframe_minutes(target_timeframe)
+                lookback_datetime = end_datetime - timedelta(minutes=timeframe_minutes * visible_candles)
+
+                print(f"[SKIP-TF-SYNC] Fallback: Time-synchronized from {lookback_datetime} to {end_datetime}")
+            else:
+                # Ultimate fallback: Ende 2024 mit Zeit
+                end_datetime = datetime(2024, 12, 31, 23, 55, 0)
+                timeframe_minutes = unified_time_manager._get_timeframe_minutes(target_timeframe)
+                lookback_datetime = end_datetime - timedelta(minutes=timeframe_minutes * visible_candles)
+                print(f"[SKIP-TF-SYNC] Ultimate fallback: Using end of 2024 with time sync")
+
             chart_data = timeframe_data_repository.get_candles_for_date_range(
-                target_timeframe, start_date, end_date, max_candles=visible_candles
+                target_timeframe, lookback_datetime, end_datetime, max_candles=visible_candles
             )
-            print(f"[SKIP-TF-SYNC] Fallback: CSV data loaded for {start_date} to {end_date}")
+            print(f"[SKIP-TF-SYNC] Fallback: CSV data loaded from {lookback_datetime} to {end_datetime}")
 
         print(f"[BULLETPROOF-TF] Phase 3 SUCCESS - Loaded {len(chart_data) if chart_data else 0} candles for {target_timeframe}")
 
