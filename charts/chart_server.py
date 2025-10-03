@@ -7139,166 +7139,47 @@ async def get_chart_data():
 
 @app.post("/api/chart/change_timeframe")
 async def change_timeframe(request: Request):
-    """🚀 BULLETPROOF TIMEFRAME TRANSITION PROTOCOL: 5-Phase Atomic Chart Series Recreation"""
+    """REFACTOR PHASE 4: Timeframe-Switch über TimeframeService"""
+    global global_skip_events
 
     transaction_id = f"tf_transition_{int(datetime.now().timestamp())}"
-    print(f"[BULLETPROOF-TF] Starting transaction {transaction_id}")
+    print(f"[TF-SERVICE] Starting transaction {transaction_id}")
 
     try:
-        # PHASE 1: PRE-TRANSITION VALIDATION & PLANNING
-        print(f"[BULLETPROOF-TF] Phase 1: Pre-transition validation")
-
+        # Parse Request
         data = await request.json()
         target_timeframe = data.get('timeframe', '5m')
         visible_candles = data.get('visible_candles', 200)
         current_timeframe = manager.chart_state.get('interval', '5m')
 
-        # Create transition plan using Lifecycle Manager
+        print(f"[TF-SERVICE] Switching: {current_timeframe} -> {target_timeframe}")
+
+        # PHASE 1: Chart Series Lifecycle (LEGACY COMPATIBILITY)
         transition_plan = chart_lifecycle_manager.prepare_timeframe_transition(
             current_timeframe, target_timeframe
         )
 
-        # Validate data availability
-        current_global_time = unified_time_manager.get_current_time()
-        if current_global_time:
-            timeframe_minutes = unified_time_manager._get_timeframe_minutes(target_timeframe)
-            lookback_time = current_global_time - timedelta(minutes=timeframe_minutes * visible_candles)
-
-            # Pre-validate data exists
-            test_data = timeframe_data_repository.get_candles_for_date_range(
-                target_timeframe, lookback_time, current_global_time, max_candles=5
-            )
-            if not test_data:
-                chart_lifecycle_manager.complete_timeframe_transition(success=False)
-                return {
-                    "status": "error",
-                    "message": f"Keine {target_timeframe} Daten verfügbar für Zeit {current_global_time}",
-                    "transaction_id": transaction_id
-                }
-
-        print(f"[BULLETPROOF-TF] Phase 1 COMPLETE - Transition plan: {transition_plan}")
-
-        # PHASE 2: CHART SERIES DESTRUCTION & RECREATION
-        print(f"[BULLETPROOF-TF] Phase 2: Chart series lifecycle management")
-
         if transition_plan['needs_recreation']:
-            # Generate chart recreation command
             recreation_command = chart_lifecycle_manager.get_chart_recreation_command()
-            print(f"[BULLETPROOF-TF] Chart recreation required: {recreation_command}")
+            print(f"[TF-SERVICE] Chart recreation: {recreation_command}")
 
-            # Send chart destruction command to frontend
             await manager.broadcast({
                 'type': 'chart_series_recreation',
                 'command': recreation_command,
                 'reason': transition_plan['reason'],
                 'transaction_id': transaction_id
             })
-
-            # Wait for frontend acknowledgment (small delay to ensure destruction)
             await asyncio.sleep(0.1)
 
-        print(f"[BULLETPROOF-TF] Phase 2 COMPLETE - Chart series prepared")
+        # PHASE 2: REFACTOR - Nutze TimeframeService für Switch
+        switch_result = timeframe_service.switch_timeframe(
+            from_timeframe=current_timeframe,
+            to_timeframe=target_timeframe,
+            visible_candles=visible_candles
+        )
 
-        # PHASE 3: INTELLIGENT DATA LOADING WITH SKIP-STATE ISOLATION
-        print(f"[BULLETPROOF-TF] Phase 3: Data loading with skip isolation")
+        chart_data = switch_result['chart_data']
 
-        # 🚀 CRITICAL FIX: Re-sync current_global_time to ensure Skip-TF consistency
-        current_global_time = unified_time_manager.get_current_time()
-        print(f"[SKIP-TF-SYNC] Re-synced global time for TF switch: {current_global_time}")
-
-        # 🔧 SKIP-STATE VALIDATION: Verify no temporal inconsistencies from previous operations
-        last_operation_source = getattr(unified_time_manager, 'last_operation_source', None)
-        print(f"[SKIP-TF-SYNC] Last operation source: {last_operation_source}")
-
-        # Warn if we detect potential skip-contaminated state
-        if last_operation_source and 'skip_' in str(last_operation_source):
-            print(f"[SKIP-TF-SYNC] ⚠️  Skip-contaminated state detected - ensuring data consistency")
-
-        # SIMPLIFIED DATA LOADING: Load fresh CSV data for timeframe
-        if current_global_time:
-            # 🔧 SKIP-POSITION FIX: Recalculate lookback with synced time
-            timeframe_minutes = unified_time_manager._get_timeframe_minutes(target_timeframe)
-            lookback_time = current_global_time - timedelta(minutes=timeframe_minutes * visible_candles)
-
-            chart_data = timeframe_data_repository.get_candles_for_date_range(
-                target_timeframe, lookback_time, current_global_time, max_candles=visible_candles
-            )
-            print(f"[SKIP-TF-SYNC] CSV data loaded from {lookback_time} to {current_global_time}")
-        else:
-            # REFACTOR PHASE 3 FIX: Fallback mit Zeit-Synchronisation (nicht nur Datum!)
-            if initial_chart_data and len(initial_chart_data) > 0:
-                # Verwende exakte Zeit (inkl. Uhrzeit) für Synchronisation
-                end_datetime = datetime.fromtimestamp(initial_chart_data[-1]['time'])
-
-                # Berechne lookback basierend auf Timeframe für Zeit-Synchronisation
-                timeframe_minutes = unified_time_manager._get_timeframe_minutes(target_timeframe)
-                lookback_datetime = end_datetime - timedelta(minutes=timeframe_minutes * visible_candles)
-
-                print(f"[SKIP-TF-SYNC] Fallback: Time-synchronized from {lookback_datetime} to {end_datetime}")
-            else:
-                # Ultimate fallback: Ende 2024 mit Zeit
-                end_datetime = datetime(2024, 12, 31, 23, 55, 0)
-                timeframe_minutes = unified_time_manager._get_timeframe_minutes(target_timeframe)
-                lookback_datetime = end_datetime - timedelta(minutes=timeframe_minutes * visible_candles)
-                print(f"[SKIP-TF-SYNC] Ultimate fallback: Using end of 2024 with time sync")
-
-            chart_data = timeframe_data_repository.get_candles_for_date_range(
-                target_timeframe, lookback_datetime, end_datetime, max_candles=visible_candles
-            )
-            print(f"[SKIP-TF-SYNC] Fallback: CSV data loaded from {lookback_datetime} to {end_datetime}")
-
-        print(f"[BULLETPROOF-TF] Phase 3 SUCCESS - Loaded {len(chart_data) if chart_data else 0} candles for {target_timeframe}")
-
-        # PHASE 3.5: INTEGRATE SKIP EVENTS FOR MULTI-TIMEFRAME SYNCHRONIZATION
-        print(f"[BULLETPROOF-TF] Phase 3.5: Integrating skip events for {target_timeframe}")
-
-        # Render skip candles for the target timeframe with price synchronization
-        if global_skip_events:
-            print(f"[BULLETPROOF-TF] Found {len(global_skip_events)} skip events to process")
-            skip_candles = universal_renderer.render_skip_candles_for_timeframe(target_timeframe)
-
-            if skip_candles:
-                print(f"[BULLETPROOF-TF] Rendered {len(skip_candles)} skip candles for {target_timeframe}")
-
-                # 🔧 CRITICAL FIX: Deduplicate skip candles BEFORE merging (prevent duplicate timestamps)
-                print(f"[BULLETPROOF-TF] Raw skip candles: {len(skip_candles)}")
-
-                # Deduplicate skip candles by timestamp (keep last one for each timestamp)
-                skip_candles_dict = {}
-                for candle in skip_candles:
-                    timestamp = candle['time']
-                    if timestamp in skip_candles_dict:
-                        print(f"[BULLETPROOF-TF] DUPLICATE SKIP TIMESTAMP DETECTED: {timestamp} - replacing")
-                    skip_candles_dict[timestamp] = candle
-
-                deduplicated_skip_candles = list(skip_candles_dict.values())
-                print(f"[BULLETPROOF-TF] Deduplicated skip candles: {len(deduplicated_skip_candles)}")
-
-                # Merge deduplicated skip candles with CSV data
-                merged_data = []
-                skip_timestamps = {candle['time'] for candle in deduplicated_skip_candles}
-
-                # Add CSV candles that don't conflict with skip timestamps
-                for csv_candle in chart_data:
-                    if csv_candle['time'] not in skip_timestamps:
-                        merged_data.append(csv_candle)
-
-                # Add all deduplicated skip candles (these have priority for price synchronization)
-                merged_data.extend(deduplicated_skip_candles)
-
-                # Sort by timestamp to maintain chronological order
-                merged_data.sort(key=lambda x: x['time'])
-
-                chart_data = merged_data
-                print(f"[BULLETPROOF-TF] Merged data: {len(chart_data)} total candles ({len(skip_candles)} skip + {len(chart_data)-len(skip_candles)} CSV)")
-            else:
-                print(f"[BULLETPROOF-TF] No compatible skip candles for {target_timeframe}")
-        else:
-            print(f"[BULLETPROOF-TF] No skip events to process")
-
-        print(f"[BULLETPROOF-TF] Phase 3.5 COMPLETE - Skip event integration finished")
-
-        # Ultra-defensive data validation
         if not chart_data:
             chart_lifecycle_manager.complete_timeframe_transition(success=False)
             return {
@@ -7307,103 +7188,109 @@ async def change_timeframe(request: Request):
                 "transaction_id": transaction_id
             }
 
-        # Multi-layer data sanitization - ENHANCED: Use ChartDataValidator
-        validated_data = DataIntegrityGuard.sanitize_chart_data(chart_data, source=f"bulletproof_tf_{target_timeframe}")
+        # PHASE 3: LEGACY - Skip Events Integration
+        print(f"[TF-SERVICE] Integrating {len(global_skip_events)} skip events")
 
-        # CRITICAL: Add ChartDataValidator for LightweightCharts compatibility
-        final_validated_data = data_validator.validate_chart_data(
-            validated_data, timeframe=target_timeframe, source=f"change_timeframe_{target_timeframe}"
+        if global_skip_events:
+            skip_candles = universal_renderer.render_skip_candles_for_timeframe(target_timeframe)
+
+            if skip_candles:
+                # Deduplicate skip candles
+                skip_candles_dict = {c['time']: c for c in skip_candles}
+                deduplicated_skip_candles = list(skip_candles_dict.values())
+
+                # Merge skip candles with CSV data
+                merged_data = []
+                skip_timestamps = {c['time'] for c in deduplicated_skip_candles}
+
+                for csv_candle in chart_data:
+                    if csv_candle['time'] not in skip_timestamps:
+                        merged_data.append(csv_candle)
+
+                merged_data.extend(deduplicated_skip_candles)
+                merged_data.sort(key=lambda x: x['time'])
+
+                chart_data = merged_data
+                print(f"[TF-SERVICE] Merged: {len(chart_data)} candles ({len(skip_candles)} skip)")
+
+        # PHASE 4: LEGACY - Validation Pipeline
+        validated_data = DataIntegrityGuard.sanitize_chart_data(
+            chart_data, source=f"tf_service_{target_timeframe}"
         )
 
-        if len(final_validated_data) != len(chart_data):
-            print(f"[BULLETPROOF-TF] Data validation pipeline: {len(chart_data)} -> {len(validated_data)} -> {len(final_validated_data)} candles")
+        final_validated_data = data_validator.validate_chart_data(
+            validated_data, timeframe=target_timeframe,
+            source=f"change_timeframe_{target_timeframe}"
+        )
 
-        # Special logging for 4h timeframe
-        if target_timeframe == '4h':
-            print(f"[BULLETPROOF-TF] 4h-SPECIAL: {len(final_validated_data)} candles validated and sanitized")
-            if final_validated_data:
-                sample_candle = final_validated_data[0]
-                print(f"[BULLETPROOF-TF] 4h-SAMPLE: {sample_candle}")
+        print(f"[TF-SERVICE] Validated: {len(chart_data)} -> {len(final_validated_data)} candles")
 
-        validated_data = final_validated_data
-
-        print(f"[BULLETPROOF-TF] Phase 3 COMPLETE - {len(validated_data)} validated candles loaded")
-
-        # PHASE 4: ATOMIC CHART STATE UPDATE
-        print(f"[BULLETPROOF-TF] Phase 4: Atomic state update")
-
-        # Update all state atomically
-        manager.chart_state['data'] = validated_data
+        # PHASE 5: LEGACY COMPATIBILITY - Chart State Update
+        manager.chart_state['data'] = final_validated_data
         manager.chart_state['interval'] = target_timeframe
 
-        # Update unified time manager
-        if validated_data:
-            last_candle = validated_data[-1]
-            unified_time_manager.register_timeframe_activity(target_timeframe, last_candle['time'])
+        if final_validated_data:
+            last_candle = final_validated_data[-1]
+            unified_time_manager.register_timeframe_activity(
+                target_timeframe, last_candle['time']
+            )
 
-        print(f"[BULLETPROOF-TF] Phase 4 COMPLETE - State updated atomically")
+        # PHASE 6: WEBSOCKET BROADCAST
+        current_global_time = unified_time_manager.get_current_time()
 
-        # PHASE 5: BULLETPROOF FRONTEND SYNCHRONIZATION
-        print(f"[BULLETPROOF-TF] Phase 5: Frontend synchronization")
-
-        # Prepare comprehensive update message
         bulletproof_message = {
             'type': 'bulletproof_timeframe_changed',
             'timeframe': target_timeframe,
-            'data': validated_data,
+            'data': final_validated_data,
             'transaction_id': transaction_id,
             'chart_recreation': transition_plan['needs_recreation'],
-            'recreation_command': chart_lifecycle_manager.get_chart_recreation_command() if transition_plan['needs_recreation'] else None,
+            'recreation_command': chart_lifecycle_manager.get_chart_recreation_command()
+                if transition_plan['needs_recreation'] else None,
             'global_time': current_global_time.isoformat() if current_global_time else None,
             'validation_summary': {
                 'original_count': len(chart_data),
-                'validated_count': len(validated_data),
-                'data_source': 'csv',
+                'validated_count': len(final_validated_data),
+                'data_source': 'timeframe_service',
                 'skip_contamination': 'CLEAN'
             }
         }
 
-        # Broadcast with error recovery
         try:
             await manager.broadcast(bulletproof_message)
         except Exception as broadcast_error:
-            print(f"[BULLETPROOF-TF] Broadcast error: {broadcast_error}")
-            # Fallback: Emergency chart reload message
+            print(f"[TF-SERVICE] Broadcast error: {broadcast_error}")
             await manager.broadcast({
                 'type': 'emergency_chart_reload',
                 'timeframe': target_timeframe,
-                'data': validated_data,
+                'data': final_validated_data,
                 'transaction_id': transaction_id
             })
 
-        # Complete lifecycle transition
+        # Complete lifecycle
         chart_lifecycle_manager.complete_timeframe_transition(success=True)
 
-        print(f"[BULLETPROOF-TF] Phase 5 COMPLETE - Transaction {transaction_id} completed successfully")
+        print(f"[TF-SERVICE] SUCCESS: Transaction {transaction_id} completed")
 
-        # SUCCESS RESPONSE
         return {
             "status": "success",
-            "message": f"Bulletproof transition zu {target_timeframe} erfolgreich",
-            "data": validated_data,
+            "message": f"Timeframe-Switch: {current_timeframe} -> {target_timeframe}",
+            "data": final_validated_data,
             "timeframe": target_timeframe,
-            "count": len(validated_data),
+            "count": len(final_validated_data),
             "transaction_id": transaction_id,
             "transition_plan": transition_plan,
             "global_time": current_global_time.isoformat() if current_global_time else None,
-            "system": "bulletproof_timeframe_architecture"
+            "system": "timeframe_service"
         }
 
     except Exception as e:
-        print(f"[BULLETPROOF-TF] CRITICAL ERROR in transaction {transaction_id}: {str(e)}")
+        print(f"[TF-SERVICE] ERROR in transaction {transaction_id}: {str(e)}")
         import traceback
         traceback.print_exc()
 
-        # Mark lifecycle as failed
         chart_lifecycle_manager.complete_timeframe_transition(success=False)
         chart_lifecycle_manager.mark_chart_corrupted(f"transition_error: {str(e)}")
 
-        # Emergency recovery broadcast
         try:
             await manager.broadcast({
                 'type': 'emergency_recovery_required',
@@ -7412,11 +7299,11 @@ async def change_timeframe(request: Request):
                 'recovery_action': 'page_reload'
             })
         except:
-            pass  # If broadcast fails, frontend will handle timeout
+            pass
 
         return {
             "status": "error",
-            "message": f"Bulletproof transition failed: {str(e)}",
+            "message": f"Timeframe-Switch failed: {str(e)}",
             "transaction_id": transaction_id,
             "recovery_required": True,
             "system": "bulletproof_timeframe_architecture"
@@ -7599,127 +7486,72 @@ async def update_user_pnl(pnl_data: dict):
 
 @app.post("/api/debug/skip")
 async def debug_skip():
-    """🚀 UNIFIED SKIP ARCHITECTURE: Robuste Multi-Timeframe Skip-Navigation"""
+    """REFACTOR PHASE 4: Skip-Operation über NavigationService"""
     global event_transaction, debug_control_timeframe
 
     try:
-        # UNIFIED TIME MANAGEMENT: Hole aktuelle globale Zeit
-        current_time = unified_time_manager.get_current_time()
         skip_timeframe = debug_control_timeframe
         chart_timeframe = manager.chart_state.get('interval', '5m')
 
-        print(f"[UNIFIED-SKIP] Skip-Request: {skip_timeframe} von Zeit {current_time}")
+        print(f"[SKIP-SERVICE] Skip-Request: {skip_timeframe}")
 
-        # SMART DATA RETRIEVAL: Verwende TimeframeDataRepository
-        if current_time is None:
-            # Initialisierung: Verwende Chart-Daten oder Standard-Zeit
-            if initial_chart_data:
-                last_candle = initial_chart_data[-1]
-                current_time = unified_time_manager.initialize_time(last_candle['time'])
-            else:
-                current_time = unified_time_manager.initialize_time(datetime.now())
+        # REFACTOR PHASE 4: Nutze NavigationService für Skip-Logik
+        skip_result = navigation_service.skip_forward(skip_timeframe)
 
-        # Hole nächste Kerze für Skip-Timeframe
-        next_candle = timeframe_data_repository.get_next_candle_after_time(skip_timeframe, current_time)
-
-        if not next_candle:
+        if not skip_result['success']:
             return {
                 "status": "error",
-                "message": f"Keine weiteren {skip_timeframe} Kerzen nach {current_time}",
-                "timeframe": skip_timeframe,
-                "current_time": current_time.isoformat() if current_time else None
+                "message": skip_result.get('error', 'Skip fehlgeschlagen'),
+                "timeframe": skip_timeframe
             }
 
-        # CRITICAL: Extrahiere gefundene Kerze-Zeit BEVOR time advance
-        candle_time = next_candle.get('datetime', next_candle.get('time'))
-        if isinstance(candle_time, (int, float)):
-            candle_time = datetime.fromtimestamp(candle_time)
+        # Extrahiere Ergebnis
+        candle = skip_result['candle']
+        candle_type = skip_result['candle_type']
 
-        # UNIFIED TIME UPDATE: Setze globale Zeit auf gefundene Kerze-Zeit
-        unified_time_manager.set_time(candle_time, source=f"skip_{skip_timeframe}")
-        new_global_time = candle_time
+        # Hole aktuelle globale Zeit
+        new_global_time = unified_time_manager.get_current_time()
 
-        print(f"[UNIFIED-SKIP] Zeit gesetzt auf gefundene Kerze: {candle_time}")
-
-        # FORMAT CANDLE für Frontend - TIMESTAMP FIX für lightweight-charts
-        candle_time = next_candle['time']
-        if isinstance(candle_time, datetime):
-            candle_time = int(candle_time.timestamp())
-        elif isinstance(candle_time, str):
-            # Fallback für ISO strings - konvertiere zu timestamp
-            try:
-                dt = datetime.fromisoformat(candle_time.replace('Z', '+00:00'))
-                candle_time = int(dt.timestamp())
-            except:
-                # Wenn parsing fehlschlägt, verwende aktuelle Zeit
-                candle_time = int(new_global_time.timestamp())
-        else:
-            # Sicherstellen dass es ein int ist
-            candle_time = int(float(candle_time))
-
-        candle = {
-            'time': candle_time,
-            'open': next_candle['open'],
-            'high': next_candle['high'],
-            'low': next_candle['low'],
-            'close': next_candle['close'],
-            'volume': next_candle.get('volume', 0)
-        }
-
-        candle_type = 'complete_candle'  # Alle Kerzen aus CSV sind komplett
-
-        # UNIVERSAL SKIP EVENT: Erstelle Event für Cross-Timeframe Synchronisation
+        # LEGACY COMPATIBILITY: Universal Skip Event & Chart State
         skip_event = universal_renderer.create_skip_event(candle, skip_timeframe)
 
-        # CHART LIFECYCLE INTEGRATION: Track skip operation
-        chart_lifecycle_manager.track_skip_operation(skip_timeframe)
-
-        # SKIP-STATE ISOLATION: Register skip candle in unified time manager
+        # SKIP-STATE ISOLATION: Register skip candle
         unified_time_manager.register_skip_candle(
-            chart_timeframe,  # Register for current chart timeframe
+            chart_timeframe,
             candle,
             operation_id=len(global_skip_events) - 1
         )
 
-        # UPDATE UNIFIED STATE: Synchronisiere alle Manager
-        unified_state.update_skip_position(new_global_time, source="unified_skip")
-
-        # LEGACY COMPATIBILITY: Update Chart State
+        # LEGACY: Update Chart State
         if hasattr(manager, 'chart_state') and 'data' in manager.chart_state:
             manager.chart_state['data'].append(candle)
 
-        # GENERATE SKIP MESSAGE
+        # Generate Skip Message
         timeframe_display = {
             '1m': "1min", '2m': "2min", '3m': "3min", '5m': "5min",
             '15m': "15min", '30m': "30min", '1h': "1h", '4h': "4h"
         }
         display_name = timeframe_display.get(skip_timeframe, skip_timeframe)
-        skip_message = f"Unified Skip +{display_name} -> {new_global_time.strftime('%H:%M:%S')}"
+        skip_message = f"Skip +{display_name} -> {new_global_time.strftime('%H:%M:%S')}"
 
-        # WEBSOCKET BROADCAST: Real-time updates
+        # WEBSOCKET BROADCAST
+        sync_status = unified_time_manager.get_timeframe_sync_status()
+
         websocket_data = {
             'type': 'unified_skip_event',
             'candle': candle,
             'candle_type': candle_type,
             'debug_time': new_global_time.isoformat(),
             'timeframe': skip_timeframe,
-            'system_type': 'unified_time_architecture',
-            'event_id': len(global_skip_events) - 1
+            'system_type': 'navigation_service',
+            'event_id': len(global_skip_events) - 1,
+            'sync_status': sync_status,
+            'global_time': new_global_time.isoformat()
         }
 
-        # SYNC STATUS: Füge Timeframe-Synchronisation hinzu
-        sync_status = unified_time_manager.get_timeframe_sync_status()
-        websocket_data['sync_status'] = sync_status
-        websocket_data['global_time'] = new_global_time.isoformat()
-
-        # BROADCAST: Sende Update an alle Clients
         await manager.broadcast(websocket_data)
 
-        # 🚀 CHART LIFECYCLE MANAGER INTEGRATION: Track skip contamination
-        chart_lifecycle_manager.track_skip_operation(skip_timeframe)
-        print(f"[CHART-LIFECYCLE] Skip operation tracked for {skip_timeframe}")
-
-        # RESPONSE DATA: Erfolgsmeldung mit vollständigen Infos
+        # Response
         response_data = {
             "status": "success",
             "message": f"{skip_message} - {candle_type}",
@@ -7728,21 +7560,17 @@ async def debug_skip():
             "debug_time": new_global_time.isoformat(),
             "timeframe": skip_timeframe,
             "events_total": len(global_skip_events),
-            "system": "unified_time_architecture",
+            "system": "navigation_service",
             "sync_status": sync_status,
             "global_time": new_global_time.isoformat(),
-            "chart_lifecycle_state": chart_lifecycle_manager.get_state_info()  # Add lifecycle info
+            "chart_lifecycle_state": chart_lifecycle_manager.get_state_info()
         }
 
-        print(f"[UNIFIED-SKIP] [SUCCESS] SUCCESS: {skip_message}")
-        print(f"[UNIFIED-SKIP] Global Time: {new_global_time}")
-        print(f"[CHART-LIFECYCLE] Current state: {chart_lifecycle_manager.get_state_info()}")
-        print(f"[UNIFIED-SKIP] Active Timeframes: {sync_status['active_timeframes']}")
-
+        print(f"[SKIP-SERVICE] SUCCESS: {skip_message}")
         return response_data
 
     except Exception as e:
-        print(f"[UNIFIED-SKIP] ERROR: {str(e)}")
+        print(f"[SKIP-SERVICE] ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -8044,144 +7872,52 @@ async def debug_log_from_client(request: Request):
 
 @app.post("/api/debug/go_to_date")
 async def debug_go_to_date(date_data: dict):
-    """Ultra-High-Performance Go To Date mit Single Source of Truth"""
+    """REFACTOR PHASE 4: Go To Date über NavigationService"""
+    global global_skip_events, debug_control_timeframe
+
     try:
         from datetime import datetime
-        import time
 
         target_date = date_data.get("date")
         if not target_date:
             return {"status": "error", "message": "Kein Datum angegeben"}
 
-        # Parse das Datum (Format: YYYY-MM-DD)
+        # Parse Datum (Format: YYYY-MM-DD)
         target_datetime = datetime.strptime(target_date, "%Y-%m-%d")
-        current_timeframe = manager.chart_state['interval']  # Use actual chart timeframe, not debug controller
+        current_timeframe = manager.chart_state['interval']
 
-        operation_start = time.time()
-        print(f"[HIGH-PERF-GO-TO-DATE] Request: {target_date} in {current_timeframe}")
+        print(f"[GOTO-SERVICE] Request: {target_date} in {current_timeframe}")
 
-        # TEMPORARY: Disable High-Performance Cache due to timestamp aggregation issues
-        # High-Performance Cache System
-        global chart_cache, current_go_to_date, global_skip_events, debug_control_timeframe
+        # REFACTOR PHASE 4: Nutze NavigationService für Go-To-Date
+        goto_result = navigation_service.go_to_date(
+            target_date=target_datetime,
+            timeframe=current_timeframe,
+            visible_candles=200
+        )
 
-        if False and chart_cache and chart_cache.is_loaded():
-            # High-Performance Data Retrieval
-            result = chart_cache.get_timeframe_data(current_timeframe, target_date, candle_count=200)
+        if not goto_result['success']:
+            return {
+                "status": "error",
+                "message": "Keine Daten verfügbar",
+                "target_date": target_date
+            }
 
-            if result['data']:
-                # Performance Stats
-                perf_stats = result.get('performance_stats', {})
-                print(f"[HIGH-PERF-GO-TO-DATE] SUCCESS: {len(result['data'])} {current_timeframe} Kerzen in {perf_stats.get('response_time_ms', 0):.1f}ms")
-                print(f"[HIGH-PERF-GO-TO-DATE] Cache Hit: {perf_stats.get('cache_hit', False)}")
+        chart_data = goto_result['chart_data']
 
-                # UNIFIED STATE: Update Go-To-Date für alle Timeframes einheitlich
-                unified_state.set_go_to_date(target_datetime)
-
-                # 🚀 CRITICAL FIX: Global Skip Events Reset bei Go-To-Date (High-Performance Path)
-                skip_events_count = len(global_skip_events)
-                global_skip_events.clear()  # Alle Skip-Events löschen
-                print(f"[GO-TO-DATE-RESET] Global Skip Events cleared: {skip_events_count} events removed (High-Perf)")
-
-                # 🚀 UNIFIED TIME MANAGER: Skip-State Reset integrieren
-                unified_time_manager.clear_all_skip_data()
-                print(f"[GO-TO-DATE-RESET] UnifiedTimeManager Skip-State cleared (High-Perf)")
-
-                # 🚀 DEBUG CONTROL TIMEFRAME SYNCHRONISATION: Frontend-Backend Konsistenz sicherstellen
-                print(f"[GO-TO-DATE-SYNC] Debug Control Timeframe synchronisiert: {debug_control_timeframe} (High-Perf)")
-
-                # WebSocket Broadcast für Debug Control Sync
-                await manager.broadcast({
-                    'type': 'debug_control_timeframe_changed',
-                    'debug_control_timeframe': debug_control_timeframe,
-                    'old_timeframe': None,
-                    'source': 'go_to_date_sync_highperf'
-                })
-
-                # WebSocket Broadcast
-                await manager.broadcast({
-                    'type': 'go_to_date_complete',
-                    'data': result['data'],
-                    'date': target_date,
-                    'visible_range': result.get('visible_range'),
-                    'performance_stats': perf_stats
-                })
-
-                return {
-                    "status": "success",
-                    "message": f"High-Performance Go To Date zu {target_date}",
-                    "data": result['data'],
-                    "count": len(result['data']),
-                    "target_date": target_date,
-                    "visible_range": result.get('visible_range'),
-                    "performance_stats": perf_stats
-                }
-            else:
-                print(f"[HIGH-PERF-GO-TO-DATE] WARNING: Keine Daten für {target_date} in {current_timeframe}")
-
-        # Fallback: Legacy CSV System
-        print(f"[HIGH-PERF-GO-TO-DATE] FALLBACK zu CSV System für {current_timeframe}")
-
-        import pandas as pd
-        from pathlib import Path
-
-        csv_path = Path(f"src/data/aggregated/{current_timeframe}/nq-2024.csv")
-
-        if not csv_path.exists():
-            return {"status": "error", "message": f"CSV-Datei für {current_timeframe} nicht gefunden"}
-
-        # Lade komplette CSV und suche das gewünschte Datum
-        df = pd.read_csv(csv_path)
-
-        # DateTime kombinieren und als zusätzliche Spalte hinzufügen
-        df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
-        df['time'] = df['datetime'].astype(int) // 10**9  # Unix timestamp für TradingView
-
-        # Suche das gewünschte Datum
-        target_date_only = target_datetime.date()
-        df['date_only'] = df['datetime'].dt.date
-
-        # Finde Kerzen für das Zieldatum
-        target_rows = df[df['date_only'] == target_date_only]
-
-        if len(target_rows) > 0:
-            # Verwende die erste Kerze des Zieldatums und lade 50 Kerzen rückwärts - CLAUDE-FIX
-            end_index = target_rows.index[0] + 1   # Ende bei erster Kerze des Zieldatums (00:00)
-            start_index = max(0, end_index - 5)  # 5 Kerzen rückwärts - ULTRA-MINI
-            selected_df = df.iloc[start_index:end_index]
-            print(f"[FALLBACK-GO-TO-DATE] Gefunden: {len(target_rows)} Kerzen für {target_date}")
-        else:
-            # Fallback: Lade letzten 5 Kerzen wenn Datum nicht gefunden - ULTRA-MINI
-            selected_df = df.tail(5)
-            print(f"[FALLBACK-GO-TO-DATE] Datum {target_date} nicht gefunden, verwende letzten 5 Kerzen")
-
-        # Konvertiere zu Chart-Format
-        chart_data = []
-        for _, row in selected_df.iterrows():
-            chart_data.append({
-                'time': int(row['time']),
-                'open': float(row['Open']),
-                'high': float(row['High']),
-                'low': float(row['Low']),
-                'close': float(row['Close']),
-                'volume': int(row['Volume'])
-            })
-
-        # UNIFIED STATE: Update Go-To-Date für alle Timeframes einheitlich (CSV-System)
-        unified_state.set_go_to_date(target_datetime)
-
-        # 🚀 CRITICAL FIX: Global Skip Events Reset bei Go-To-Date
+        # LEGACY COMPATIBILITY: Global Skip Events Reset
         skip_events_count = len(global_skip_events)
-        global_skip_events.clear()  # Alle Skip-Events löschen
-        print(f"[GO-TO-DATE-RESET] Global Skip Events cleared: {skip_events_count} events removed")
+        global_skip_events.clear()
+        print(f"[GOTO-RESET] Global Skip Events cleared: {skip_events_count} events")
 
-        # 🚀 UNIFIED TIME MANAGER: Skip-State Reset integrieren
-        unified_time_manager.clear_all_skip_data()
-        print(f"[GO-TO-DATE-RESET] UnifiedTimeManager Skip-State cleared")
+        # LEGACY COMPATIBILITY: Chart State Update
+        manager.chart_state['data'] = chart_data
+        manager.chart_state['interval'] = current_timeframe
 
-        # 🚀 DEBUG CONTROL TIMEFRAME SYNCHRONISATION: Frontend-Backend Konsistenz sicherstellen
-        print(f"[GO-TO-DATE-SYNC] Debug Control Timeframe synchronisiert: {debug_control_timeframe}")
+        # LEGACY COMPATIBILITY: Chart Lifecycle Reset
+        chart_lifecycle_manager.reset_to_clean_state()
+        print(f"[GOTO-LIFECYCLE] Chart reset: {chart_lifecycle_manager.get_state_info()}")
 
-        # WebSocket Broadcast für Debug Control Sync
+        # WEBSOCKET BROADCAST: Debug Control Timeframe Sync
         await manager.broadcast({
             'type': 'debug_control_timeframe_changed',
             'debug_control_timeframe': debug_control_timeframe,
@@ -8189,63 +7925,29 @@ async def debug_go_to_date(date_data: dict):
             'source': 'go_to_date_sync'
         })
 
-        # WebSocket Broadcast
+        # WEBSOCKET BROADCAST: Go To Date Complete
         await manager.broadcast({
             'type': 'go_to_date_complete',
             'data': chart_data,
-            'date': target_date
+            'date': target_date,
+            'actual_date': goto_result['actual_date'].isoformat()
         })
 
-        print(f"[FALLBACK-GO-TO-DATE] Erfolgreich zu {target_date} gesprungen - {len(chart_data)} Kerzen geladen")
-
-        # CRITICAL: UNIFIED TIME MANAGER SYNCHRONISATION
-        # Aktualisiere das neue UnifiedTimeManager für Skip-System Kompatibilität
-        if chart_data:
-            last_candle_time = chart_data[-1]['time']
-            new_debug_time = pd.to_datetime(last_candle_time, unit='s')
-
-            # UNIFIED TIME MANAGER: Setze globale Zeit für Skip-System
-            unified_time_manager.set_time(new_debug_time, source="go_to_date")
-            print(f"[UNIFIED-SYNC] UnifiedTimeManager Zeit gesetzt: {new_debug_time}")
-
-            # Legacy System Updates für Kompatibilität
-            debug_controller.current_time = new_debug_time
-            print(f"[DEBUG-SYNC] DebugController Zeit auf letzte Kerze gesetzt: {debug_controller.current_time}")
-
-            # CRITICAL FIX: TimeframeSyncManager mit neuer Zeit synchronisieren
-            debug_controller.sync_manager.set_base_time(new_debug_time)
-            print(f"[DEBUG-SYNC] TimeframeSyncManager auf {new_debug_time} synchronisiert")
-        else:
-            # UNIFIED TIME MANAGER: Fallback für leere Daten
-            unified_time_manager.set_time(target_datetime, source="go_to_date_fallback")
-            print(f"[UNIFIED-SYNC] UnifiedTimeManager auf Zieldatum gesetzt: {target_datetime}")
-
-            debug_controller.current_time = target_datetime
-            debug_controller.sync_manager.set_base_time(target_datetime)
-            print(f"[DEBUG-SYNC] Keine Daten gefunden - DebugController auf Zieldatum gesetzt: {target_datetime}")
-        debug_controller.set_timeframe(current_timeframe)  # Sync Timeframe
-
-        # Update Chart State mit neuen Daten und Timeframe
-        manager.chart_state['data'] = chart_data
-        manager.chart_state['interval'] = current_timeframe
-
-        print(f"[DEBUG-SYNC] DebugController auf {target_date} und {current_timeframe} aktualisiert")
-
-        # 🚀 CHART LIFECYCLE MANAGER INTEGRATION: Reset to clean state on Go To Date
-        chart_lifecycle_manager.reset_to_clean_state()
-        print(f"[CHART-LIFECYCLE] Reset to clean state after Go To Date: {chart_lifecycle_manager.get_state_info()}")
+        print(f"[GOTO-SERVICE] SUCCESS: {len(chart_data)} candles loaded for {target_date}")
 
         return {
             "status": "success",
-            "message": f"Fallback Go To Date zu {target_date}",
+            "message": f"Go To Date: {target_date}",
             "data": chart_data,
             "count": len(chart_data),
             "target_date": target_date,
-            "chart_lifecycle_state": chart_lifecycle_manager.get_state_info()  # Add lifecycle info
+            "actual_date": goto_result['actual_date'].isoformat(),
+            "chart_lifecycle_state": chart_lifecycle_manager.get_state_info(),
+            "system": "navigation_service"
         }
 
     except Exception as e:
-        print(f"[ERROR] Go To Date Memory Fehler: {e}")
+        print(f"[ERROR] Go To Date Fehler: {e}")
         import traceback
         traceback.print_exc()
         return {"status": "error", "message": f"Go To Date Fehler: {str(e)}"}
