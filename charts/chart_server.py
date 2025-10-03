@@ -7788,60 +7788,57 @@ async def get_debug_sync_status():
 
 @app.post("/api/debug/set_speed")
 async def debug_set_speed(speed_data: dict):
-    """API Endpoint um Debug Speed zu ändern"""
+    """REFACTOR PHASE 4: Set Speed über DebugService"""
     try:
         speed = speed_data.get("speed", 2)
-        debug_controller.set_speed(speed)
+        result = debug_service.set_speed(speed)
 
-        # WebSocket-Update an alle Clients
         await manager.broadcast({
             'type': 'debug_speed_changed',
-            'speed': speed,
+            'speed': result['speed'],
             'debug_state': debug_controller.get_state()
         })
 
         return {
             "status": "success",
-            "message": f"Geschwindigkeit auf {speed}x gesetzt",
-            "debug_state": debug_controller.get_state()
+            "message": f"Geschwindigkeit auf {result['speed']}x gesetzt",
+            "system": "debug_service"
         }
-
     except Exception as e:
         print(f"Fehler beim Setzen der Geschwindigkeit: {e}")
         return {"status": "error", "message": str(e)}
 
 @app.post("/api/debug/toggle_play")
 async def debug_toggle_play():
-    """API Endpoint um Play/Pause zu togglen"""
+    """REFACTOR PHASE 4: Toggle Play über DebugService"""
     try:
-        play_mode = debug_controller.toggle_play_mode()
+        result = debug_service.toggle_play_mode()
 
-        # WebSocket-Update an alle Clients (ohne debug_state wegen JSON-Serialisierung)
         await manager.broadcast({
             'type': 'debug_play_toggled',
-            'play_mode': play_mode
+            'play_mode': result['play_mode']
         })
 
         return {
             "status": "success",
-            "message": f"Play-Modus {'aktiviert' if play_mode else 'deaktiviert'}",
-            "play_mode": play_mode,
-            "debug_state": debug_controller.get_state()
+            "message": f"Play-Modus {'aktiviert' if result['play_mode'] else 'deaktiviert'}",
+            "play_mode": result['play_mode'],
+            "system": "debug_service"
         }
-
     except Exception as e:
         print(f"Fehler beim Toggle Play/Pause: {e}")
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/debug/state")
 async def debug_get_state():
-    """API Endpoint um aktuellen Debug-Status zu holen"""
+    """REFACTOR PHASE 4: Debug State über DebugService"""
     try:
+        state = debug_service.get_debug_state()
         return {
             "status": "success",
-            "debug_state": debug_controller.get_state()
+            "debug_state": state,
+            "system": "debug_service"
         }
-
     except Exception as e:
         print(f"Fehler beim Holen des Debug-Status: {e}")
         return {"status": "error", "message": str(e)}
