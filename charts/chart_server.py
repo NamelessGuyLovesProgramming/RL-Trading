@@ -58,6 +58,15 @@ from core import (
     DebugController
 )
 
+# REFACTOR PHASE 4: Import Services Layer
+from services import (
+    ChartService,
+    TimeframeService,
+    NavigationService,
+    DebugService,
+    PositionService
+)
+
 # Globale Variablen (werden nach Startup initialisiert)
 nq_loader = None
 nq_data_loader = None  # NQDataLoader für Go To Date Funktionalität
@@ -2040,35 +2049,85 @@ debug_controller = DebugController(
 # Initialize Global Data Repository with CSV Loader
 timeframe_data_repository = TimeframeDataRepository(csv_loader_for_debug, unified_time_manager)
 
+# REFACTOR PHASE 4: Initialize Services with Dependency Injection
+print("[PHASE 4] Initializing Services Layer...")
+
+# ChartService - Chart-Operations
+chart_service = ChartService(
+    price_repo=price_repository,
+    timeframe_repo=timeframe_data_repository,
+    cache_manager=ChartDataCache(),  # Neue Instanz für Chart Service
+    validator=data_validator,
+    unified_time_manager=unified_time_manager
+)
+
+# TimeframeService - Timeframe-Switching
+timeframe_service = TimeframeService(
+    timeframe_repo=timeframe_data_repository,
+    sync_manager=debug_controller.sync_manager,  # Nutze SyncManager vom DebugController
+    aggregator=debug_controller.aggregator,  # Nutze Aggregator vom DebugController
+    series_lifecycle=chart_lifecycle_manager,
+    unified_time_manager=unified_time_manager,
+    validator=data_validator
+)
+
+# NavigationService - Chart-Navigation
+navigation_service = NavigationService(
+    timeframe_repo=timeframe_data_repository,
+    debug_controller=debug_controller,
+    unified_time_manager=unified_time_manager,
+    unified_state=unified_state,
+    validator=data_validator
+)
+
+# DebugService - Debug-Mode Logic
+debug_service = DebugService(
+    debug_controller=debug_controller,
+    navigation_service=navigation_service
+)
+
+# PositionService - Trading Positions
+position_service = PositionService(
+    unified_state=unified_state,
+    price_repo=price_repository
+)
+
+print("[PHASE 4] Services initialized successfully")
+
 # Background Task für Auto-Play Modus
 async def auto_play_loop():
     """Background-Task für kontinuierliches Skip im Play-Modus"""
     while True:
         if debug_controller.play_mode:
             try:
+                # REFACTOR PHASE 4: Nutze DebugService für Auto-Play
                 # Berechne Delay basierend auf Speed (1x-15x)
-                # Speed 1 = 1000ms, Speed 15 = 67ms (linear)
                 delay = max(1000 / debug_controller.speed, 67)  # Minimum 67ms
 
-                # Skip +1 Minute
-                result = debug_controller.skip_minute()
+                # Auto-Play Tick über DebugService
+                current_timeframe = debug_controller.current_timeframe
+                skip_result = debug_service.auto_play_tick(current_timeframe)
 
-                # Extrahiere Kerze aus dem Ergebnis
-                if result.get('type') == 'complete_candle':
-                    new_candle = result['candle']
-                    # Neue vollständige Kerze zu Chart-Daten hinzufügen
-                    manager.chart_state['data'].append(new_candle)
+                if skip_result.get('success'):
+                    new_candle = skip_result.get('candle')
+
+                    # Extrahiere Kerzen-Typ
+                    if skip_result.get('candle_type') == 'complete_candle':
+                        # Neue vollständige Kerze zu Chart-Daten hinzufügen
+                        manager.chart_state['data'].append(new_candle)
+                    else:
+                        # Incomplete Kerze - markiere als solche
+                        new_candle['incomplete'] = True
+
+                    # WebSocket-Update an alle Clients
+                    await manager.broadcast({
+                        'type': 'auto_play_skip',
+                        'candle': new_candle,
+                        'debug_state': debug_controller.get_state()
+                    })
                 else:
-                    # Incomplete Kerze - markiere als solche
-                    new_candle = result['candle']
-                    new_candle['incomplete'] = True
-
-                # WebSocket-Update an alle Clients
-                await manager.broadcast({
-                    'type': 'auto_play_skip',
-                    'candle': new_candle,
-                    'debug_state': debug_controller.get_state()
-                })
+                    # Auto-Play fehlgeschlagen (z.B. Ende der Daten)
+                    print(f"[AUTO-PLAY] Stopped: {skip_result.get('reason', 'unknown')}")
 
                 print(f"AUTO-PLAY: Skip +1min (Speed {debug_controller.speed}x, Delay {delay:.0f}ms)")
 
