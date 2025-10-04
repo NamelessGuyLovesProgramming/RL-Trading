@@ -254,30 +254,27 @@ class DebugController:
             candle = primary_result['candle'].copy()
 
             # Fix extreme/corrupted values (likely timestamp contamination)
-            # Enhanced detection for timestamp-like values (e.g., 22089.0, 173439xxxx fragments)
+            # Only catch truly extreme values (> 100k are timestamps, < 100 are errors)
+            # NQ normally trades in 15k-25k range, so don't flag normal prices
             close_val = candle.get('close', 0)
-            if (close_val > 50000 or close_val < 1000 or
-                (close_val > 20000 and close_val < 30000)):  # Catch timestamp fragments like 22089
-                print(f"[SKIP-SYNC] CORRUPTED Close detected: {close_val} -> Fixed to 18500")
-                candle['close'] = 18500.0  # Realistic NQ price
+            if close_val > 100000 or close_val < 100:
+                print(f"[SKIP-SYNC] CORRUPTED Close detected: {close_val} -> Using fallback")
+                candle['close'] = 20000.0  # Realistic NQ fallback
 
             open_val = candle.get('open', 0)
-            if (open_val > 50000 or open_val < 1000 or
-                (open_val > 20000 and open_val < 30000)):
-                print(f"[SKIP-SYNC] CORRUPTED Open detected: {open_val} -> Fixed to close")
+            if open_val > 100000 or open_val < 100:
+                print(f"[SKIP-SYNC] CORRUPTED Open detected: {open_val} -> Using close")
                 candle['open'] = candle['close']
 
             high_val = candle.get('high', 0)
-            if (high_val > 50000 or high_val < 1000 or
-                (high_val > 20000 and high_val < 30000)):
+            if high_val > 100000 or high_val < 100:
                 print(f"[SKIP-SYNC] CORRUPTED High detected: {high_val} -> Fixed")
-                candle['high'] = max(candle['open'], candle['close']) + 5
+                candle['high'] = max(candle['open'], candle['close']) + 10
 
             low_val = candle.get('low', 0)
-            if (low_val > 50000 or low_val < 1000 or
-                (low_val > 20000 and low_val < 30000)):
+            if low_val > 100000 or low_val < 100:
                 print(f"[SKIP-SYNC] CORRUPTED Low detected: {low_val} -> Fixed")
-                candle['low'] = min(candle['open'], candle['close']) - 5
+                candle['low'] = min(candle['open'], candle['close']) - 10
 
             print(f"[SKIP-SYNC] SUCCESS {timeframe}: {primary_result.get('datetime', 'N/A')} -> Close: {candle['close']} ({candle_type})")
 

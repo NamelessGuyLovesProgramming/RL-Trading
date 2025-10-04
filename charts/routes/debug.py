@@ -11,7 +11,8 @@ router = APIRouter(prefix="/api/debug", tags=["debug"])
 
 
 def setup_debug_routes(app, debug_service, navigation_service,
-                       unified_time_manager, manager, debug_controller):
+                       unified_time_manager, manager, debug_controller,
+                       global_skip_events, debug_control_timeframe):
     """
     Registriert Debug-Routes am FastAPI App
 
@@ -22,14 +23,15 @@ def setup_debug_routes(app, debug_service, navigation_service,
         unified_time_manager: UnifiedTimeManager-Instanz
         manager: WebSocketManager-Instanz
         debug_controller: DebugController-Instanz
+        global_skip_events: Global skip events list
+        debug_control_timeframe: Debug control timeframe reference
     """
 
     # REFACTOR PHASE 4: Skip-Endpoint (bereits auf NavigationService migriert)
     @router.post("/skip")
     async def debug_skip():
         """Skip-Operation über NavigationService"""
-        global global_skip_events, debug_control_timeframe
-
+        # Variables passed as closure from setup_debug_routes
         try:
             skip_timeframe = debug_control_timeframe
             chart_timeframe = manager.chart_state.get('interval', '5m')
@@ -49,11 +51,7 @@ def setup_debug_routes(app, debug_service, navigation_service,
             candle_type = skip_result['candle_type']
             new_global_time = unified_time_manager.get_current_time()
 
-            # Legacy compatibility
-            from charts.core import UniversalSkipRenderer
-            universal_renderer = UniversalSkipRenderer()
-            skip_event = universal_renderer.create_skip_event(candle, skip_timeframe)
-
+            # Update chart state
             if hasattr(manager, 'chart_state') and 'data' in manager.chart_state:
                 manager.chart_state['data'].append(candle)
 
@@ -98,8 +96,7 @@ def setup_debug_routes(app, debug_service, navigation_service,
     @router.post("/go_to_date")
     async def debug_go_to_date(date_data: dict):
         """Go To Date über NavigationService"""
-        global global_skip_events, debug_control_timeframe
-
+        # Variables passed as closure from setup_debug_routes
         try:
             from datetime import datetime
 
