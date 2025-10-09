@@ -146,6 +146,12 @@ class ChartDataValidator:
 
         return validated_data
 
+    def validate_candle_for_chart(self, candle: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Public method to validate a single candle - returns candle if valid, None otherwise"""
+        if self._validate_candle_for_chart(candle):
+            return candle
+        return None
+
     def _validate_candle_for_chart(self, candle: Dict[str, Any]) -> bool:
         """Validates a single candle for chart compatibility"""
         if not candle or not isinstance(candle, dict):
