@@ -221,9 +221,10 @@ def setup_debug_routes(app, debug_service, navigation_service,
         """Debug State über DebugService"""
         try:
             state = debug_service.get_debug_state()
+            # Flache Response - nicht verschachtelt!
             return {
                 "status": "success",
-                "debug_state": state,
+                **state,  # Spread state fields direkt in response
                 "system": "debug_service"
             }
         except Exception as e:

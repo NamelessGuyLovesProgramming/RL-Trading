@@ -1,0 +1,123 @@
+[1m============================= test session starts =============================[0m
+platform win32 -- Python 3.13.7, pytest-8.4.2, pluggy-1.6.0 -- C:\Users\vgude\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\vgude\VsStudio\RL-Trading
+configfile: pytest.ini
+plugins: anyio-4.10.0, asyncio-1.2.0, cov-7.0.0, mock-3.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 22 items
+
+tests/integration/test_chart_server_integration.py::TestChartServerIntegration::test_server_startup [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestChartServerIntegration::test_api_docs_available [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestChartServerIntegration::test_debug_state_endpoint [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestChartServerIntegration::test_chart_status_endpoint [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_websocket_connection [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_get_chart_data_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_get_debug_state_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_set_speed_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_toggle_play_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_timeframe_change_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_add_position_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_remove_position_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestWebSocketCommands::test_unknown_command_error [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestServiceIntegration::test_chart_service_integration [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestServiceIntegration::test_debug_service_integration [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestServiceIntegration::test_timeframe_service_integration [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestServiceIntegration::test_navigation_service_integration [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestErrorHandling::test_invalid_endpoint_404 [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestErrorHandling::test_websocket_invalid_command [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestErrorHandling::test_websocket_missing_parameters [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestDataIntegrity::test_chart_data_has_no_null_values [32mPASSED[0m
+tests/integration/test_chart_server_integration.py::TestDataIntegrity::test_timeframe_change_validates_data [32mPASSED[0m[CSVLoader] Initialized multi-timeframe CSV loader
+[UnifiedTimeManager] Zentrale Zeit-Koordination mit Skip-State Isolation initialisiert
+[CHART-LIFECYCLE] Initialized - State: CLEAN
+[UnifiedTimeManager] Zeit initialisiert: 2024-12-31 16:55:00
+[TimeframeDataRepository] Smart Data Repository initialisiert
+[TimeframeSyncManager] Initialized multi-timeframe synchronization
+DEBUG INIT: Startzeit gesetzt auf 2024-12-30 16:55:00 (30. Dezember)
+[UniversalSkipRenderer] Initialized
+[CACHE] ChartDataCache initialisiert
+[ChartService] Initialized with dependency injection
+[TimeframeService] Initialized with dependency injection
+[NavigationService] Initialized with dependency injection
+[DebugService] Initialized with dependency injection
+[PositionService] Initialized with dependency injection
+[PHASE 5] Debug-Router registriert ✅
+[PHASE 5] Chart-Router registriert ✅
+[PHASE 5] Static-Router registriert ✅
+[TEST-SETUP] Server components initialized ✅
+[DebugService] Setting speed: 5x
+DEBUG SPEED: Geschwindigkeit auf 5x gesetzt
+Broadcast: 1 aktive Verbindungen, Nachricht: debug_speed_changed
+Broadcast abgeschlossen an 1 Clients
+DEBUG PLAY: Play-Modus aktiviert
+[DebugService] Play mode: ON
+Broadcast: 1 aktive Verbindungen, Nachricht: debug_play_toggled
+Broadcast abgeschlossen an 1 Clients
+[CHART-LIFECYCLE] Pre-transition state check: corrupted=False, skip_modified=False, skip_count=False
+[CHART-LIFECYCLE] Transition plan: 5m -> 1h, Recreation: False (no_recreation_needed)
+[TimeframeService] Switching: 5m -> 1h
+[CHART-LIFECYCLE] Pre-transition state check: corrupted=False, skip_modified=False, skip_count=False
+[CHART-LIFECYCLE] Transition plan: 5m -> 1h, Recreation: False (no_recreation_needed)
+[SKIP-POSITION-AWARE] Loading 1h candles: 2024-12-23 08:55:00 to 2024-12-31 16:55:00, max: 200
+[SKIP-POSITION-AWARE] UnifiedTimeManager current time: 2024-12-31 16:55:00
+[CSVLoader] Loading 1h from src\data\aggregated\1h\nq-2024.csv
+[CSVLoader] SUCCESS: Cached 5920 1h candles
+[TimeframeDataRepository] [DATA] 119 Kerzen geladen für 1h (2024-12-23 08:55:00 bis 2024-12-31 16:55:00)
+[TimeframeService] Time-synced load: 2024-12-23 08:55:00 -> 2024-12-31 16:55:00
+[CHART-LIFECYCLE] Transition completed successfully - State: DATA_LOADED (v1)
+Broadcast: 1 aktive Verbindungen, Nachricht: bulletproof_timeframe_changed
+Broadcast abgeschlossen an 1 Clients
+[CHART-LIFECYCLE] Transition completed successfully - State: DATA_LOADED (v1)
+Broadcast: 1 aktive Verbindungen, Nachricht: add_position
+Broadcast abgeschlossen an 1 Clients
+Broadcast: 1 aktive Verbindungen, Nachricht: remove_position
+Broadcast abgeschlossen an 1 Clients
+[CHART-LIFECYCLE] Pre-transition state check: corrupted=False, skip_modified=False, skip_count=False
+[CHART-LIFECYCLE] Transition plan: 1h -> 15m, Recreation: False (no_recreation_needed)
+[TimeframeService] Switching: 1h -> 15m
+[CHART-LIFECYCLE] Pre-transition state check: corrupted=False, skip_modified=False, skip_count=False
+[CHART-LIFECYCLE] Transition plan: 1h -> 15m, Recreation: False (no_recreation_needed)
+[SKIP-POSITION-AWARE] Loading 15m candles: 2024-12-30 15:55:00 to 2024-12-31 16:55:00, max: 100
+[SKIP-POSITION-AWARE] UnifiedTimeManager current time: 2024-12-31 16:55:00
+[CSVLoader] Loading 15m from src\data\aggregated\15m\nq-2024.csv
+[CSVLoader] SUCCESS: Cached 23670 15m candles
+[TimeframeDataRepository] [DATA] 92 Kerzen geladen für 15m (2024-12-30 15:55:00 bis 2024-12-31 16:55:00)
+[TimeframeService] Time-synced load: 2024-12-30 15:55:00 -> 2024-12-31 16:55:00
+[CHART-LIFECYCLE] Transition completed successfully - State: DATA_LOADED (v1)
+Broadcast: 1 aktive Verbindungen, Nachricht: bulletproof_timeframe_changed
+Broadcast abgeschlossen an 1 Clients
+[CHART-LIFECYCLE] Transition completed successfully - State: DATA_LOADED (v1)
+[NavigationService] Go to date: 2024-12-01 00:00:00 (15m)
+[UnifiedTimeManager] Zeit gesetzt: 2024-12-31 16:55:00 -> 2024-12-01 00:00:00 (via goto_date)
+[UnifiedTimeManager] Zeit gesetzt: 2024-12-01 00:00:00 -> 2024-12-01 00:00:00 (via goto_date)
+[UNIFIED-GOTO] Start-Zeit gesetzt auf 2024-12-01 00:00:00
+[SyncManager] Base time set to 2024-12-01 00:00:00
+[NavigationService] Sync manager reset to: 2024-12-01 00:00:00
+[SKIP-POSITION-AWARE] Loading 15m candles: 2024-11-28 22:00:00 to 2024-12-01 00:00:00, max: 200
+[SKIP-POSITION-AWARE] UnifiedTimeManager current time: 2024-12-01 00:00:00
+[TimeframeDataRepository] [DATA] 58 Kerzen geladen für 15m (2024-11-28 22:00:00 bis 2024-12-01 00:00:00)
+[UNIFIED-STATE] Position update (goto): None -> 2024-12-01 00:00:00
+[NavigationService] Go to date completed: 58 candles loaded
+[CHART-LIFECYCLE] Starting CLEAN RESET - Previous state: data_loaded, Skip count: 0
+[CHART-LIFECYCLE] CLEAN RESET COMPLETE - Version: 2, State: CLEAN
+[CHART-LIFECYCLE] CLEAN STATE VERIFIED: Ready for timeframe operations
+Broadcast: 1 aktive Verbindungen, Nachricht: debug_control_timeframe_changed
+Broadcast abgeschlossen an 1 Clients
+Broadcast: 1 aktive Verbindungen, Nachricht: go_to_date_complete
+Broadcast abgeschlossen an 1 Clients
+[CHART-LIFECYCLE] Pre-transition state check: corrupted=False, skip_modified=False, skip_count=False
+[CHART-LIFECYCLE] Transition plan: 15m -> 30m, Recreation: False (no_recreation_needed)
+[TimeframeService] Switching: 15m -> 30m
+[CHART-LIFECYCLE] Pre-transition state check: corrupted=False, skip_modified=False, skip_count=False
+[CHART-LIFECYCLE] Transition plan: 15m -> 30m, Recreation: False (no_recreation_needed)
+[SKIP-POSITION-AWARE] Loading 30m candles: 2024-11-27 21:00:00 to 2024-12-01 00:00:00, max: 150
+[SKIP-POSITION-AWARE] UnifiedTimeManager current time: 2024-12-01 00:00:00
+[CSVLoader] Loading 30m from src\data\aggregated\30m\nq-2024.csv
+[CSVLoader] SUCCESS: Cached 11837 30m candles
+[TimeframeDataRepository] [DATA] 70 Kerzen geladen für 30m (2024-11-27 21:00:00 bis 2024-12-01 00:00:00)
+[TimeframeService] Time-synced load: 2024-11-27 21:00:00 -> 2024-12-01 00:00:00
+[CHART-LIFECYCLE] Transition completed successfully - State: DATA_LOADED (v2)
+Broadcast: 1 aktive Verbindungen, Nachricht: bulletproof_timeframe_changed
+Broadcast abgeschlossen an 1 Clients
+[CHART-LIFECYCLE] Transition completed successfully - State: DATA_LOADED (v2)
