@@ -1018,12 +1018,13 @@ py charts/chart_server.py
 
 ---
 
-### **PHASE 6: Config & Utils** ⚙️
+### **PHASE 6: Config & Utils** ⚙️ ✅ VOLLSTÄNDIG ABGESCHLOSSEN
 **Dauer**: 1h
-**LOC**: ~200 Zeilen
+**LOC**: ~600 Zeilen (Settings, Constants, Serializers, Validators)
+**Status**: ✅ Vollständig abgeschlossen (2025-10-10)
 
 #### Tasks
-1. `charts/config/settings.py`:
+1. ✅ `charts/config/settings.py` (208 LOC):
    ```python
    from pydantic_settings import BaseSettings
 
@@ -1150,10 +1151,75 @@ py charts/main.py
 ```
 
 #### Erfolgskriterium
-- ✅ Config-Tests grün
-- ✅ Utils-Tests grün
-- ✅ Settings laden funktioniert
-- ✅ .env Override funktioniert
+- ✅ Config-Module erstellt (settings.py, constants.py)
+- ✅ Utils-Module erstellt (serializers.py, validators.py)
+- ✅ Alle Module importierbar und funktional
+- ✅ 6/6 Tests bestanden (100% Success Rate)
+- ✅ .env.example erstellt
+- ✅ Settings laden funktioniert mit pydantic_settings
+- ✅ Validators mit ValidationResult-System funktionieren
+
+**Phase 6 VOLLSTÄNDIG ABGESCHLOSSEN!** ✅
+
+#### 📝 Implementierte Module
+
+**charts/config/settings.py** (208 LOC):
+- Pydantic Settings mit Environment Variable Support
+- Server, Data, Cache, WebSocket, Debug, Performance, Trading Config
+- Helper Functions: `get_csv_path()`, `validate_timeframe()`, `get_env_info()`
+- Singleton Instance: `settings`
+
+**charts/config/constants.py** (341 LOC):
+- Timeframe Definitions (8 Timeframes: 1m-4h)
+- Timeframe Hierarchy (für Smart-Preloading)
+- Chart, WebSocket, Cache, Debug, Position Limits
+- Error & Success Messages
+- Helper Functions: `get_adjacent_timeframes()`, `get_timeframe_display_name()`, etc.
+
+**charts/utils/serializers.py** (290 LOC):
+- Custom JSON Serializer für datetime, Decimal, Custom Objects
+- Spezial-Serializer: `serialize_candle()`, `serialize_chart_data()`, `serialize_debug_state()`
+- Safe Serialization mit Fallback
+- Deserialization Helpers: `parse_datetime()`, `parse_date()`
+
+**charts/utils/validators.py** (331 LOC):
+- ValidationResult Class mit bool-Support
+- InputValidator Class mit static methods
+- Validators: Timeframe, Date, Candle Count, Price, Timestamp, Debug Speed
+- Convenience Functions für einfache Nutzung
+
+#### Test-Ergebnisse
+
+**test_phase6_config_utils.py**:
+```
+============================================================
+PHASE 6 VALIDATION - CONFIG & UTILS
+============================================================
+TEST 1: Config Module Import           [OK] PASS
+TEST 2: Settings Values                [OK] PASS
+TEST 3: Constants                      [OK] PASS
+TEST 4: Serializers                    [OK] PASS
+TEST 5: Validators                     [OK] PASS
+TEST 6: Integration Test               [OK] PASS
+============================================================
+TOTAL: 6/6 tests passed (100%)
+============================================================
+```
+
+#### Migration Summary
+
+**Dateien erstellt:**
+1. **charts/config/__init__.py** (23 LOC) - Package Exports
+2. **charts/config/settings.py** (208 LOC) - Pydantic Settings
+3. **charts/config/constants.py** (341 LOC) - Konstanten & Helpers
+4. **charts/utils/__init__.py** (31 LOC) - Package Exports
+5. **charts/utils/serializers.py** (290 LOC) - JSON Serialization
+6. **charts/utils/validators.py** (331 LOC) - Input Validation
+7. **.env.example** (52 LOC) - Environment Template
+8. **test_phase6_config_utils.py** (310 LOC) - Validation Tests
+
+**Nächste Schritte:**
+- Phase 7: Legacy Cleanup & Optimization
 
 ---
 
