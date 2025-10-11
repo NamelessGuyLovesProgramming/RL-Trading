@@ -71,6 +71,12 @@ def setup_static_routes(app):
         app.mount("/static", StaticFiles(directory="static"), name="static")
         print("[PHASE 5] Static files mounted: /static")
 
+        # Phase 9: Mount assets directory für Svelte Frontend
+        assets_path = Path("static/assets")
+        if assets_path.exists():
+            app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+            print("[PHASE 9] Assets mounted: /assets ✨")
+
     # Registriere Router an App
     app.include_router(router)
 

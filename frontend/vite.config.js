@@ -4,9 +4,11 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [svelte()],
+  base: '/',  // Assets direkt am Root servieren
   build: {
     outDir: '../static',  // Build direkt in FastAPI static/ Ordner
     emptyOutDir: true,
+    assetsDir: 'assets',  // Assets in /assets Ordner
     rollupOptions: {
       output: {
         // Optimale Chunk-Strategie
