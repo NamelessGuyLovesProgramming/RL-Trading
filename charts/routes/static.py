@@ -14,19 +14,36 @@ router = APIRouter(tags=["static"])
 
 @router.get("/", response_class=HTMLResponse)
 async def serve_chart_page():
-    """Serviert Haupt-Chart HTML-Seite"""
-    html_path = Path("templates/chart.html")
+    """
+    Serviert Haupt-Chart HTML-Seite
 
-    if not html_path.exists():
-        return HTMLResponse(
-            content="<h1>Chart Server</h1><p>Template nicht gefunden</p>",
-            status_code=404
-        )
+    Phase 9: Svelte Frontend Integration
+    - Versucht zuerst Svelte-Build zu laden (static/index.html)
+    - Fallback: Legacy Template (templates/chart.html)
+    """
+    # Phase 9: Versuche Svelte-Build zu servieren
+    svelte_path = Path("static/index.html")
+    if svelte_path.exists():
+        print("[PHASE 9] Serving Svelte Frontend ✨")
+        with open(svelte_path, 'r', encoding='utf-8') as f:
+            return HTMLResponse(content=f.read())
 
-    with open(html_path, 'r', encoding='utf-8') as f:
-        html_content = f.read()
+    # Fallback: Legacy Template
+    legacy_path = Path("templates/chart.html")
+    if legacy_path.exists():
+        print("[LEGACY] Serving Legacy HTML Template")
+        with open(legacy_path, 'r', encoding='utf-8') as f:
+            return HTMLResponse(content=f.read())
 
-    return HTMLResponse(content=html_content)
+    # No frontend available
+    return HTMLResponse(
+        content="""
+        <h1>Chart Server 2.0</h1>
+        <p>No frontend available</p>
+        <p>Run: <code>cd frontend && npm run build</code></p>
+        """,
+        status_code=404
+    )
 
 
 @router.get("/favicon.ico")
