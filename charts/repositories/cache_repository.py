@@ -5,7 +5,7 @@ Wrapper für HighPerformanceChartCache mit vereinfachter API
 
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from charts.models.chart_data import Candle, CandleFactory
+from ..models.chart_data import Candle, CandleFactory
 
 
 class CacheRepository:

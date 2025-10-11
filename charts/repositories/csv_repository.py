@@ -7,7 +7,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from charts.models.chart_data import Candle, ChartData, CandleFactory
+from ..models.chart_data import Candle, ChartData, CandleFactory
 
 
 class CSVRepository:

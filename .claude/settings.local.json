@@ -86,7 +86,21 @@
       "Bash(head:*)",
       "Bash(xargs:*)",
       "Bash(tail:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(git stash:*)",
+      "Bash(tasklist:*)",
+      "Bash(awk:*)",
+      "Bash(git log:*)",
+      "Bash(test:*)",
+      "Bash(move chartschart_server.py chartschart_server_legacy.py)",
+      "Bash(move:*)",
+      "Bash(sed:*)",
+      "Bash(start /B py:*)",
+      "Bash(start cmd /c \"cd /d C:\\Users\\vgude\\VsStudio\\RL-Trading && timeout 2 >nul && py charts\\chart_server.py\")",
+      "Bash(start cmd /c \"cd /d C:\\Users\\vgude\\VsStudio\\RL-Trading && py charts\\chart_server.py\")",
+      "Bash(pytest:*)",
+      "Bash(git rm:*)",
+      "Bash(git mv:*)"
     ],
     "deny": [],
     "ask": []

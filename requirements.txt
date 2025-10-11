@@ -1,18 +1,11 @@
 # RL Trading Requirements
 # Core dependencies für die modularisierte Trading App
 
-# Streamlit und Web Framework
-streamlit>=1.28.0
-streamlit-option-menu>=0.3.6
-
 # Datenanalyse und Finanzdaten
 pandas>=2.0.0
 numpy>=1.24.0
 yfinance>=0.2.18
 pytz>=2023.3
-
-# Chart und Visualisierung
-plotly>=5.17.0
 
 # HTTP Requests (für APIs)
 requests>=2.31.0
