@@ -1,0 +1,4116 @@
+        console.log('🚀 RL Trading Chart - FastAPI Edition');
+
+        // Server-side Logging Function für Debug-Ausgaben
+        function serverLog(message, data = null) {
+            // Bereinige data für JSON-Serialisierung
+            let cleanData = null;
+            if (data !== null && data !== undefined) {
+                try {
+                    // Teste ob data JSON-serialisierbar ist
+                    JSON.stringify(data);
+                    cleanData = data;
+                } catch (e) {
+                    // Falls nicht serialisierbar, konvertiere zu String
+                    cleanData = String(data);
+                }
+            }
+
+            const logData = {
+                message: message || 'No message',
+                timestamp: new Date().toISOString(),
+                data: cleanData
+            };
+
+            // Console ausgeben für Browser
+            console.log('[SERVER LOG]', message, cleanData);
+
+            // An Server senden für Terminal-Ausgabe
+            fetch('/api/debug/log', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(logData)
+            }).catch(e => console.warn('Server log failed:', e));
+        }
+
+        // Erster Test-Log
+        serverLog('🚀 JavaScript-Execution gestartet');
+
+        let chart;
+        let candlestickSeries;
+        let ws;
+        let isInitialized = false;
+
+        // Chart initialisieren
+        // EINFACHE CHART POSITIONING FUNKTION
+        function setChartWith20PercentMargin(chartData) {
+            console.log('MARGIN: Setze 20% Freiraum für', chartData.length, 'Kerzen');
+
+            if (!chartData || chartData.length < 2) {
+                console.log('MARGIN: Fallback zu fitContent (zu wenig Daten)');
+                chart.timeScale().fitContent();
+                return;
+            }
+
+            // Hole erste und letzte Zeit
+            const firstTime = chartData[0].time;
+            const lastTime = chartData[chartData.length - 1].time;
+
+            // Berechne 20% Freiraum rechts
+            const dataTimeSpan = lastTime - firstTime;
+            const marginTime = dataTimeSpan * 0.25; // 25% der Daten = 20% der Gesamt-Chart
+
+            console.log('MARGIN: Daten-Zeitspanne:', dataTimeSpan, 'Freiraum:', marginTime);
+            console.log('MARGIN: Chart von', firstTime, 'bis', lastTime + marginTime);
+
+            // Setze sichtbaren Bereich
+            chart.timeScale().setVisibleRange({
+                from: firstTime,
+                to: lastTime + marginTime
+            });
+
+            console.log('MARGIN: 20% Freiraum gesetzt');
+        }
+
+        // Smart Chart Positioning System - 50 Kerzen Standard mit 20% Freiraum
+        class SmartChartPositioning {
+            constructor(chart, candlestickSeries) {
+                this.chart = chart;
+                this.candlestickSeries = candlestickSeries;
+                this.standardCandleCount = 50; // Standard: 50 Kerzen sichtbar
+                this.rightMarginPercent = 0.2; // 20% rechter Freiraum
+
+                console.log(`📊 Smart Positioning: ${this.standardCandleCount} Kerzen Standard mit ${this.rightMarginPercent * 100}% Freiraum`);
+            }
+
+            // Setze Chart auf Standard-Position: 50 Kerzen + 20% Freiraum
+            setStandardPosition(data) {
+                if (!data || data.length === 0) {
+                    console.warn('🚫 Keine Daten für Standard Position');
+                    return;
+                }
+
+                const dataLength = data.length;
+                const visibleCandles = Math.min(this.standardCandleCount, dataLength);
+
+                // Berechne Zeitbereich für sichtbare Kerzen
+                const startIndex = Math.max(0, dataLength - visibleCandles);
+                const endIndex = dataLength - 1;
+
+                if (startIndex === endIndex) {
+                    console.warn('🚫 Nicht genug Daten für Standard Position');
+                    this.chart.timeScale().fitContent();
+                    return;
+                }
+
+                // Zeitstempel der ersten und letzten sichtbaren Kerze
+                const startTime = data[startIndex].time;
+                const endTime = data[endIndex].time;
+
+                // RICHTIGE FREIRAUM-BERECHNUNG:
+                // 50 Kerzen sollen 4/5 (80%) der Chart-Breite links einnehmen
+                // 1/5 (20%) rechts soll frei bleiben für neue Kerzen
+
+                const dataTimeSpan = endTime - startTime;
+
+                // Wenn Daten 80% der Chart einnehmen sollen, dann:
+                // Gesamt-Chart-Breite = Daten-Breite / 0.8
+                const totalChartTimeSpan = dataTimeSpan / 0.8;
+
+                // Rechter Freiraum = 20% der Gesamt-Chart-Breite
+                const rightMarginTime = totalChartTimeSpan * 0.2;
+
+                // Chart beginnt bei den Daten, endet mit Freiraum
+                const chartStartTime = startTime;
+                const chartEndTime = endTime + rightMarginTime;
+
+                console.log(`📍 Smart Position: ${visibleCandles} Kerzen (${startIndex}-${endIndex})`);
+                console.log(`📍 Daten nehmen 80% ein: ${startTime} bis ${endTime}`);
+                console.log(`📍 Chart-Bereich: ${chartStartTime} bis ${chartEndTime} (20% Freiraum: ${rightMarginTime})`);
+
+                // Setze sichtbaren Bereich: Daten links 80%, Freiraum rechts 20%
+                this.chart.timeScale().setVisibleRange({
+                    from: chartStartTime,
+                    to: chartEndTime
+                });
+            }
+
+            // Nach Timeframe-Wechsel: Immer zurück zur Standard-Position
+            resetToStandardPosition(newData) {
+                console.log(`🔄 Reset zu Standard-Position nach Timeframe-Wechsel`);
+                this.setStandardPosition(newData);
+            }
+        }
+
+        // Intelligent Zoom System Class
+        class IntelligentZoomSystem {
+            constructor(chart, candlestickSeries, currentTimeframe = '5m') {
+                this.chart = chart;
+                this.candlestickSeries = candlestickSeries;
+                this.currentTimeframe = currentTimeframe;
+                this.currentCandles = 200; // Aktuelle Anzahl geladener Kerzen
+                this.minVisibleCandles = 50; // Minimum sichtbare Kerzen
+                this.maxVisibleCandles = 2000; // Maximum für Performance
+                this.isLoading = false;
+                this.lastVisibleRange = null;
+
+                this.setupZoomMonitoring();
+            }
+
+            setupZoomMonitoring() {
+                // Überwache Änderungen der sichtbaren Zeitspanne
+                this.chart.timeScale().subscribeVisibleLogicalRangeChange((newVisibleLogicalRange) => {
+                    if (newVisibleLogicalRange === null) return;
+                    this.handleVisibleRangeChange(newVisibleLogicalRange);
+                });
+
+                console.log('🔍 Intelligent Zoom System aktiviert');
+            }
+
+            handleVisibleRangeChange(visibleLogicalRange) {
+                const { from, to } = visibleLogicalRange;
+                const visibleCandleCount = Math.ceil(to - from);
+
+                console.log(`📊 Sichtbare Kerzen: ${visibleCandleCount}, Geladen: ${this.currentCandles}`);
+
+                // Check if we need more candles (user zoomed out)
+                if (this.shouldLoadMoreCandles(visibleCandleCount)) {
+                    this.loadMoreCandles(visibleCandleCount);
+                }
+
+                this.lastVisibleRange = visibleLogicalRange;
+            }
+
+            shouldLoadMoreCandles(visibleCandleCount) {
+                // TEMPORÄR DEAKTIVIERT - Testing Timeframe Fix
+                console.log('🚫 Zoom System temporär deaktiviert für Timeframe-Fix');
+                return false;
+
+                // Original code (auskommentiert):
+                // const visibilityRatio = visibleCandleCount / this.currentCandles;
+                // return visibilityRatio > 0.7 &&
+                //        this.currentCandles < this.maxVisibleCandles &&
+                //        !this.isLoading;
+            }
+
+            async loadMoreCandles(visibleCandleCount) {
+                if (this.isLoading) return;
+
+                this.isLoading = true;
+                console.log('📈 Lade mehr Kerzen für bessere Zoom-Erfahrung...');
+
+                try {
+                    // Berechne wie viele Kerzen wir brauchen
+                    const targetCandles = Math.min(
+                        Math.max(visibleCandleCount * 2.5, this.currentCandles * 1.5),
+                        this.maxVisibleCandles
+                    );
+
+                    // API-Call für mehr Daten
+                    const response = await fetch('/api/chart/change_timeframe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            timeframe: this.currentTimeframe,
+                            visible_candles: Math.ceil(targetCandles)
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.status === 'success') {
+                        // Update Chart mit validierten Daten
+                        const validatedData = validateCandleData(result.data);
+                        this.candlestickSeries.setData(validatedData);
+                        this.currentCandles = validatedData.length;
+
+                        if (validatedData.length !== result.data.length) {
+                            console.warn(`⚠️ ${result.data.length - validatedData.length} invalid candles removed from lazy load`);
+                        }
+
+                        console.log(`✅ Mehr Kerzen geladen: ${this.currentCandles}`);
+
+                        // Toast-Benachrichtigung
+                        this.showZoomNotification(`🔍 Zoom erweitert: ${this.currentCandles} Kerzen verfügbar`);
+                    }
+                } catch (error) {
+                    console.error('❌ Fehler beim Laden zusätzlicher Kerzen:', error);
+                } finally {
+                    this.isLoading = false;
+                }
+            }
+
+            updateTimeframe(newTimeframe, newCandleCount) {
+                this.currentTimeframe = newTimeframe;
+                this.currentCandles = newCandleCount || this.currentCandles;
+                console.log(`🔄 Timeframe geändert zu: ${newTimeframe} (${this.currentCandles} Kerzen)`);
+            }
+
+            showZoomNotification(message) {
+                // Erstelle Toast-Benachrichtigung
+                const toast = document.createElement('div');
+                toast.textContent = message;
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 80px;
+                    right: 20px;
+                    background: rgba(8, 153, 129, 0.9);
+                    color: white;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    z-index: 10000;
+                    animation: slideIn 0.3s ease-out;
+                `;
+
+                document.body.appendChild(toast);
+
+                // Auto-remove nach 2 Sekunden
+                setTimeout(() => {
+                    toast.style.animation = 'slideOut 0.3s ease-in';
+                    setTimeout(() => toast.remove(), 300);
+                }, 2000);
+            }
+        }
+
+        function initChart() {
+            console.log('🔧 initChart() aufgerufen');
+
+            const chartContainer = document.getElementById('chart_container');
+            console.log('🔧 Chart Container:', chartContainer);
+
+            if (!chartContainer) {
+                console.error('❌ Chart Container nicht gefunden!');
+                return;
+            }
+
+            console.log('🔧 LightweightCharts verfügbar:', typeof LightweightCharts);
+
+            chart = LightweightCharts.createChart(chartContainer, {
+                width: chartContainer.clientWidth,
+                height: chartContainer.clientHeight,
+                layout: {
+                    backgroundColor: '#000000',
+                    textColor: '#d9d9d9'
+                },
+                timeScale: {
+                    timeVisible: true,
+                    secondsVisible: false,
+                    borderColor: '#485c7b'
+                },
+                grid: {
+                    vertLines: { visible: false },
+                    horzLines: { visible: false }
+                }
+            });
+
+            candlestickSeries = chart.addCandlestickSeries({
+                upColor: '#089981',
+                downColor: '#f23645',
+                borderUpColor: '#089981',
+                borderDownColor: '#f23645',
+                wickUpColor: '#089981',
+                wickDownColor: '#f23645'
+            });
+
+            // Smart Positioning System initialisieren
+            try {
+                window.smartPositioning = new SmartChartPositioning(chart, candlestickSeries);
+                console.log('INIT: Smart Positioning System initialisiert');
+
+                // Chart-Daten sofort laden
+                loadInitialData();
+
+                // SOFORTIGER TEST der Smart Positioning
+                window.testSmartPositioning = function() {
+                    console.log('DIRECT TEST: Smart Positioning wird getestet...');
+                    if (window.smartPositioning) {
+                        // Erstelle Test-Daten
+                        const testData = [];
+                        const baseTime = Math.floor(Date.now() / 1000);
+                        for (let i = 0; i < 50; i++) {
+                            testData.push({
+                                time: baseTime + (i * 300), // 5-Minuten Intervall
+                                open: 100 + i,
+                                high: 105 + i,
+                                low: 95 + i,
+                                close: 102 + i
+                            });
+                        }
+                        console.log('DIRECT TEST: Test-Daten erstellt, rufe setStandardPosition auf...');
+                        window.smartPositioning.setStandardPosition(testData);
+                        console.log('DIRECT TEST: setStandardPosition aufgerufen');
+                    } else {
+                        console.error('DIRECT TEST: Smart Positioning nicht verfügbar');
+                    }
+                };
+
+            } catch (error) {
+                console.error('INIT ERROR: Fehler bei Smart Positioning Initialisierung:', error);
+                window.smartPositioning = null;
+            }
+
+            console.log('🔧 CandlestickSeries und Smart Positioning erstellt:', candlestickSeries);
+
+            // 🛡️ EMERGENCY GLOBAL ERROR HANDLER: "Value is null" Protection
+            window.emergencyChartRecovery = {
+                enabled: true,
+                recoveryCount: 0,
+                maxRecoveries: 3,
+
+                handleValueIsNullError: function(error) {
+                    if (this.recoveryCount >= this.maxRecoveries) {
+                        console.error('[EMERGENCY-RECOVERY] Max recovery attempts reached, forcing page reload');
+                        location.reload();
+                        return;
+                    }
+
+                    this.recoveryCount++;
+                    console.warn(`[EMERGENCY-RECOVERY] Attempt ${this.recoveryCount}: Value is null detected, triggering chart recreation`);
+
+                    // Force chart recreation via backend
+                    fetch('/api/chart/emergency_chart_recreation', { method: 'POST' })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('[EMERGENCY-RECOVERY] Chart recreation requested:', data);
+                            // The backend will trigger chart recreation on next timeframe switch
+                        })
+                        .catch(err => {
+                            console.error('[EMERGENCY-RECOVERY] Failed to request chart recreation:', err);
+                            // Fallback: Page reload after brief delay
+                            setTimeout(() => location.reload(), 2000);
+                        });
+                }
+            };
+
+            // Global error handler für LightweightCharts "Value is null" errors
+            window.addEventListener('error', function(event) {
+                if (event.error && event.error.message &&
+                    event.error.message.includes('Value is null') &&
+                    window.emergencyChartRecovery && window.emergencyChartRecovery.enabled) {
+
+                    console.error('[EMERGENCY-RECOVERY] Global "Value is null" error detected:', event.error);
+                    event.preventDefault(); // Prevent default error handling
+
+                    window.emergencyChartRecovery.handleValueIsNullError(event.error);
+                }
+            });
+
+            console.log('🛡️ Emergency Chart Recovery System aktiviert');
+
+            // Position Lines Container
+            window.positionLines = {};
+            window.activeSeries = {};
+            window.positionBoxMode = false;
+            window.shortPositionMode = false;
+            window.currentPositionBox = null;
+
+            // Timeframe State mit Performance-Optimierung
+            window.currentTimeframe = '5m';
+            window.timeframeCache = new Map();  // Browser-side caching
+            window.isTimeframeChanging = false;  // Prevent double-requests
+
+            // Smart Chart Positioning System - 50 Kerzen + 20% Freiraum
+            window.smartPositioning = null;  // Wird nach Chart-Init initialisiert
+
+            // Intelligent Zoom System - Garantiert sichtbare Kerzen beim Auszoomen
+            window.intelligentZoom = null;  // Wird nach Daten-Load initialisiert
+
+            // ⭐⭐⭐ Position Box Observer: VEREINFACHT (kein Cache mehr!) ⭐⭐⭐
+            // Bei JEDEM Zoom/Pan Event → Boxes neu zeichnen
+            // Koordinaten werden in drawPositionBox() frisch berechnet
+            let redrawScheduled = false;
+
+            chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+                // ⭐ MULTI-BOX: Prüfe Manager statt Singleton
+                if (window.positionBoxManager && window.positionBoxManager.count() > 0 && !redrawScheduled) {
+                    redrawScheduled = true;
+                    requestAnimationFrame(() => {
+                        if (window.positionBoxManager && window.positionBoxManager.count() > 0) {
+                            // ⭐ EINFACH: Zeichne alle Boxes neu
+                            // X-Koordinaten: Kerzen-Index → stabil
+                            // Y-Koordinaten: frisch → reagiert auf vertikalen Pan
+                            window.positionBoxManager.drawAll();
+
+                            // console.log(`🔄 ${window.positionBoxManager.count()} Boxes neu gezeichnet (Zoom/Pan Event)`);
+                        }
+                        redrawScheduled = false;
+                    });
+                }
+            });
+
+            // ⭐ EVENT-BASED REDRAW: Boxes werden nur bei Chart-Events neu gezeichnet
+            // Observer Pattern (subscribeVisibleLogicalRangeChange) übernimmt Redraw bei Zoom/Pan
+            // Kein continuous redraw mehr → Massive Performance-Verbesserung + stabile Koordinaten
+
+            // Responsive Resize - VEREINFACHT (kein Cache mehr!)
+            window.addEventListener('resize', () => {
+                chart.applyOptions({
+                    width: chartContainer.clientWidth,
+                    height: chartContainer.clientHeight
+                });
+
+                // ⭐ Position Boxes mitskalieren bei Window Resize (MULTI-BOX Support)
+                if (window.positionBoxManager && window.positionBoxManager.count() > 0 && window.positionCanvas) {
+                    // Update Canvas Größe
+                    const canvas = window.positionCanvas;
+                    canvas.width = chartContainer.clientWidth;
+                    canvas.height = chartContainer.clientHeight;
+
+                    // ⭐ EINFACH: Zeichne alle Boxes neu (Koordinaten werden frisch berechnet)
+                    window.positionBoxManager.drawAll();
+                    console.log(`🔄 ${window.positionBoxManager.count()} Position Boxes neu gezeichnet nach Window Resize`);
+                }
+            });
+
+            // LADE ECHTE NQ-DATEN über WebSocket
+            console.log('🔄 Lade echte NQ-Daten...');
+
+            // Initialer Request für Chart-Daten
+            setTimeout(() => {
+                loadInitialData();
+            }, 1000);
+
+            // Chart Click Handler für Position Box Tool
+            chart.subscribeClick((param) => {
+                console.log('🖱️ Chart geklickt:', param);
+                console.log('📦 Position Box Mode:', window.positionBoxMode);
+                console.log('📦 Aktuelle Boxes:', window.positionBoxManager ? window.positionBoxManager.count() : 0);
+
+                // ⭐ MULTI-BOX SUPPORT: Mehrere Boxes erlaubt!
+                // (Alte Guard wurde entfernt)
+
+                // ⭐ GUARD: Position Tool muss explizit aktiviert sein
+                if ((window.positionBoxMode || window.shortPositionMode) && param.point) {
+                    const price = candlestickSeries.coordinateToPrice(param.point.y);
+
+                    // ⭐ FIX: Verwende Chart-Zeit, NICHT Date.now()
+                    // Wenn param.time fehlt, verwende Mitte des sichtbaren Bereichs
+                    let clickTime = param.time;
+                    if (!clickTime) {
+                        const logicalRange = chart.timeScale().getVisibleLogicalRange();
+                        if (logicalRange) {
+                            // Konvertiere logische Range zu Zeit
+                            const allData = candlestickSeries.data();
+                            const middleIndex = Math.floor((logicalRange.from + logicalRange.to) / 2);
+                            clickTime = allData[middleIndex]?.time || Math.floor(Date.now() / 1000);
+                        } else {
+                            // Fallback: Letzte Kerze
+                            const allData = candlestickSeries.data();
+                            clickTime = allData[allData.length - 1]?.time || Math.floor(Date.now() / 1000);
+                        }
+                    }
+
+                    // Für Y-Koordinate: Verwende Chart-API für exakte Position
+                    const clickY = param.point.y;  // Chart-relative Y-Koordinate
+
+                    // X-Koordinate wird zeit-basiert berechnet, nicht pixel-basiert
+                    const isShort = window.shortPositionMode;
+                    console.log('📦 Erstelle', isShort ? 'Short' : 'Long', 'Position Box bei Preis:', price, 'an Zeit:', clickTime, 'Y-Position:', clickY);
+                    createPositionBox(clickTime, price, null, clickY, isShort);  // clickX = null für zeit-basierte Positionierung
+
+                    // ⭐ ÄNDERUNG: Button DEAKTIVIEREN nach Box-Erstellung
+                    window.positionBoxMode = false;
+                    window.shortPositionMode = false;
+
+                    // UI aktualisieren
+                    const positionTool = document.getElementById('positionBoxTool');
+                    const shortTool = document.getElementById('shortPositionTool');
+
+                    if (positionTool) {
+                        positionTool.classList.remove('active');
+                        positionTool.style.background = '#333';
+                        positionTool.style.color = '#fff';
+                    }
+
+                    if (shortTool) {
+                        shortTool.classList.remove('active');
+                        shortTool.style.background = '#333';
+                        shortTool.style.color = '#fff';
+                    }
+
+                    console.log('✅ Position Box erstellt - Tool deaktiviert');
+                } else {
+                    console.log('❌ Position Box Mode nicht aktiv oder ungültiger Klick');
+                }
+            });
+
+            isInitialized = true;
+            console.log('✅ Chart initialisiert, lade NQ-Daten...');
+        }
+
+        // Lade initiale Chart-Daten vom Server
+        function loadInitialData() {
+            console.log('📊 Lade initiale NQ-Daten...');
+
+            // Prüfe ob Chart und Series verfügbar sind
+            if (!chart || !candlestickSeries) {
+                console.error('❌ Chart oder CandlestickSeries nicht initialisiert!');
+                console.log('Chart:', chart);
+                console.log('CandlestickSeries:', candlestickSeries);
+                return;
+            }
+
+            fetch('/api/chart/status')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('📊 Status:', data);
+                    // Lade Chart-Daten
+                    return fetch('/api/chart/data');
+                })
+                .then(response => response.json())
+                .then(chartData => {
+                    console.log('📊 Chart-Daten erhalten:', chartData.data?.length || 0, 'Kerzen');
+                    console.log('DRASTIC: SOFORT nach Chart-Daten Log - 20% Freiraum wird ERZWUNGEN!');
+                    if (chartData.data && chartData.data.length > 0) {
+                        // Daten sind bereits im korrekten LightweightCharts Format (Unix-Timestamps)
+                        const formattedData = chartData.data.filter(item =>
+                            item && item.time &&
+                            item.open != null && item.high != null &&
+                            item.low != null && item.close != null
+                        ).map(item => ({
+                            time: item.time,  // Bereits Unix-Timestamp, keine Konvertierung nötig
+                            open: parseFloat(item.open) || 0,
+                            high: parseFloat(item.high) || 0,
+                            low: parseFloat(item.low) || 0,
+                            close: parseFloat(item.close) || 0
+                        }));
+
+                        candlestickSeries.setData(formattedData);
+
+                        // DRASTISCHE SOFORT-LÖSUNG: 20% Freiraum GARANTIERT
+                        console.log('DRASTIC-EXEC: Setze 20% Freiraum SOFORT nach setData()');
+                        const firstTime = formattedData[0].time;
+                        const lastTime = formattedData[formattedData.length - 1].time;
+
+                        // Fix: Stelle sicher, dass wir Min/Max korrekt ermitteln
+                        const minTime = Math.min(firstTime, lastTime);
+                        const maxTime = Math.max(firstTime, lastTime);
+                        const span = maxTime - minTime;
+                        const margin = span * 0.25;
+
+                        chart.timeScale().setVisibleRange({
+                            from: minTime,
+                            to: maxTime + margin
+                        });
+                        console.log('DRASTIC-EXEC: Freiraum gesetzt von', minTime, 'bis', maxTime + margin);
+
+                        // FINALE DIREKTE LÖSUNG: 20% Freiraum OHNE Bedingungen
+                        console.log('FINAL: Setze GARANTIERT 20% Freiraum für', formattedData.length, 'Kerzen');
+
+                        if (formattedData.length >= 2) {
+                            const firstTime = formattedData[0].time;
+                            const lastTime = formattedData[formattedData.length - 1].time;
+
+                            // Fix: Stelle sicher, dass wir Min/Max korrekt ermitteln (Daten können in beliebiger Reihenfolge sein)
+                            const minTime = Math.min(firstTime, lastTime);
+                            const maxTime = Math.max(firstTime, lastTime);
+                            const dataSpan = maxTime - minTime;
+                            const margin = dataSpan * 0.25; // 25% = 20% der Gesamt-Chart
+
+                            console.log('FINAL: Zeitspanne:', dataSpan, 'Margin:', margin);
+                            console.log('FINAL: Von', minTime, 'bis', maxTime + margin);
+
+                            // Stelle sicher, dass from < to ist
+                            chart.timeScale().setVisibleRange({
+                                from: minTime,
+                                to: maxTime + margin
+                            });
+
+                            console.log('FINAL: Chart-Position GESETZT');
+                        } else {
+                            console.log('FINAL: Zu wenig Daten - verwende fitContent');
+                            chart.timeScale().fitContent();
+                        }
+
+                        // ZUSÄTZLICHER SCHUTZ: Nochmal nach 100ms setzen
+                        setTimeout(() => {
+                            if (formattedData.length >= 2) {
+                                const firstTime = formattedData[0].time;
+                                const lastTime = formattedData[formattedData.length - 1].time;
+
+                                // Fix: Stelle sicher, dass wir Min/Max korrekt ermitteln
+                                const minTime = Math.min(firstTime, lastTime);
+                                const maxTime = Math.max(firstTime, lastTime);
+                                const dataSpan = maxTime - minTime;
+                                const margin = dataSpan * 0.25;
+
+                                chart.timeScale().setVisibleRange({
+                                    from: minTime,
+                                    to: maxTime + margin
+                                });
+
+                                console.log('DELAYED: 20% Freiraum nochmal gesetzt nach 100ms');
+                            }
+                        }, 100);
+
+                        console.log('✅ NQ-Daten geladen:', formattedData.length, 'Kerzen, Smart Positioning angewandt');
+
+                        // ZOOM SYSTEM KOMPLETT DEAKTIVIERT für Timeframe-Fix
+                        console.log('🚫 Zoom System komplett deaktiviert');
+                        window.intelligentZoom = null;
+                    } else {
+                        console.warn('⚠️ Keine Chart-Daten empfangen');
+                    }
+                })
+                .catch(error => {
+                    console.error('❌ Fehler beim Laden der Chart-Daten:', error);
+                });
+        }
+
+        // WebSocket Connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+
+            // TEST: Direkter Smart Positioning Test nach 3 Sekunden
+            setTimeout(() => {
+                console.log('AUTO TEST: Smart Positioning nach 3 Sekunden...');
+                if (window.testSmartPositioning) {
+                    window.testSmartPositioning();
+                } else {
+                    console.error('AUTO TEST: testSmartPositioning Funktion nicht verfügbar');
+                }
+            }, 3000);
+
+            // TEST: API-basierter Test nach 6 Sekunden
+            setTimeout(() => {
+                console.log('API TEST: Smart Positioning mit echten Daten...');
+                if (window.smartPositioning && candlestickSeries) {
+                    try {
+                        // Hole aktuelle Daten von der Chart API
+                        fetch('/api/chart/data')
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.data && data.data.length > 0) {
+                                    console.log('API TEST: Gefunden', data.data.length, 'Kerzen, wende Smart Positioning an');
+                                    window.smartPositioning.setStandardPosition(data.data);
+                                } else {
+                                    console.error('API TEST: Keine Daten erhalten');
+                                }
+                            })
+                            .catch(error => console.error('API TEST Fehler:', error));
+                    } catch (error) {
+                        console.error('API TEST Smart Positioning Fehler:', error);
+                    }
+                } else {
+                    console.warn('API TEST: Smart Positioning oder CandlestickSeries nicht verfügbar');
+                    console.log('API TEST window.smartPositioning:', window.smartPositioning);
+                    console.log('API TEST candlestickSeries:', candlestickSeries);
+                }
+            }, 6000);
+
+            ws.onopen = function(event) {
+                console.log('🔗 WebSocket verbunden');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'status connected';
+            };
+
+            ws.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                handleMessage(message);
+            };
+
+            ws.onclose = function(event) {
+                console.log('❌ WebSocket getrennt');
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'status disconnected';
+
+                // Reconnect nach 2 Sekunden
+                setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = function(error) {
+                console.error('❌ WebSocket Error:', error);
+            };
+        }
+
+        // Account Update Functions
+        async function loadAccountData() {
+            // Lädt Account-Daten für beide Accounts und aktualisiert die UI
+            try {
+                const response = await fetch('/api/account/status');
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    updateAccountDisplay('ai', data.ai_account);
+                    updateAccountDisplay('user', data.user_account);
+                }
+            } catch (error) {
+                console.error('❌ Fehler beim Laden der Account-Daten:', error);
+            }
+        }
+
+        function updateAccountDisplay(accountType, accountData) {
+            // Aktualisiert die Account-Anzeige in der UI
+            const prefix = accountType === 'ai' ? 'ai' : 'user';
+
+            // Update Balance
+            const balanceEl = document.getElementById(`${prefix}-balance`);
+            if (balanceEl) {
+                balanceEl.textContent = accountData.balance;
+                balanceEl.className = 'account-value-amount neutral';
+            }
+
+            // Update Realized PnL
+            const realizedEl = document.getElementById(`${prefix}-realized`);
+            if (realizedEl) {
+                realizedEl.textContent = accountData.realized_pnl;
+                realizedEl.className = `account-value-amount ${getPnLClass(accountData.realized_pnl)}`;
+            }
+
+            // Update Unrealized PnL
+            const unrealizedEl = document.getElementById(`${prefix}-unrealized`);
+            if (unrealizedEl) {
+                unrealizedEl.textContent = accountData.unrealized_pnl;
+                unrealizedEl.className = `account-value-amount ${getPnLClass(accountData.unrealized_pnl)}`;
+            }
+        }
+
+        function getPnLClass(pnlString) {
+            // Bestimmt CSS-Klasse basierend auf PnL-Wert
+            if (pnlString.includes('+')) return 'positive';
+            if (pnlString.includes('-')) return 'negative';
+            return 'neutral';
+        }
+
+        // Account Data alle 5 Sekunden laden
+        setInterval(loadAccountData, 5000);
+
+        // Enhanced Multi-Timeframe Functions
+        function handleIncompleteCandle(candle, incompleteInfo) {
+            console.log(`🔄 INCOMPLETE CANDLE: ${incompleteInfo.timeframe}`);
+            console.log(`   ⏱️  Progress: ${incompleteInfo.elapsed_minutes.toFixed(1)}/${incompleteInfo.total_minutes} min`);
+            console.log(`   📊 Completion: ${Math.round(incompleteInfo.completion_ratio * 100)}%`);
+
+            // Visual marking could be implemented here
+            // For now, we log the incomplete status
+            // Future: Add border styling or opacity to incomplete candles
+
+            if (incompleteInfo.completion_ratio < 0.5) {
+                console.log('   🟡 Early stage incomplete candle (< 50%)');
+            } else if (incompleteInfo.completion_ratio < 0.9) {
+                console.log('   🟠 Late stage incomplete candle (50-90%)');
+            } else {
+                console.log('   🔴 Nearly complete candle (90%+)');
+            }
+        }
+
+        function updateTimeframeSyncDisplay(syncStatus) {
+            console.log('🌐 MULTI-TIMEFRAME SYNC STATUS:');
+
+            for (const [timeframe, status] of Object.entries(syncStatus)) {
+                if (status.position) {
+                    const positionTime = new Date(status.position).toLocaleTimeString();
+                    console.log(`   ${timeframe}: ${positionTime}`);
+
+                    if (status.incomplete_info && !status.incomplete_info.is_complete) {
+                        const completion = Math.round(status.incomplete_info.completion_ratio * 100);
+                        console.log(`        └── Incomplete: ${completion}%`);
+                    }
+                }
+            }
+
+            // Future: Update UI elements to show sync status visually
+            // Could add timeframe indicators in sidebar or status bar
+        }
+
+        // ENHANCED DATA VALIDATION: Bulletproof protection against "Value is null" errors
+        function validateCandle(candle, isSkipGenerated = false, debug = false) {
+            // NULL/UNDEFINED checks first
+            if (!candle) {
+                if (debug) console.log('🔍 FILTER: Candle is null/undefined');
+                return false;
+            }
+            if (candle.time === null || candle.time === undefined) {
+                if (debug) console.log('🔍 FILTER: time is null/undefined:', candle);
+                return false;
+            }
+            if (candle.open === null || candle.open === undefined) {
+                if (debug) console.log('🔍 FILTER: open is null/undefined:', candle);
+                return false;
+            }
+            if (candle.high === null || candle.high === undefined) {
+                if (debug) console.log('🔍 FILTER: high is null/undefined:', candle);
+                return false;
+            }
+            if (candle.low === null || candle.low === undefined) {
+                if (debug) console.log('🔍 FILTER: low is null/undefined:', candle);
+                return false;
+            }
+            if (candle.close === null || candle.close === undefined) {
+                if (debug) console.log('🔍 FILTER: close is null/undefined:', candle);
+                return false;
+            }
+
+            // Type and value validation
+            if (typeof candle.time !== 'number' || candle.time <= 0) {
+                if (debug) console.log('🔍 FILTER: Invalid time:', candle.time, typeof candle.time);
+                return false;
+            }
+
+            const open = parseFloat(candle.open);
+            const high = parseFloat(candle.high);
+            const low = parseFloat(candle.low);
+            const close = parseFloat(candle.close);
+
+            // Enhanced NaN detection
+            if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
+                if (debug) console.log('🔍 FILTER: NaN/Infinite values:', {open, high, low, close});
+                return false;
+            }
+
+            // Relaxed price range validation (prevent only extreme outliers)
+            const minPrice = 100;     // Relaxed minimum for broader CSV compatibility
+            const maxPrice = 100000;  // Relaxed maximum for broader CSV compatibility
+            if (open < minPrice || open > maxPrice) {
+                if (debug) console.log('🔍 FILTER: open price out of range:', open);
+                return false;
+            }
+            if (high < minPrice || high > maxPrice) {
+                if (debug) console.log('🔍 FILTER: high price out of range:', high);
+                return false;
+            }
+            if (low < minPrice || low > maxPrice) {
+                if (debug) console.log('🔍 FILTER: low price out of range:', low);
+                return false;
+            }
+            if (close < minPrice || close > maxPrice) {
+                if (debug) console.log('🔍 FILTER: close price out of range:', close);
+                return false;
+            }
+
+            // OHLC logic validation with tolerance for skip-generated candles
+            if (isSkipGenerated) {
+                const tolerance = 0.1; // Increased tolerance for skip candles
+                if (high < (Math.max(open, close, low) - tolerance)) {
+                    if (debug) console.log('🔍 FILTER: OHLC logic error (skip candle) - high too low:', {open, high, low, close});
+                    return false;
+                }
+                if (low > (Math.min(open, close, high) + tolerance)) {
+                    if (debug) console.log('🔍 FILTER: OHLC logic error (skip candle) - low too high:', {open, high, low, close});
+                    return false;
+                }
+            } else {
+                if (high < Math.max(open, close, low)) {
+                    if (debug) console.log('🔍 FILTER: OHLC logic error - high too low:', {open, high, low, close});
+                    return false;
+                }
+                if (low > Math.min(open, close, high)) {
+                    if (debug) console.log('🔍 FILTER: OHLC logic error - low too high:', {open, high, low, close});
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        function validateCandleData(data, isSkipGenerated = false) {
+            if (!data || data.length === 0) return [];
+
+            const originalLength = data.length;
+            const validatedData = data.filter(candle => validateCandle(candle, isSkipGenerated)).map(item => ({
+                time: item.time,
+                open: parseFloat(item.open),
+                high: parseFloat(item.high),
+                low: parseFloat(item.low),
+                close: parseFloat(item.close)
+            }));
+
+            // Log filter results
+            const filteredCount = originalLength - validatedData.length;
+            if (filteredCount > 0) {
+                console.log(`🔍 VALIDATION: ${filteredCount}/${originalLength} candles filtered out`);
+
+                // Debug first few filtered candles if many were removed
+                if (filteredCount > originalLength * 0.5) {
+                    console.warn('🚨 High filter rate detected, debugging first 3 filtered candles:');
+                    let debugCount = 0;
+                    for (const candle of data) {
+                        if (!validateCandle(candle, isSkipGenerated, true) && debugCount < 3) {
+                            debugCount++;
+                        }
+                    }
+                }
+            }
+
+            // FALLBACK: If validation filters out ALL candles, use raw data with basic cleaning
+            if (validatedData.length === 0 && data.length > 0) {
+                console.warn('🚨 FALLBACK: All candles filtered out, using raw data with basic cleaning');
+                return data.filter(item =>
+                    item &&
+                    typeof item.time === 'number' &&
+                    item.time > 0 &&
+                    item.open !== null &&
+                    item.high !== null &&
+                    item.low !== null &&
+                    item.close !== null
+                ).map(item => ({
+                    time: item.time,
+                    open: parseFloat(item.open) || 18500,
+                    high: parseFloat(item.high) || 18505,
+                    low: parseFloat(item.low) || 18495,
+                    close: parseFloat(item.close) || 18500
+                }));
+            }
+
+            return validatedData;
+        }
+
+        // Message Handler
+        function handleMessage(message) {
+            console.log('📨 Message received:', message.type);
+
+            switch(message.type) {
+                case 'initial_data':
+                    if (!isInitialized) initChart();
+
+                    const data = message.data.data;
+                    if (data && data.length > 0) {
+                        const validatedData = validateCandleData(data);
+                        candlestickSeries.setData(validatedData);
+
+                        if (validatedData.length !== data.length) {
+                            console.warn(`⚠️ ${data.length - validatedData.length} invalid candles removed from initial data`);
+                        }
+
+                        // NEUE LOGIK: Zeige nur letzten 50 Kerzen mit 80/20 Aufteilung
+                        console.log(`📊 Initial: ${data.length} Kerzen geladen, zeige letzten 50 mit 80/20 Aufteilung`);
+                        document.title = `Chart: ${data.length} Kerzen verfügbar, 50 sichtbar (${message.data.interval})`;
+
+                        // Berechne die letzten 50 Kerzen
+                        const totalCandles = data.length;
+                        const visibleCandles = Math.min(50, totalCandles);
+                        const startIndex = Math.max(0, totalCandles - visibleCandles);
+
+                        const firstVisibleTime = data[startIndex].time;
+                        const lastVisibleTime = data[totalCandles - 1].time;
+                        const visibleSpan = lastVisibleTime - firstVisibleTime;
+
+                        // 20% Freiraum rechts hinzufügen: 50 Kerzen sind 80%, also 20% zusätzlich
+                        const margin = visibleSpan / 4; // visibleSpan / 4 = 20% von den 80%
+
+                        chart.timeScale().setVisibleRange({
+                            from: firstVisibleTime,
+                            to: lastVisibleTime + margin
+                        });
+
+                        console.log(`✅ Standard-Zoom: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
+                    }
+                    break;
+
+                case 'set_data':
+                    if (!isInitialized) initChart();
+
+                    const validatedSetData = validateCandleData(message.data);
+                    candlestickSeries.setData(validatedSetData);
+
+                    if (validatedSetData.length !== message.data.length) {
+                        console.warn(`⚠️ ${message.data.length - validatedSetData.length} invalid candles removed from set_data`);
+                    }
+
+                    // Smart Positioning: 50 Kerzen Standard mit 20% Freiraum
+                    if (window.smartPositioning) {
+                        window.smartPositioning.setStandardPosition(message.data);
+                    }
+
+                    console.log('📊 Data updated:', message.data.length, 'candles mit Smart Positioning');
+                    break;
+
+                case 'add_candle':
+                    if (isInitialized && message.candle) {
+                        candlestickSeries.update(message.candle);
+                        console.log('➡️ Candle added:', message.candle);
+                    }
+                    break;
+
+                case 'debug_skip':
+                    // Legacy Debug Skip: Direkte Chart-Update ohne Smart Positioning System
+                    if (isInitialized && message.candle) {
+                        candlestickSeries.update(message.candle);
+                        console.log('⏭️ Debug Skip: Neue Kerze hinzugefügt:', message.candle);
+                        console.log('📊 Candle Type:', message.candle_type || message.result_type);
+                        console.log('🕒 Debug Time:', message.debug_time);
+                        console.log('📈 Timeframe:', message.timeframe);
+
+                        // Visual feedback für incomplete candles (if needed)
+                        if (message.candle_type === 'incomplete_candle') {
+                            console.log('⚠️ Incomplete Candle - noch nicht vollständig');
+                        }
+                    } else {
+                        console.log('❌ Debug Skip fehlgeschlagen: Chart nicht initialisiert oder fehlende Kerze');
+                    }
+                    break;
+
+                case 'debug_skip_sync':
+                    // ENHANCED: Multi-Timeframe Debug Skip mit Sync & Incomplete Candle Support
+                    if (isInitialized && message.candle) {
+                        // Update Chart mit primary candle
+                        candlestickSeries.update(message.candle);
+
+                        console.log('🔄 Multi-TF Skip:', message.timeframe, '- Candle:', message.candle.time);
+                        console.log('📊 Type:', message.candle_type);
+                        console.log('⏰ Debug Time:', message.debug_time);
+
+                        // Enhanced Incomplete Candle Visual Marking
+                        if (message.candle_type === 'incomplete_candle' && message.incomplete_info) {
+                            handleIncompleteCandle(message.candle, message.incomplete_info);
+                        }
+
+                        // Multi-Timeframe Sync Status Logging
+                        if (message.sync_status) {
+                            console.log('🌐 Sync Status:', message.sync_status);
+                            updateTimeframeSyncDisplay(message.sync_status);
+                        }
+
+                        // Update document title with sync info
+                        const completionInfo = message.incomplete_info ?
+                            ` (${Math.round(message.incomplete_info.completion_ratio * 100)}% complete)` : '';
+                        document.title = `${message.timeframe} Skip${completionInfo} - Multi-TF Sync`;
+
+                    } else {
+                        console.log('❌ Multi-TF Skip fehlgeschlagen:', !isInitialized ? 'Chart nicht initialisiert' : 'Fehlende Kerze');
+                    }
+                    break;
+
+                case 'debug_play_toggled':
+                    // Debug Play/Pause Toggle Response
+                    console.log('▶️ Debug Play Toggle:', message.play_mode ? 'AKTIVIERT' : 'DEAKTIVIERT');
+
+                    // Update Play/Pause Button Visual
+                    const playPauseBtn = document.getElementById('playPauseBtn');
+                    if (playPauseBtn) {
+                        playPauseBtn.textContent = message.play_mode ? '⏸️' : '▶️';
+                        console.log('🔄 Play Button Updated:', message.play_mode ? '⏸️' : '▶️');
+                    }
+                    break;
+
+                case 'add_position':
+                    if (isInitialized && message.position) {
+                        addPositionOverlay(message.position);
+                        console.log('🎯 Position added:', message.position);
+                    }
+                    break;
+
+                case 'remove_position':
+                    if (isInitialized && message.position_id) {
+                        removePositionOverlay(message.position_id);
+                        console.log('❌ Position removed:', message.position_id);
+                    }
+                    break;
+
+                case 'chart_reinitialize':
+                    if (isInitialized && message.data) {
+                        console.log('📅 Chart Reinitialization: Go To Date triggered');
+                        console.log('📊 New data received:', message.data.length, 'candles');
+                        console.log('🎯 Target Date:', message.target_date);
+                        console.log('📍 Current Index:', message.current_index);
+
+                        // Lösche alle bestehenden Position-Overlays
+                        clearAllPositions();
+
+                        // Setze neue validierte Chart-Daten
+                        const validatedGoToData = validateCandleData(message.data);
+                        candlestickSeries.setData(validatedGoToData);
+
+                        if (validatedGoToData.length !== message.data.length) {
+                            console.warn(`⚠️ ${message.data.length - validatedGoToData.length} invalid candles removed from go_to_date`);
+                        }
+
+                        // Positioniere Chart zu gewähltem Datum (zeige 50 Kerzen ab Startdatum)
+                        if (message.data.length > 0) {
+                            const startIndex = Math.max(0, message.current_index - 5); // 5 Kerzen Kontext vor Startdatum
+                            const endIndex = Math.min(message.data.length - 1, message.current_index + 45); // 45 Kerzen nach Startdatum
+
+                            const firstTime = message.data[startIndex].time;
+                            const lastTime = message.data[endIndex].time;
+                            const timeSpan = lastTime - firstTime;
+                            const margin = timeSpan * 0.25; // 20% Freiraum rechts
+
+                            chart.timeScale().setVisibleRange({
+                                from: firstTime,
+                                to: lastTime + margin
+                            });
+
+                            console.log('✅ Chart reinitialized and positioned to:', message.target_date);
+                            console.log('📊 Showing candles:', startIndex, 'to', endIndex, 'with 20% margin');
+                        }
+
+                        // Update Titel mit neuen Informationen
+                        document.title = `Chart: ${message.target_date} (${message.data.length} Kerzen verfügbar)`;
+                    } else {
+                        console.error('❌ Chart Reinitialization failed: Chart not initialized or no data');
+                    }
+                    break;
+
+                case 'go_to_date_complete':
+                    if (isInitialized && message.data) {
+                        console.log('[GO TO DATE] Memory-Performance Complete: Loading', message.data.length, 'candles');
+                        console.log('[GO TO DATE] Target Date:', message.target_date);
+                        console.log('[GO TO DATE] Performance Mode:', message.performance);
+
+                        // Verwende visible_range Info vom Server falls verfügbar
+                        if (message.visible_range) {
+                            console.log('[GO TO DATE] Server Visible Range:', message.visible_range);
+                        }
+
+                        // Lösche alle bestehenden Position-Overlays
+                        clearAllPositions();
+
+                        // 🚀 CRITICAL FIX: Browser-Cache Invalidation nach GoTo-Operationen
+                        // Verhindert veraltete Skip-Kerzen bei TF-Wechseln
+                        const cacheCountBefore = window.timeframeCache.size;
+                        window.timeframeCache.clear();
+                        window.lastGoToDate = message.target_date; // Server-State für Cache-Validation
+                        console.log(`[CACHE-INVALIDATION] Browser-Cache cleared: ${cacheCountBefore} entries removed`);
+                        console.log(`[CACHE-INVALIDATION] Grund: GoTo-Operation zu ${message.target_date}`);
+
+                        // Setze neue validierte historische Chart-Daten
+                        const validatedHistoricalData = validateCandleData(message.data);
+                        candlestickSeries.setData(validatedHistoricalData);
+
+                        if (validatedHistoricalData.length !== message.data.length) {
+                            console.warn(`⚠️ ${message.data.length - validatedHistoricalData.length} invalid candles removed from historical data`);
+                        }
+
+                        // HIGH-PERFORMANCE POSITIONING: Verwende Server-calculated Range
+                        if (message.data.length > 0) {
+                            let startIndex, endIndex;
+                            const totalCandles = message.data.length;
+                            const visibleCandles = 50; // FIXED: Variable außerhalb der Blöcke definieren
+
+                            if (message.visible_range) {
+                                // Verwende vom Memory Cache berechnete Range
+                                startIndex = message.visible_range.start;
+                                endIndex = message.visible_range.end;
+                                console.log('[POSITIONING] Server-calculated range:', startIndex, '-', endIndex);
+                            } else {
+                                // Fallback: Standardberechnung (letzten 50 von 200)
+                                startIndex = Math.max(0, totalCandles - visibleCandles);
+                                endIndex = totalCandles - 1;
+                                console.log('[POSITIONING] Fallback range:', startIndex, '-', endIndex);
+                            }
+
+                            // Zeitbereich für die sichtbaren Kerzen
+                            const startTime = message.data[startIndex].time;
+                            const endTime = message.data[endIndex].time;
+                            const timeSpan = endTime - startTime;
+                            const margin = timeSpan * 0.05; // 5% Margin für gefüllten Chart
+
+                            chart.timeScale().setVisibleRange({
+                                from: startTime - margin,
+                                to: endTime + margin
+                            });
+
+                            console.log(`[GO TO DATE] Positioning: ${visibleCandles} von ${totalCandles} Kerzen angezeigt (Chart gefüllt)`);
+                            console.log(`[GO TO DATE] Sichtbare Kerzen: Index ${startIndex}-${endIndex}`);
+                            console.log(`[GO TO DATE] Zeitbereich: ${new Date(startTime * 1000).toISOString()} bis ${new Date(endTime * 1000).toISOString()}`);
+                        }
+
+                        // Update Titel mit neuen Informationen
+                        document.title = `Go To Date: ${message.target_date} (${message.data.length} historische Kerzen)`;
+
+                        // ADAPTIVE TIMEOUT FIX: Setze Go To Date Status für längere Timeouts
+                        window.current_go_to_date = message.target_date;
+
+                        // Server-Log für Debug
+                        console.log('[GO TO DATE] Complete: Chart repositioniert, bereit für Skip-Button Navigation');
+
+                    } else {
+                        console.error('[GO TO DATE] Complete failed: Chart not initialized or no data');
+                    }
+                    break;
+
+                case 'positions_sync':
+                    if (isInitialized && message.positions) {
+                        syncPositions(message.positions);
+                        console.log('🔄 Positions synced:', message.positions.length);
+                    }
+                    break;
+
+                case 'timeframe_changed':
+                    console.log('DEBUG: timeframe_changed message received:', message);
+
+                    if (isInitialized && message.data) {
+                        // ENHANCED DATA VALIDATION: Zentrale Validierung gegen LightweightCharts Errors
+                        const validatedData = validateCandleData(message.data);
+
+                        if (validatedData.length < message.data.length) {
+                            const removedCount = message.data.length - validatedData.length;
+                            console.warn(`⚠️ ${removedCount} invalid candles removed from timeframe data`);
+                        }
+
+                        candlestickSeries.setData(validatedData);
+
+                        // NEUE LOGIK: Zeige nur letzten 50 Kerzen mit 80/20 Aufteilung bei TF-Wechsel
+                        console.log(`[TIMEFRAME] ${message.timeframe}: ${validatedData.length} Kerzen geladen, zeige letzten 50 mit 80/20 Aufteilung`);
+                        document.title = `Chart: ${validatedData.length} Kerzen verfügbar, 50 sichtbar (${message.timeframe})`;
+
+                        // Berechne die letzten 50 Kerzen
+                        const totalCandles = validatedData.length;
+                        const visibleCandles = Math.min(50, totalCandles);
+                        const startIndex = Math.max(0, totalCandles - visibleCandles);
+
+                        const firstVisibleTime = validatedData[startIndex].time;
+                        const lastVisibleTime = validatedData[totalCandles - 1].time;
+                        const visibleSpan = lastVisibleTime - firstVisibleTime;
+
+                        // 20% Freiraum rechts hinzufügen: 50 Kerzen sind 80%, also 20% zusätzlich
+                        const margin = visibleSpan / 4; // visibleSpan / 4 = 20% von den 80%
+
+                        chart.timeScale().setVisibleRange({
+                            from: firstVisibleTime,
+                            to: lastVisibleTime + margin
+                        });
+
+                        // Update current timeframe
+                        window.currentTimeframe = message.timeframe;
+
+                        // RACE CONDITION FIX: Synchronisiere Button-State mit tatsächlichem Timeframe
+                        updateTimeframeButtons(message.timeframe);
+
+                        console.log(`[SUCCESS] TF-Wechsel: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
+                    }
+                    break;
+
+                case 'revolutionary_skip_event':
+                    // Revolutionary Skip Event: Handle incomplete candles und timeframe updates
+                    if (isInitialized && message.candle && validateCandle(message.candle)) {
+                        // Validated candle update
+                        const validatedCandle = {
+                            time: message.candle.time,
+                            open: parseFloat(message.candle.open),
+                            high: parseFloat(message.candle.high),
+                            low: parseFloat(message.candle.low),
+                            close: parseFloat(message.candle.close)
+                        };
+                        candlestickSeries.update(validatedCandle);
+
+                        console.log('🚀 Revolutionary Skip:', message.timeframe, '- Candle:', message.candle.time);
+                        console.log('📊 Candle Type:', message.candle_type);
+                        console.log('⏰ Debug Time:', message.debug_time);
+
+                        // Visual feedback für incomplete candles
+                        if (message.candle_type === 'incomplete_candle') {
+                            console.log('⚠️ Incomplete 15min Candle - wird bei nächstem Skip vervollständigt');
+                        }
+
+                        // Update document title
+                        const completionInfo = message.candle_type === 'incomplete_candle' ? ' (incomplete)' : '';
+                        document.title = `${message.timeframe} Revolutionary Skip${completionInfo}`;
+
+                        // Set skip event completion flag for timeframe switch detection
+                        window.skipEventJustCompleted = true;
+                    } else if (isInitialized && message.candle && !validateCandle(message.candle)) {
+                        console.error('❌ Invalid candle data in revolutionary_skip_event:', message.candle);
+                    }
+                    break;
+
+                case 'unified_skip_event':
+                    // Unified Skip Event: Handle new unified time architecture skip events
+                    if (isInitialized && message.candle && validateCandle(message.candle)) {
+                        // Validated candle update for unified architecture
+                        const validatedCandle = {
+                            time: message.candle.time,
+                            open: parseFloat(message.candle.open),
+                            high: parseFloat(message.candle.high),
+                            low: parseFloat(message.candle.low),
+                            close: parseFloat(message.candle.close)
+                        };
+                        candlestickSeries.update(validatedCandle);
+
+                        console.log('[UNIFIED] Skip Event:', message.timeframe, '- Candle:', message.candle.time);
+                        console.log('[UNIFIED] Candle Type:', message.candle_type);
+                        console.log('[UNIFIED] Debug Time:', message.debug_time);
+
+                        // Update document title with unified architecture info
+                        document.title = `${message.timeframe} Unified Skip (${message.system})`;
+
+                        // Set skip event completion flag for timeframe switch detection
+                        window.skipEventJustCompleted = true;
+                    } else if (isInitialized && message.candle && !validateCandle(message.candle)) {
+                        console.error('[UNIFIED] Invalid candle data in unified_skip_event:', message.candle);
+                    }
+                    break;
+
+                case 'unified_timeframe_changed':
+                    // SUPER-DEFENSIVE Unified Timeframe Change Handler
+                    console.log('[UNIFIED-TF] Timeframe Change Event:', message.timeframe, '- Data:', message.data?.length || 0, 'candles');
+
+                    if (isInitialized && message.data && Array.isArray(message.data) && message.data.length > 0) {
+                        // ULTRA-STRICT validation with debug logging
+                        const validatedData = message.data.filter((candle, index) => {
+                            const isValid = validateCandle(candle, false, true); // Enable debug logging
+                            if (!isValid) {
+                                console.warn(`[UNIFIED-TF] REJECTED candle ${index}:`, candle);
+                                return false;
+                            }
+                            return true;
+                        });
+
+                        console.log(`[UNIFIED-TF] Validation: ${message.data.length} original -> ${validatedData.length} valid candles`);
+
+                        if (validatedData.length > 0) {
+                            try {
+                                // SUPER-DEFENSIVE data cleaning: Force correct format
+                                const cleanData = validatedData.map((candle, index) => {
+                                    try {
+                                        const clean = {
+                                            time: Number(candle.time),
+                                            open: Number(candle.open),
+                                            high: Number(candle.high),
+                                            low: Number(candle.low),
+                                            close: Number(candle.close)
+                                        };
+
+                                        // FINAL validation before return
+                                        if (!Number.isFinite(clean.time) || clean.time <= 0 ||
+                                            !Number.isFinite(clean.open) || !Number.isFinite(clean.high) ||
+                                            !Number.isFinite(clean.low) || !Number.isFinite(clean.close)) {
+                                            console.error(`[UNIFIED-TF] EMERGENCY REJECT candle ${index}:`, clean);
+                                            return null;
+                                        }
+
+                                        return clean;
+                                    } catch (cleanError) {
+                                        console.error(`[UNIFIED-TF] Error cleaning candle ${index}:`, cleanError, candle);
+                                        return null;
+                                    }
+                                }).filter(candle => candle !== null);
+
+                                console.log(`[UNIFIED-TF] Final clean data: ${cleanData.length} candles`);
+
+                                if (cleanData.length > 0) {
+                                    // MULTIPLE TRY-CATCH layers for maximum safety
+                                    try {
+                                        // Clear existing data first
+                                        candlestickSeries.setData([]);
+                                        console.log('[UNIFIED-TF] Data cleared successfully');
+
+                                        // Add small delay to prevent race conditions
+                                        setTimeout(() => {
+                                            try {
+                                                // Set cleaned data
+                                                candlestickSeries.setData(cleanData);
+                                                console.log('[UNIFIED-TF] SUCCESS: Chart data set with', cleanData.length, 'candles for', message.timeframe);
+                                                document.title = `${message.timeframe} Chart (${cleanData.length} candles)`;
+                                            } catch (setDataError) {
+                                                console.error('[UNIFIED-TF] FATAL: setData failed:', setDataError);
+                                                console.error('[UNIFIED-TF] Sample clean data:', cleanData.slice(0, 3));
+
+                                                // EMERGENCY fallback: reload page
+                                                console.error('[UNIFIED-TF] EMERGENCY: Reloading page due to chart corruption');
+                                                location.reload();
+                                            }
+                                        }, 50);
+
+                                    } catch (clearError) {
+                                        console.error('[UNIFIED-TF] Error clearing data:', clearError);
+                                    }
+                                } else {
+                                    console.error('[UNIFIED-TF] No clean candles after final filtering');
+                                }
+
+                            } catch (outerError) {
+                                console.error('[UNIFIED-TF] Outer processing error:', outerError);
+                            }
+                        } else {
+                            console.error('[UNIFIED-TF] No valid candles after initial filtering for', message.timeframe);
+                        }
+                    } else {
+                        console.error('[UNIFIED-TF] Invalid or empty data in unified_timeframe_changed:', message.data?.length || 'no data');
+                    }
+                    break;
+
+                case 'debug_control_timeframe_changed':
+                    // Debug Control Timeframe Change: Server bestätigt Debug Control Variable Update
+                    console.log('🔧 Debug Control TF Change:', message.debug_control_timeframe);
+                    console.log('📊 Old Timeframe:', message.old_timeframe);
+
+                    // Detect timeframe switch mode: After skip event + different timeframe = needs special handling
+                    if (window.skipEventJustCompleted && message.debug_control_timeframe !== message.old_timeframe) {
+                        console.log('🚨 TIMEFRAME SWITCH MODE DETECTED: Skip->Different TF');
+                        window.timeframeSwitchMode = true;
+                        window.previousSkipTimeframe = message.old_timeframe;
+
+                        // Clear skip flag to prevent interference
+                        window.skipEventJustCompleted = false;
+                    }
+
+                    // Visual feedback (optional - könnte Button-State updates enthalten)
+                    if (message.debug_control_timeframe) {
+                        console.log(`✅ Debug Control jetzt auf ${message.debug_control_timeframe} gesetzt`);
+                    }
+                    break;
+
+                case 'chart_series_recreation':
+                    // 🚀 CHART SERIES RECREATION: Complete chart destruction and recreation
+                    console.log('[CHART-RECREATION] Chart series recreation command received:', message.command);
+                    console.log('[CHART-RECREATION] Reason:', message.reason);
+
+                    try {
+                        // PHASE 1: Complete chart destruction
+                        console.log('[CHART-RECREATION] Phase 1: Destroying existing chart series...');
+
+                        // Remove all series from chart
+                        chart.removeSeries(candlestickSeries);
+                        console.log('[CHART-RECREATION] Candlestick series removed');
+
+                        // Small delay to ensure destruction is complete
+                        setTimeout(() => {
+                            try {
+                                // PHASE 2: Create new candlestick series with fresh state
+                                console.log('[CHART-RECREATION] Phase 2: Creating new candlestick series...');
+                                candlestickSeries = chart.addCandlestickSeries({
+                                    upColor: '#089981',
+                                    downColor: '#f23645',
+                                    borderVisible: false,
+                                    wickUpColor: '#089981',
+                                    wickDownColor: '#f23645'
+                                });
+
+                                console.log('[CHART-RECREATION] ✅ Chart series recreation completed successfully');
+                                console.log('[CHART-RECREATION] Version:', message.command?.version);
+
+                                // Update title to indicate recreation
+                                document.title = `Chart Recreated (v${message.command?.version || 'unknown'})`;
+
+                            } catch (recreationError) {
+                                console.error('[CHART-RECREATION] FATAL: Recreation failed:', recreationError);
+                                console.error('[CHART-RECREATION] EMERGENCY: Reloading page...');
+                                location.reload();
+                            }
+                        }, 100); // Longer delay for complete destruction
+
+                    } catch (destructionError) {
+                        console.error('[CHART-RECREATION] Error during destruction:', destructionError);
+                        console.error('[CHART-RECREATION] EMERGENCY: Reloading page...');
+                        location.reload();
+                    }
+                    break;
+
+                case 'bulletproof_timeframe_changed':
+                    // 🚀 BULLETPROOF TIMEFRAME CHANGE: Enhanced timeframe switching with lifecycle management
+                    console.log('[BULLETPROOF-TF] Bulletproof timeframe change received:', message.timeframe);
+                    console.log('[BULLETPROOF-TF] Transaction ID:', message.transaction_id);
+                    console.log('[BULLETPROOF-TF] Chart recreation required:', message.chart_recreation);
+
+                    if (message.chart_recreation && message.recreation_command) {
+                        // Chart recreation was already handled, now just set the data
+                        console.log('[BULLETPROOF-TF] Chart recreation completed, setting data...');
+                    }
+
+                    // 🛡️ EMERGENCY SAFETY CHECK: Verify candlestickSeries exists after chart recreation
+                    if (!candlestickSeries || typeof candlestickSeries.setData !== 'function') {
+                        console.error('[BULLETPROOF-TF] CRITICAL: candlestickSeries is invalid after chart recreation');
+                        console.error('[BULLETPROOF-TF] EMERGENCY: Triggering page reload...');
+                        location.reload();
+                        return;
+                    }
+
+                    if (isInitialized && message.data && Array.isArray(message.data) && message.data.length > 0) {
+                        try {
+                            // Use the same ultra-defensive validation as unified_timeframe_changed
+                            const validatedData = message.data.filter((candle, index) => {
+                                const isValid = validateCandle(candle, false, true);
+                                if (!isValid) {
+                                    console.warn(`[BULLETPROOF-TF] REJECTED candle ${index}:`, candle);
+                                    return false;
+                                }
+                                return true;
+                            });
+
+                            console.log(`[BULLETPROOF-TF] Validation: ${message.data.length} original -> ${validatedData.length} valid candles`);
+
+                            if (validatedData.length > 0) {
+                                const cleanData = validatedData.map((candle, index) => {
+                                    try {
+                                        const clean = {
+                                            time: Number(candle.time),
+                                            open: Number(candle.open),
+                                            high: Number(candle.high),
+                                            low: Number(candle.low),
+                                            close: Number(candle.close)
+                                        };
+
+                                        if (!Number.isFinite(clean.time) || clean.time <= 0 ||
+                                            !Number.isFinite(clean.open) || !Number.isFinite(clean.high) ||
+                                            !Number.isFinite(clean.low) || !Number.isFinite(clean.close)) {
+                                            console.error(`[BULLETPROOF-TF] EMERGENCY REJECT candle ${index}:`, clean);
+                                            return null;
+                                        }
+
+                                        return clean;
+                                    } catch (cleanError) {
+                                        console.error(`[BULLETPROOF-TF] Error cleaning candle ${index}:`, cleanError, candle);
+                                        return null;
+                                    }
+                                }).filter(candle => candle !== null);
+
+                                console.log(`[BULLETPROOF-TF] Final clean data: ${cleanData.length} candles`);
+
+                                if (cleanData.length > 0) {
+                                    // BULLETPROOF DATA SETTING: Use recreation-safe approach
+                                    try {
+                                        if (message.chart_recreation) {
+                                            // Chart was just recreated, set data directly without clearing
+                                            console.log('[BULLETPROOF-TF] Setting data on recreated chart...');
+
+                                            // Extra safety check before setting data
+                                            if (!candlestickSeries || typeof candlestickSeries.setData !== 'function') {
+                                                throw new Error('candlestickSeries became invalid during data setting');
+                                            }
+
+                                            candlestickSeries.setData(cleanData);
+                                            console.log('[BULLETPROOF-TF] ✅ SUCCESS: Data set on recreated chart');
+                                        } else {
+                                            // Standard approach for non-recreation scenarios
+                                            console.log('[BULLETPROOF-TF] Using standard data setting...');
+                                            candlestickSeries.setData([]);
+                                            setTimeout(() => {
+                                                try {
+                                                    candlestickSeries.setData(cleanData);
+                                                    console.log('[BULLETPROOF-TF] ✅ SUCCESS: Standard data setting completed');
+                                                } catch (delayedError) {
+                                                    console.error('[BULLETPROOF-TF] Delayed setData error:', delayedError);
+                                                    location.reload();
+                                                }
+                                            }, 50);
+                                        }
+                                    } catch (setDataError) {
+                                        console.error('[BULLETPROOF-TF] CRITICAL: setData failed:', setDataError);
+                                        console.error('[BULLETPROOF-TF] EMERGENCY: Triggering page reload...');
+                                        location.reload();
+                                        return;
+                                    }
+
+                                    document.title = `${message.timeframe} Bulletproof (${cleanData.length} candles)`;
+
+                                    // Log validation summary
+                                    if (message.validation_summary) {
+                                        console.log('[BULLETPROOF-TF] Validation summary:', message.validation_summary);
+                                    }
+
+                                } else {
+                                    console.error('[BULLETPROOF-TF] No clean candles after final filtering');
+                                }
+                            } else {
+                                console.error('[BULLETPROOF-TF] No valid candles after initial filtering');
+                            }
+                        } catch (error) {
+                            console.error('[BULLETPROOF-TF] Processing error:', error);
+                            console.error('[BULLETPROOF-TF] EMERGENCY: Reloading page...');
+                            location.reload();
+                        }
+                    } else {
+                        console.error('[BULLETPROOF-TF] Invalid or empty data:', message.data?.length || 'no data');
+                    }
+                    break;
+
+                case 'emergency_recovery_required':
+                    // 🚨 EMERGENCY RECOVERY: Handle critical chart corruption
+                    console.error('[EMERGENCY] Recovery required:', message.error);
+                    console.error('[EMERGENCY] Transaction ID:', message.transaction_id);
+                    console.error('[EMERGENCY] Reloading page in 2 seconds...');
+
+                    // Show user notification
+                    alert(`Chart error detected: ${message.error}\nPage will reload automatically.`);
+
+                    setTimeout(() => {
+                        location.reload();
+                    }, 2000);
+                    break;
+
+                default:
+                    console.log('[UNKNOWN] Unknown message type:', message.type);
+            }
+        }
+
+        // Position Overlay Functions
+        function addPositionOverlay(position) {
+            const positionId = position.id;
+
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('add_position', {
+                    position_id: positionId,
+                    position_type: position.type,
+                    entry_price: position.entry_price,
+                    stop_loss: position.stop_loss,
+                    take_profit: position.take_profit,
+                    size: position.size,
+                    current_timeframe: window.currentTimeframe,
+                    timestamp: new Date()
+                });
+            }
+
+            // Entry Line (grün für Long, rot für Short)
+            const entryColor = position.type === 'LONG' ? '#089981' : '#f23645';
+            const entrySeries = chart.addLineSeries({
+                color: entryColor,
+                lineWidth: 2,
+                lineStyle: 0, // Solid
+                title: `Entry ${positionId}`
+            });
+            entrySeries.setData([{time: 0, value: position.entry_price}]);
+
+            // Stop Loss Line (rot)
+            let stopLossSeries = null;
+            if (position.stop_loss) {
+                stopLossSeries = chart.addLineSeries({
+                    color: '#ff4444',
+                    lineWidth: 1,
+                    lineStyle: 1, // Dashed
+                    title: `SL ${positionId}`
+                });
+                stopLossSeries.setData([{time: 0, value: position.stop_loss}]);
+            }
+
+            // Take Profit Line (grün)
+            let takeProfitSeries = null;
+            if (position.take_profit) {
+                takeProfitSeries = chart.addLineSeries({
+                    color: '#44ff44',
+                    lineWidth: 1,
+                    lineStyle: 1, // Dashed
+                    title: `TP ${positionId}`
+                });
+                takeProfitSeries.setData([{time: 0, value: position.take_profit}]);
+            }
+
+            // Position Box (transparente Box zwischen Entry und TP/SL)
+            const boxSeries = chart.addAreaSeries({
+                topColor: position.type === 'LONG' ? 'rgba(8, 153, 129, 0.1)' : 'rgba(242, 54, 69, 0.1)',
+                bottomColor: position.type === 'LONG' ? 'rgba(8, 153, 129, 0.05)' : 'rgba(242, 54, 69, 0.05)',
+                lineColor: 'transparent'
+            });
+
+            // Box-Daten basierend auf Position-Typ
+            const boxTop = position.type === 'LONG' ?
+                (position.take_profit || position.entry_price * 1.02) :
+                position.entry_price;
+            const boxBottom = position.type === 'LONG' ?
+                position.entry_price :
+                (position.take_profit || position.entry_price * 0.98);
+
+            boxSeries.setData([{time: 0, value: boxTop}]);
+
+            // Speichere alle Series für diese Position
+            window.positionLines[positionId] = {
+                entry: entrySeries,
+                stopLoss: stopLossSeries,
+                takeProfit: takeProfitSeries,
+                box: boxSeries,
+                position: position
+            };
+
+            console.log(`✅ Position overlay added: ${positionId} ${position.type}`);
+        }
+
+        function removePositionOverlay(positionId) {
+            const positionData = window.positionLines[positionId];
+            if (positionData) {
+                // Entferne alle Series
+                chart.removeSeries(positionData.entry);
+                if (positionData.stopLoss) chart.removeSeries(positionData.stopLoss);
+                if (positionData.takeProfit) chart.removeSeries(positionData.takeProfit);
+                chart.removeSeries(positionData.box);
+
+                // Lösche aus Container
+                delete window.positionLines[positionId];
+                console.log(`❌ Position overlay removed: ${positionId}`);
+            }
+        }
+
+        function syncPositions(positions) {
+            // Lösche alle existierenden Overlays
+            for (const positionId in window.positionLines) {
+                removePositionOverlay(positionId);
+            }
+
+            // Füge alle aktiven Positionen hinzu
+            positions.forEach(position => {
+                if (position.status === 'OPEN') {
+                    addPositionOverlay(position);
+                }
+            });
+        }
+
+        // ===== POSITION BOX MANAGER - ENTERPRISE REPOSITORY PATTERN =====
+        // Verwaltet mehrere Position Boxes gleichzeitig mit CRUD Operations
+        window.positionBoxManager = {
+            boxes: [],              // Array aller Position Boxes
+            activeBoxId: null,      // Aktuell selektierte Box
+            canvas: null,           // Shared Canvas für alle Boxes
+            ctx: null,              // Shared Canvas Context
+
+            // Initialisierung
+            init(canvas, ctx) {
+                this.canvas = canvas;
+                this.ctx = ctx;
+                console.log('📦 Position Box Manager initialized');
+            },
+
+            // CRUD: Create - Box hinzufügen
+            add(box) {
+                if (!box.id) {
+                    box.id = 'BOX_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                }
+                this.boxes.push(box);
+                console.log(`➕ Box added: ${box.id} (Total: ${this.boxes.length})`);
+                return box.id;
+            },
+
+            // CRUD: Read - Box abrufen
+            get(id) {
+                return this.boxes.find(box => box.id === id);
+            },
+
+            getAll() {
+                return [...this.boxes];  // Return copy für Sicherheit
+            },
+
+            // CRUD: Update - Box aktualisieren
+            update(id, changes) {
+                const box = this.get(id);
+                if (box) {
+                    Object.assign(box, changes);
+                    console.log(`✏️ Box updated: ${id}`);
+                    return true;
+                }
+                return false;
+            },
+
+            // CRUD: Delete - Box entfernen
+            remove(id) {
+                const index = this.boxes.findIndex(box => box.id === id);
+                if (index !== -1) {
+                    this.boxes.splice(index, 1);
+                    console.log(`🗑️ Box removed: ${id} (Remaining: ${this.boxes.length})`);
+                    return true;
+                }
+                return false;
+            },
+
+            // Alle Boxes löschen
+            clear() {
+                const count = this.boxes.length;
+                this.boxes = [];
+                this.activeBoxId = null;
+                console.log(`🧹 All boxes cleared (${count} boxes deleted)`);
+            },
+
+            // Query: Nur sichtbare Boxes (im Chart-Bereich)
+            getVisible(timeScale, chartWidth) {
+                return this.boxes.filter(box => {
+                    try {
+                        let x1, x2;
+
+                        // ⭐⭐⭐ NEU: Verwende TIMESTAMPS (stabil bei Datenladen) ⭐⭐⭐
+                        if (box.timeStart && box.timeEnd) {
+                            const allData = candlestickSeries.data();
+
+                            if (allData && allData.length > 0) {
+                                const startCandle = allData.find(c => c.time === box.timeStart);
+                                const endCandle = allData.find(c => c.time === box.timeEnd);
+
+                                if (startCandle && endCandle) {
+                                    x1 = timeScale.timeToCoordinate(startCandle.time);
+                                    x2 = timeScale.timeToCoordinate(endCandle.time);
+                                }
+                            }
+                        }
+
+                        // Fallback: Direkte Timestamp-Konvertierung
+                        if (x1 === null || x2 === null || x1 === undefined || x2 === undefined) {
+                            x1 = timeScale.timeToCoordinate(box.timeStart);
+                            x2 = timeScale.timeToCoordinate(box.timeEnd);
+                        }
+
+                        // Box ist sichtbar wenn MINDESTENS EINE Koordinate valide ist
+                        if (x1 === null && x2 === null) {
+                            return false;  // Komplett außerhalb
+                        }
+
+                        // Box ist sichtbar wenn im Chart-Bereich (mit 100px Toleranz)
+                        const isVisible = (x1 !== null && x1 >= -100 && x1 <= chartWidth + 100) ||
+                                         (x2 !== null && x2 >= -100 && x2 <= chartWidth + 100) ||
+                                         (x1 !== null && x2 === null) ||  // Zukunfts-Box
+                                         (x1 < 0 && x2 > chartWidth);
+
+                        return isVisible;
+                    } catch (error) {
+                        console.warn(`⚠️ Error checking visibility for box ${box.id}:`, error);
+                        return false;
+                    }
+                });
+            },
+
+            // Anzahl der Boxes
+            count() {
+                return this.boxes.length;
+            },
+
+            // Active Box Management
+            setActive(id) {
+                if (this.get(id)) {
+                    this.activeBoxId = id;
+                    console.log(`🎯 Active box: ${id}`);
+                }
+            },
+
+            getActive() {
+                return this.activeBoxId ? this.get(this.activeBoxId) : null;
+            },
+
+            // Rendering: Alle sichtbaren Boxes zeichnen
+            drawAll() {
+                if (!this.canvas || !this.ctx) {
+                    console.warn('⚠️ Canvas not initialized');
+                    return;
+                }
+
+                // ⭐ Setze Flag damit drawPositionBox() nicht clearRect() macht
+                window._managerDrawing = true;
+
+                // Clear canvas EINMAL
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Get visible boxes
+                const visibleBoxes = this.getVisible(
+                    chart.timeScale(),
+                    this.canvas.width
+                );
+
+                // console.log(`🎨 Drawing ${visibleBoxes.length} / ${this.boxes.length} boxes`);
+
+                // Draw each visible box
+                visibleBoxes.forEach(box => {
+                    this.drawBox(box);
+                });
+
+                // ⭐ Reset Flag
+                window._managerDrawing = false;
+            },
+
+            // Rendering: Eine spezifische Box zeichnen
+            drawBox(box) {
+                // ⭐ TEMPORÄRE LÖSUNG: Verwende alte drawPositionBox() mit Trick
+                // Setze temporär currentPositionBox für Legacy-Kompatibilität
+                const oldBox = window.currentPositionBox;
+                window.currentPositionBox = box;
+
+                // Rufe alte Draw-Funktion auf
+                if (typeof drawPositionBox === 'function') {
+                    drawPositionBox();
+                } else {
+                    console.warn('⚠️ drawPositionBox not available');
+                }
+
+                // Restore
+                window.currentPositionBox = oldBox;
+            }
+        };
+
+        // Position Box Functions - NEUE IMPLEMENTIERUNG MIT ECHTEN RECHTECKEN
+        function createPositionBox(time, entryPrice, clickX, clickY, isShort = false) {
+            // ⭐ ÄNDERUNG: Mehrere Boxes erlaubt - alte Box NICHT mehr löschen
+            // (Für Backwards Compatibility: Legacy Code-Pfade bleiben)
+
+            // 1:1 Risk:Reward Ratio (0.25% Risk, 0.25% Reward)
+            const riskPercent = 0.0025; // 0.25%
+            const rewardPercent = 0.0025; // 0.25% - GEÄNDERT von 0.5% zu 0.25% für 1:1 Ratio
+
+            // Für Short Positionen sind TP/SL umgekehrt
+            let stopLoss, takeProfit;
+            if (isShort) {
+                stopLoss = entryPrice * (1 + riskPercent);   // SL oben (höher als Entry)
+                takeProfit = entryPrice * (1 - rewardPercent); // TP unten (niedriger als Entry)
+            } else {
+                stopLoss = entryPrice * (1 - riskPercent);   // SL unten (niedriger als Entry)
+                takeProfit = entryPrice * (1 + rewardPercent); // TP oben (höher als Entry)
+            }
+
+            console.log('💰 Preise:', {entry: entryPrice, sl: stopLoss, tp: takeProfit});
+            console.log('📍 Click-Position:', clickX, clickY, 'Container Breite:', document.getElementById('chart_container')?.clientWidth);
+
+            // Box Dimensionen - DYNAMISCH basierend auf Timeframe und Click-Zeit
+            const centerTime = time || Math.floor(Date.now() / 1000);
+
+            // Berechne angemessene Box-Breite basierend auf aktuellem Timeframe
+            function getTimeframeBasedBoxWidth() {
+                const tf = window.currentTimeframe || '5m';
+                const timeframeMinutes = {
+                    '1m': 1,
+                    '2m': 2,
+                    '3m': 3,
+                    '5m': 5,
+                    '15m': 15,
+                    '30m': 30,
+                    '1h': 60,
+                    '4h': 240
+                };
+
+                const minutes = timeframeMinutes[tf] || 5;
+                // ⭐ ÄNDERUNG: 15 Kerzen breit (statt 4) für bessere Sichtbarkeit
+                const candleCount = 15;
+                const boxWidthSeconds = minutes * 60 * candleCount;
+
+                console.log(`📏 Timeframe ${tf}: ${minutes}min * ${candleCount} Kerzen = ${boxWidthSeconds}s Box-Breite`);
+                return boxWidthSeconds;
+            }
+
+            const boxWidth = getTimeframeBasedBoxWidth();
+
+            // ⭐ FIX: Verwende MITTE des sichtbaren Chart-Bereichs (garantiert sichtbar!)
+            const timeScale = chart.timeScale();
+            const visibleRange = timeScale.getVisibleLogicalRange();
+
+            let boxCenterTime = centerTime;  // Default: Click-Zeit
+
+            if (visibleRange && candlestickSeries) {
+                try {
+                    // ⭐ Hole alle Daten von der Series
+                    const allData = candlestickSeries.data();
+
+                    if (allData && allData.length > 0) {
+                        // ⭐ FIX: Finde die nächstgelegene Kerze zur Click-Zeit (statt Chart-Mitte!)
+                        let clickIndex = -1;
+                        let minDiff = Infinity;
+
+                        // Suche die Kerze mit der geringsten Zeitdifferenz zur Click-Zeit
+                        for (let i = 0; i < allData.length; i++) {
+                            const diff = Math.abs(allData[i].time - centerTime);
+                            if (diff < minDiff) {
+                                minDiff = diff;
+                                clickIndex = i;
+                            }
+                        }
+
+                        // Fallback: Falls keine Kerze gefunden, verwende Chart-Mitte
+                        if (clickIndex === -1) {
+                            const middleLogical = (visibleRange.from + visibleRange.to) / 2;
+                            clickIndex = Math.floor(Math.max(0, Math.min(allData.length - 1, middleLogical)));
+                        }
+
+                        // ⭐ Zeit aus nächstgelegener Kerze holen
+                        const nearestCandleTime = allData[clickIndex]?.time;
+
+                        if (nearestCandleTime) {
+                            boxCenterTime = nearestCandleTime;
+
+                            // ⭐⭐⭐ NEU: Berechne Start/End basierend auf Kerzen-Indices (PRIMÄR) ⭐⭐⭐
+                            const candleCount = 15;  // Box = 15 Kerzen breit
+                            const halfCandles = Math.floor(candleCount / 2);  // 7 Kerzen links/rechts
+
+                            // Start- und End-Index berechnen (garantiert im validen Bereich)
+                            const startIndex = Math.max(0, clickIndex - halfCandles);
+                            const endIndex = Math.min(allData.length - 1, clickIndex + halfCandles);
+
+                            // ⭐⭐⭐ SPEICHERE INDICES in Temp-Variablen (für newBox) ⭐⭐⭐
+                            window._boxStartIndex = startIndex;
+                            window._boxEndIndex = endIndex;
+
+                            // ⭐ Exakte Kerzen-Zeiten verwenden (als Fallback für TF-Wechsel)
+                            window._boxTimeStart = allData[startIndex].time;
+                            window._boxTimeEnd = allData[endIndex].time;
+
+                            console.log(`📊 Nächste Kerze zur Click-Zeit (Index ${clickIndex} von ${allData.length}): Zeit ${nearestCandleTime}`);
+                            console.log(`📍 Box Kerzen-Indices: Start=${startIndex}, Ende=${endIndex}`);
+                            console.log(`📍 Box Timestamps: Start=${window._boxTimeStart}, Ende=${window._boxTimeEnd}`);
+                            console.log(`🖱️ Original Click-Zeit: ${centerTime}, Differenz: ${minDiff}s`);
+                        } else {
+                            console.warn('⚠️ Keine Zeit in allData[middleIndex] - verwende centerTime');
+                        }
+                    } else {
+                        console.warn('⚠️ Keine Daten verfügbar - verwende centerTime');
+                    }
+                } catch (error) {
+                    console.error('❌ Fehler beim Ermitteln der sichtbaren Mitte:', error);
+                }
+            } else {
+                console.warn('❌ Kein sichtbarer Bereich oder Series verfügbar - verwende centerTime');
+            }
+
+            // ⭐ FIX: Verwende exakte Kerzen-Zeiten (garantiert in Daten!)
+            // Falls window._boxTimeStart/End gesetzt wurden, verwende diese, sonst Fallback
+            const timeStart = window._boxTimeStart || (boxCenterTime - boxWidth / 2);
+            const timeEnd = window._boxTimeEnd || (boxCenterTime + boxWidth / 2);
+
+            // ⭐⭐⭐ Hole Kerzen-Indices aus Temp-Variablen ⭐⭐⭐
+            const candleStartIndex = window._boxStartIndex !== undefined ? window._boxStartIndex : null;
+            const candleEndIndex = window._boxEndIndex !== undefined ? window._boxEndIndex : null;
+
+            // Cleanup: Temp-Variablen entfernen
+            delete window._boxTimeStart;
+            delete window._boxTimeEnd;
+            delete window._boxStartIndex;
+            delete window._boxEndIndex;
+
+            // ⭐ Position Box Object erstellen (für Manager)
+            const newBox = {
+                id: null,  // Wird vom Manager gesetzt
+                entryPrice: entryPrice,
+                stopLoss: stopLoss,
+                takeProfit: takeProfit,
+                time: boxCenterTime,   // ⭐ Sichtbare Chart-Mitte (garantiert sichtbar!)
+
+                // ⭐⭐⭐ NEU: PRIMÄRE KERZEN-INDEX-BINDUNG (eliminiert Zoom-Shift) ⭐⭐⭐
+                candleStartIndex: candleStartIndex,  // Z.B. 95 (Start-Kerze im Daten-Array)
+                candleEndIndex: candleEndIndex,      // Z.B. 110 (End-Kerze im Daten-Array)
+
+                // Legacy: Timestamps als Fallback für TF-Wechsel
+                timeStart: timeStart,  // Start-Zeit der Box
+                timeEnd: timeEnd,      // End-Zeit der Box
+                width: boxWidth,
+                isResizing: false,
+                resizeHandle: null,
+                isShort: isShort,
+
+                // NEUE X-Koordinaten basierend auf Zeit und Click-Position
+                clickX: clickX || null,  // Echte Click-X-Koordinate
+                clickY: clickY || null,  // Echte Click-Y-Koordinate
+
+                // Zeit-basierte X-Koordinaten anstatt Pixel-basierte (für Legacy-Kompatibilität)
+                legacyTimeStart: timeStart,  // Start-Zeit der Box
+                legacyTimeEnd: timeEnd,      // End-Zeit der Box
+
+                // Fallback für Legacy-Support (schmale Box um Click-Position)
+                x1Percent: clickX ? Math.max(0, (clickX - 30) / document.getElementById('chart_container').clientWidth) : 0.47,  // 30px links vom Klick
+                x2Percent: clickX ? Math.min(1, (clickX + 30) / document.getElementById('chart_container').clientWidth) : 0.53,  // 30px rechts vom Klick
+
+                // DIREKTE Y-KOORDINATEN FÜR SOFORTIGE UPDATES - Entry Level an exakter Click-Position
+                entryY: clickY || null,  // ⭐ Verwende Click-Y für Entry Level
+                slY: null,
+                tpY: null
+
+                // ⛔ ENTFERNT: coordinateCache
+                // Koordinaten werden jetzt IMMER frisch in drawPositionBox() berechnet
+                // Grund: Cache verursachte Bug bei vertikalem Pan (Y-Koordinaten blieben alt)
+            };
+
+            // ⭐ ÄNDERUNG: Box zu Manager hinzufügen statt Singleton
+            const boxId = window.positionBoxManager.add(newBox);
+            window.positionBoxManager.setActive(boxId);
+
+            // ⭐ Backwards Compatibility: Auch als currentPositionBox setzen
+            window.currentPositionBox = newBox;
+
+            // Canvas erstellen (nur beim ersten Mal)
+            if (!window.positionBoxManager.canvas) {
+                createCanvasOverlay();
+                setupIntelligentCanvasHover();
+            }
+
+            // ⭐ ÄNDERUNG: Alle Boxes zeichnen statt nur eine
+            window.positionBoxManager.drawAll();
+
+            // Erstelle Price Lines auf der Y-Achse (DEAKTIVIERT für Positionseröffnungstool)
+            // createPriceLines(entryPrice, stopLoss, takeProfit);
+
+            console.log(`📦 Neue Position Box erstellt: ${boxId} (Total: ${window.positionBoxManager.count()})`);
+
+            // ⭐ REMOVED: Trade Modal wird NUR über Buy-Button ($) geöffnet
+            // Trade Modal wird nicht automatisch bei Position Box Erstellung geöffnet
+
+            return boxId;  // Return Box ID für weitere Verwendung
+        }
+
+        function createCanvasOverlay() {
+            // ⭐ Prüfe ob Canvas bereits existiert (für mehrere Boxes)
+            let canvas = document.getElementById('position-canvas');
+
+            if (canvas) {
+                console.log('📄 Canvas bereits vorhanden, verwende existierenden');
+                // ⭐ Update Manager References falls noch nicht gesetzt
+                if (!window.positionBoxManager.canvas) {
+                    window.positionBoxManager.init(canvas, canvas.getContext('2d'));
+                }
+                // Backwards Compatibility
+                window.positionCanvas = canvas;
+                window.positionCtx = canvas.getContext('2d');
+                return;
+            }
+
+            // ⭐ Erstelle neuen Canvas (nur beim ersten Mal)
+            const chartContainer = document.getElementById('chart_container');
+            canvas = document.createElement('canvas');
+            canvas.id = 'position-canvas';
+            canvas.style.position = 'absolute';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            canvas.style.pointerEvents = 'none';  // ⭐ STANDARD: 'none' → Events gehen zum Chart durch
+            canvas.style.zIndex = '1000';
+            canvas.width = chartContainer.clientWidth;
+            canvas.height = chartContainer.clientHeight;
+
+            chartContainer.style.position = 'relative';
+            chartContainer.appendChild(canvas);
+
+            const ctx = canvas.getContext('2d');
+
+            // ⭐ Initialize Manager mit Canvas
+            window.positionBoxManager.init(canvas, ctx);
+
+            // Backwards Compatibility
+            window.positionCanvas = canvas;
+            window.positionCtx = ctx;
+
+            // Mouse Events für Resize
+            canvas.addEventListener('mousedown', onCanvasMouseDown);
+            canvas.addEventListener('mousemove', onCanvasMouseMove);
+            canvas.addEventListener('mouseup', onCanvasMouseUp);
+
+            console.log('📄 Canvas Overlay erstellt und Manager initialisiert');
+        }
+
+        // ⭐ ENTFERNT: Nicht mehr benötigt - Canvas bleibt immer 'auto'
+        // Events werden jetzt selektiv in Event-Handlern verarbeitet
+
+        // ⭐ FIX: Intelligente Hover-Detection - Cursor Updates
+        function setupIntelligentCanvasHover() {
+            const chartContainer = document.getElementById('chart_container');
+            if (!chartContainer) return;
+
+            // ⭐ NEUE STRATEGIE: Hover-Detection auf Chart Container, nicht Canvas
+            // Canvas hat 'pointer-events: none' → Events gehen durch zum Chart
+            // Wir schalten Canvas nur auf 'auto' wenn über Box/Buttons
+            chartContainer.addEventListener('mousemove', function(e) {
+                const canvas = window.positionCanvas;
+                if (!canvas || !window.currentPositionBox) {
+                    if (canvas) canvas.style.pointerEvents = 'none';
+                    return;
+                }
+
+                const rect = canvas.getBoundingClientRect();
+
+                // ⭐ FIX: Skaliere Mouse-Koordinaten von CSS zu Canvas
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+
+                // Prüfe ob Maus über Position Box oder Buttons ist
+                const box = window.currentPositionBox;
+                const isOverBox = isPointOverPositionBox(x, y, box);
+                const isOverButtons = isPointOverButtons(x, y);
+
+                // ⭐ DYNAMISCHE POINTER-EVENTS: Nur aktivieren wenn über Box/Buttons
+                if (isOverBox || isOverButtons) {
+                    canvas.style.pointerEvents = 'auto';
+
+                    // Cursor-Update für bessere UX
+                    if (isOverButtons) {
+                        canvas.style.cursor = 'pointer';
+                    } else if (isOverBox) {
+                        canvas.style.cursor = 'move';
+                    }
+                } else {
+                    canvas.style.pointerEvents = 'none';  // Events gehen zum Chart durch
+                    canvas.style.cursor = 'default';
+                }
+            });
+        }
+
+        // ⭐ NEUE FUNKTION: Prüft ob Punkt über Buttons (X oder Buy) liegt
+        function isPointOverButtons(x, y) {
+            // Prüfe Delete Button
+            if (window.deleteButtonCoords) {
+                const btn = window.deleteButtonCoords;
+                const distance = Math.sqrt(
+                    Math.pow(x - btn.x, 2) + Math.pow(y - btn.y, 2)
+                );
+                if (distance <= (btn.size / 2) + 5) {  // 5px extra Toleranz
+                    return true;
+                }
+            }
+
+            // Prüfe Buy Button (falls vorhanden)
+            if (window.buyButtonCoords) {
+                const btn = window.buyButtonCoords;
+                const distance = Math.sqrt(
+                    Math.pow(x - btn.x, 2) + Math.pow(y - btn.y, 2)
+                );
+                if (distance <= (btn.size / 2) + 5) {  // 5px extra Toleranz
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // ⭐ HILFSFUNKTION: Prüft ob Punkt über Position Box liegt
+        function isPointOverPositionBox(x, y, box) {
+            if (!box || !window.positionCanvas) return false;
+
+            try {
+                const canvas = window.positionCanvas;
+                if (!canvas) return false;
+
+                const chartWidth = canvas.width;
+                const chartHeight = canvas.height;
+
+                // ⭐ ROBUSTE API-AUFRUFE: X-Koordinaten der Box
+                let x1, x2;
+                if (box.timeStart && box.timeEnd && chart && chart.timeScale) {
+                    try {
+                        const timeScale = chart.timeScale();
+                        if (timeScale && typeof timeScale.timeToCoordinate === 'function') {
+                            x1 = timeScale.timeToCoordinate(box.timeStart);
+                            x2 = timeScale.timeToCoordinate(box.timeEnd);
+
+                            // Validierung der API-Ergebnisse
+                            if (isNaN(x1) || isNaN(x2) || x1 < -100 || x2 < -100 ||
+                                x1 > chartWidth + 100 || x2 > chartWidth + 100) {
+                                throw new Error('Invalid API coordinates');
+                            }
+                        } else {
+                            throw new Error('TimeScale API not available');
+                        }
+                    } catch (apiError) {
+                        console.warn('⚠️ TimeScale API Error, using fallback:', apiError);
+                        x1 = chartWidth * (box.x1Percent || 0.47);
+                        x2 = chartWidth * (box.x2Percent || 0.53);
+                    }
+                } else {
+                    // Fallback für fehlende Zeit-Daten
+                    x1 = chartWidth * (box.x1Percent || 0.47);
+                    x2 = chartWidth * (box.x2Percent || 0.53);
+                }
+
+                // ⭐ KOORDINATEN-CACHE: Verwende gecachte Pixel-Koordinaten vom letzten Draw
+                // Garantiert Konsistenz zwischen Draw & Hover Detection
+                let entryY, slY, tpY;
+
+                if (box.cachedPixelCoordinates) {
+                    // Cache-Hit: Verwende gespeicherte Koordinaten (BEVORZUGT!)
+                    entryY = box.cachedPixelCoordinates.entryY;
+                    slY = box.cachedPixelCoordinates.slY;
+                    tpY = box.cachedPixelCoordinates.tpY;
+                } else {
+                    // Cache-Miss: Berechne aus Preisen (Fallback)
+                    if (candlestickSeries && typeof candlestickSeries.priceToCoordinate === 'function') {
+                        try {
+                            entryY = candlestickSeries.priceToCoordinate(box.entryPrice);
+                            slY = candlestickSeries.priceToCoordinate(box.stopLoss);
+                            tpY = candlestickSeries.priceToCoordinate(box.takeProfit);
+
+                            // Validierung
+                            if (isNaN(entryY) || isNaN(slY) || isNaN(tpY)) {
+                                throw new Error('Invalid price to coordinate conversion');
+                            }
+                        } catch (error) {
+                            console.warn('⚠️ priceToCoordinate failed, using fallback');
+                            entryY = chartHeight * 0.5;
+                            slY = chartHeight * 0.7;
+                            tpY = chartHeight * 0.3;
+                        }
+                    } else {
+                        // Fallback wenn API nicht verfügbar
+                        entryY = chartHeight * 0.5;
+                        slY = chartHeight * 0.7;
+                        tpY = chartHeight * 0.3;
+                    }
+                }
+
+                // Bounding Box mit Toleranz
+                const tolerance = 15;  // Etwas größere Toleranz für bessere UX
+                const minX = Math.min(x1, x2) - tolerance;
+                const maxX = Math.max(x1, x2) + tolerance;
+                const minY = Math.min(entryY, slY, tpY) - tolerance;
+                const maxY = Math.max(entryY, slY, tpY) + tolerance;
+
+                const isOver = x >= minX && x <= maxX && y >= minY && y <= maxY;
+
+                // ⭐ DEBUG: Hover Detection Diagnostics (nur bei TP-Handle-Bereich Y < 100)
+                if (y < 100) {
+                    console.log('🔍 Hover Detection:', {
+                        mouseY: y.toFixed(0),
+                        minY: minY.toFixed(0),
+                        maxY: maxY.toFixed(0),
+                        isOver,
+                        cacheUsed: !!box.cachedPixelCoordinates,
+                        tpY: tpY?.toFixed(0)
+                    });
+                }
+
+                return isOver;
+
+            } catch (error) {
+                console.warn('⚠️ Kritischer Fehler bei Position Box Hover-Detection:', error);
+                return false;
+            }
+        }
+
+        // ⭐ NEU: Koordinaten-Cache Update Funktion für Event-Based Redraw
+        // Berechnet Koordinaten nur bei Chart-Events (Zoom/Pan/Resize), nicht jeden Frame
+        // ⛔ ENTFERNT: updateBoxCoordinates()
+        // Koordinaten-Cache wurde komplett entfernt
+        // Koordinaten werden jetzt IMMER frisch in drawPositionBox() berechnet
+
+        function drawPositionBox() {
+            const box = window.currentPositionBox;
+
+            // ⭐ FIX: Verwende Manager-Variablen als Fallback wenn globale nicht gesetzt
+            const ctx = window.positionCtx || (window.positionBoxManager && window.positionBoxManager.ctx);
+            const canvas = window.positionCanvas || (window.positionBoxManager && window.positionBoxManager.canvas);
+
+            if (!box || !ctx || !canvas) {
+                console.warn('❌ drawPositionBox: Missing box, context, or canvas', {
+                    hasBox: !!box,
+                    hasCtx: !!ctx,
+                    hasCanvas: !!canvas,
+                    hasManager: !!window.positionBoxManager
+                });
+                return;
+            }
+
+            // ⭐ ÄNDERUNG: NUR clearRect wenn NICHT vom Manager aufgerufen
+            // Manager macht clearRect selbst vor der Schleife
+            // Check: Wenn Manager drawAll() läuft, ist window._managerDrawing = true
+            if (!window._managerDrawing) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            try {
+                // ⭐⭐⭐ NEU: KERZEN-INDEX-BASIERTE KOORDINATEN (kein Cache!) ⭐⭐⭐
+                // X-Koordinaten: Kerzen-Index → Zeit → Pixel
+                // Y-Koordinaten: IMMER frisch (reagiert sofort auf vertikales Pan/Zoom)
+
+                let x1, x2;
+
+                // ========== X-KOORDINATEN: Timestamp-basiert (STABIL!) ==========
+                // ⚠️ WICHTIG: Indices verschieben sich wenn neue Daten geladen werden!
+                // → Wir verwenden TIMESTAMPS (box.timeStart/timeEnd) als Quelle der Wahrheit
+                if (box.timeStart && box.timeEnd) {
+                    // Hole Kerzen-Daten
+                    const allData = candlestickSeries.data();
+
+                    if (allData && allData.length > 0) {
+                        // 🔍 Finde Kerzen basierend auf TIMESTAMPS (stabil!)
+                        const startCandle = allData.find(c => c.time === box.timeStart);
+                        const endCandle = allData.find(c => c.time === box.timeEnd);
+
+                        if (startCandle && endCandle) {
+                            // Konvertiere Kerzen-Zeit → Pixel-Koordinate
+                            x1 = chart.timeScale().timeToCoordinate(startCandle.time);
+                            x2 = chart.timeScale().timeToCoordinate(endCandle.time);
+
+                            // ⭐ KEIN Math.round() - exakte Koordinaten für Stabilität!
+                            // console.log(`📍 Box ${box.id} X-Koordinaten (Timestamp ${box.timeStart}-${box.timeEnd}): x1=${x1?.toFixed(2)}, x2=${x2?.toFixed(2)}`);
+                        }
+                    }
+                }
+
+                // Fallback: Timestamps (für alte Boxes oder TF-Wechsel)
+                if (x1 === null || x2 === null || x1 === undefined || x2 === undefined) {
+                    x1 = chart.timeScale().timeToCoordinate(box.timeStart);
+                    x2 = chart.timeScale().timeToCoordinate(box.timeEnd);
+                    console.log(`⚠️ Box ${box.id}: Verwende Timestamp-Fallback (kein Index verfügbar)`);
+                }
+
+                // ========== Y-KOORDINATEN: IMMER FRISCH (kein Cache!) ==========
+                const entryY = candlestickSeries.priceToCoordinate(box.entryPrice);
+                const slY = candlestickSeries.priceToCoordinate(box.stopLoss);
+                const tpY = candlestickSeries.priceToCoordinate(box.takeProfit);
+
+                // Validierung
+                if (x1 === null || x2 === null || isNaN(entryY) || isNaN(slY) || isNaN(tpY)) {
+                    console.warn(`⚠️ Box ${box.id}: Außerhalb sichtbarem Bereich oder ungültige Koordinaten`);
+                    return;  // Box nicht zeichnen
+                }
+
+                // 💰 PREIS-DEBUG (auskommentiert - zu verbose)
+                // console.log(`💰 PREISE: Entry=$${box.entryPrice.toFixed(2)} | SL=$${box.stopLoss.toFixed(2)} | TP=$${box.takeProfit.toFixed(2)}`);
+                // console.log(`📍 PIXEL: entryY=${entryY.toFixed(1)}px | slY=${slY.toFixed(1)}px | tpY=${tpY.toFixed(1)}px`);
+
+                // 🔄 REVERSE-CHECK (auskommentiert - zu verbose)
+                // const entryPriceCheck = candlestickSeries.coordinateToPrice(entryY);
+                // const slPriceCheck = candlestickSeries.coordinateToPrice(slY);
+                // const tpPriceCheck = candlestickSeries.coordinateToPrice(tpY);
+                // console.log(`🔄 REVERSE: entryY=${entryY.toFixed(1)}px→$${entryPriceCheck?.toFixed(2)} | slY=${slY.toFixed(1)}px→$${slPriceCheck?.toFixed(2)} | tpY=${tpY.toFixed(1)}px→$${tpPriceCheck?.toFixed(2)}`);
+
+                // ⚙️ Verbose Debug (auskommentiert um Logs zu reduzieren)
+                // console.log(`📊 Drawing Box ${box.id} (LIVE):`, {
+                //     x: `${x1.toFixed(1)} → ${x2.toFixed(1)} (${(x2-x1).toFixed(0)}px)`,
+                //     entryPx: entryY.toFixed(1),
+                //     slPx: slY.toFixed(1),
+                //     tpPx: tpY.toFixed(1),
+                //     timestamps: `${box.timeStart} → ${box.timeEnd}`
+                // });
+
+                // Zeichne Stop Loss Box (rot)
+                ctx.fillStyle = 'rgba(242, 54, 69, 0.2)';
+                ctx.strokeStyle = '#f23645';
+                ctx.lineWidth = 2;
+                const slHeight = Math.abs(entryY - slY);
+                const slTop = Math.min(entryY, slY);
+
+                if (slHeight > 0) {
+                    ctx.fillRect(x1, slTop, x2 - x1, slHeight);
+                    ctx.strokeRect(x1, slTop, x2 - x1, slHeight);
+                }
+
+                // Zeichne Take Profit Box (grün)
+                ctx.fillStyle = 'rgba(8, 153, 129, 0.2)';
+                ctx.strokeStyle = '#089981';
+                ctx.lineWidth = 2;
+                const tpHeight = Math.abs(entryY - tpY);
+                const tpTop = Math.min(entryY, tpY);
+
+                if (tpHeight > 0) {
+                    ctx.fillRect(x1, tpTop, x2 - x1, tpHeight);
+                    ctx.strokeRect(x1, tpTop, x2 - x1, tpHeight);
+                }
+
+                // Zeichne Entry Line (weiß)
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(x1, entryY);
+                ctx.lineTo(x2, entryY);
+                ctx.stroke();
+
+                // Zeichne Resize Handles in den Ecken
+                drawResizeHandles(x1, x2, slTop, tpTop, slHeight, tpHeight);
+
+                // Zeichne Buttons: Buy (links) und Delete (rechts)
+                const buttonY = Math.min(slTop, tpTop);
+                drawBuyButton(x2, buttonY, box.id);      // ⭐ Buy Button (grün, mit $)
+                drawDeleteButton(x2, buttonY, box.id);   // Delete Button (rot, mit X)
+
+                // ⭐ MULTI-BOX: Speichere Button-Koordinaten IN der Box
+                box.deleteButton = {
+                    x: x2,
+                    y: buttonY - 25,  // Button ist 25px über buttonY
+                    size: 20,
+                    boxId: box.id
+                };
+
+                box.buyButton = {
+                    x: x2 - 30,  // Buy Button ist 30px links vom Delete Button
+                    y: buttonY - 25,
+                    size: 20,
+                    boxId: box.id
+                };
+
+                // 🔍 DEBUG: Button-Positionen
+                console.log('🔘 Buttons:', {
+                    buttonY: buttonY.toFixed(0),
+                    deleteBtn: `(${x2.toFixed(0)}, ${(buttonY-25).toFixed(0)})`,
+                    buyBtn: `(${(x2-30).toFixed(0)}, ${(buttonY-25).toFixed(0)})`
+                });
+
+                // ⭐ KOORDINATEN-CACHE: Speichere berechnete Pixel-Koordinaten in der Box
+                // Verhindert doppelte API-Aufrufe und garantiert Konsistenz zwischen Draw & Hover
+                box.cachedPixelCoordinates = {
+                    x1, x2, entryY, slY, tpY,
+                    slTop, tpTop, slHeight, tpHeight,
+                    timestamp: Date.now()  // Für Debugging
+                };
+
+                // Legacy: Für Backwards Compatibility
+                window.boxCoordinates = {
+                    x1, x2, entryY, slY, tpY,
+                    slTop, tpTop, slHeight, tpHeight,
+                    deleteButtonX: x2,
+                    deleteButtonY: Math.min(slTop, tpTop),
+                    deleteButtonSize: 20
+                };
+
+                // console.log('✅ Position Box gezeichnet erfolgreich');
+
+            } catch (error) {
+                console.error('❌ Kritischer Fehler beim Zeichnen der Position Box:', error);
+                console.error('Error Stack:', error.stack);
+            }
+        }
+
+        function drawResizeHandles(x1, x2, slTop, tpTop, slHeight, tpHeight) {
+            const ctx = window.positionCtx;
+            const handleSize = 8;
+
+            // Nur äußere Handles - KEINE auf der Entry-Linie
+            const slBottom = slTop + slHeight;
+            // SL Box Handles (rot) - nur Bottom (weit unten)
+            drawHandle(ctx, x1, slBottom, '#f23645', 'SL-BL'); // Bottom-Left
+            drawHandle(ctx, x2, slBottom, '#f23645', 'SL-BR'); // Bottom-Right
+
+            // TP Box Handles (grün) - nur Top (weit oben)
+            drawHandle(ctx, x1, tpTop, '#089981', 'TP-TL'); // Top-Left
+            drawHandle(ctx, x2, tpTop, '#089981', 'TP-TR'); // Top-Right
+
+            // DEAKTIVIERT: Mittlere Handles für Box-Breite
+            // const middleY = (slTop + tpBottom) / 2;
+            // drawHandle(ctx, x1, middleY, '#007bff', 'WIDTH-L');
+            // drawHandle(ctx, x2, middleY, '#007bff', 'WIDTH-R');
+
+            // Speichere Handle-Positionen - nur äußere Handles
+            window.resizeHandles = {
+                'SL-BL': {x: x1, y: slBottom, type: 'sl'},
+                'SL-BR': {x: x2, y: slBottom, type: 'sl'},
+                'TP-TL': {x: x1, y: tpTop, type: 'tp'},
+                'TP-TR': {x: x2, y: tpTop, type: 'tp'}
+            };
+
+            // 🔍 DEBUG: Handle-Positionen
+            console.log('🔧 Resize Handles:', {
+                SL_BL: `(${x1.toFixed(0)}, ${slBottom.toFixed(0)})`,
+                SL_BR: `(${x2.toFixed(0)}, ${slBottom.toFixed(0)})`,
+                TP_TL: `(${x1.toFixed(0)}, ${tpTop.toFixed(0)})`,
+                TP_TR: `(${x2.toFixed(0)}, ${tpTop.toFixed(0)})`
+            });
+        }
+
+        function drawHandle(ctx, x, y, color, id) {
+            const size = 12;  // ⭐ Vergrößert von 8 auf 12 für bessere Sichtbarkeit
+            ctx.fillStyle = color;
+            ctx.strokeStyle = '#ffffff';  // ⭐ Weißer Rand statt schwarz für besseren Kontrast
+            ctx.lineWidth = 2;  // ⭐ Dickerer Rand
+
+            ctx.fillRect(x - size/2, y - size/2, size, size);
+            ctx.strokeRect(x - size/2, y - size/2, size, size);
+        }
+
+        function drawDeleteButton(x, y) {
+            const ctx = window.positionCtx;
+            const size = 20;
+            const iconSize = 12;
+
+            // Button Position: rechts oben an der Box
+            const buttonX = x + 5;
+            const buttonY = y - 25;
+
+            // Zeichne Button Hintergrund (rot mit Transparenz)
+            ctx.fillStyle = 'rgba(242, 54, 69, 0.8)';
+            ctx.strokeStyle = '#f23645';
+            ctx.lineWidth = 2;
+            ctx.fillRect(buttonX - size/2, buttonY - size/2, size, size);
+            ctx.strokeRect(buttonX - size/2, buttonY - size/2, size, size);
+
+            // Zeichne Mülleimer-Symbol (vereinfacht als "X")
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // X-Symbol
+            ctx.moveTo(buttonX - iconSize/2, buttonY - iconSize/2);
+            ctx.lineTo(buttonX + iconSize/2, buttonY + iconSize/2);
+            ctx.moveTo(buttonX + iconSize/2, buttonY - iconSize/2);
+            ctx.lineTo(buttonX - iconSize/2, buttonY + iconSize/2);
+            ctx.stroke();
+
+            // Speichere Button Koordinaten für Click-Detection
+            if (!window.deleteButtonCoords) window.deleteButtonCoords = {};
+            window.deleteButtonCoords = {
+                x: buttonX,
+                y: buttonY,
+                size: size
+            };
+        }
+
+        // ⭐ NEUE FUNKTION: Buy Button zeichnen (mit Selected State)
+        function drawBuyButton(x, y) {
+            const ctx = window.positionCtx;
+            const size = 20;
+            const iconSize = 12;
+
+            // Button Position: links vom Delete Button
+            const buttonX = x - 30;  // 30px links vom Delete Button
+            const buttonY = y - 25;
+
+            // ⭐ VISUAL FEEDBACK: Selected State wenn Modal offen
+            const isSelected = window.buyButtonSelected || false;
+
+            // Zeichne Button Hintergrund (grün mit Transparenz, dunkler wenn selected)
+            if (isSelected) {
+                ctx.fillStyle = 'rgba(8, 153, 129, 1.0)';  // Volle Opazität
+                ctx.strokeStyle = '#ffffff';  // Weißer Border
+                ctx.lineWidth = 3;  // Dickerer Border
+            } else {
+                ctx.fillStyle = 'rgba(8, 153, 129, 0.8)';
+                ctx.strokeStyle = '#089981';
+                ctx.lineWidth = 2;
+            }
+            ctx.fillRect(buttonX - size/2, buttonY - size/2, size, size);
+            ctx.strokeRect(buttonX - size/2, buttonY - size/2, size, size);
+
+            // Zeichne Buy-Symbol (Pfeil nach oben + Dollar)
+            ctx.strokeStyle = '#ffffff';
+            ctx.fillStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.font = isSelected ? 'bold 12px Arial' : '12px Arial';  // Bold wenn selected
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Zeichne "$" Symbol
+            ctx.fillText('$', buttonX, buttonY);
+
+            // Speichere Button Koordinaten für Click-Detection
+            if (!window.buyButtonCoords) window.buyButtonCoords = {};
+            window.buyButtonCoords = {
+                x: buttonX,
+                y: buttonY,
+                size: size
+            };
+        }
+
+        // NEUE MOUSE EVENT HANDLERS FÜR BOX-INTERNE RESIZE
+        let isDragging = false;
+        let dragHandle = null;
+
+        function onCanvasMouseDown(e) {
+            // ⭐ GUARD: Nur verarbeiten wenn Position Box existiert
+            if (!window.currentPositionBox) {
+                console.log('🛡️ Canvas MouseDown ignoriert - keine Position Box aktiv');
+                return;
+            }
+
+            const canvas = e.target;
+            const rect = canvas.getBoundingClientRect();
+
+            // ⭐ FIX: Skaliere Mouse-Koordinaten von CSS zu Canvas
+            // CSS-Koordinaten (Browser) → Canvas-Koordinaten (interne Pixel)
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+
+            console.log('🖱️ Mouse Click:', {
+                css: {x: e.clientX - rect.left, y: e.clientY - rect.top},
+                canvas: {x: mouseX, y: mouseY},
+                scale: {x: scaleX, y: scaleY}
+            });
+
+            // ⭐ PRIORITÄT 1: Check if mouse is over any resize handle (ZUERST!)
+            for (const [id, handle] of Object.entries(window.resizeHandles || {})) {
+                const distance = Math.sqrt(
+                    Math.pow(mouseX - handle.x, 2) + Math.pow(mouseY - handle.y, 2)
+                );
+
+                // 🔍 DEBUG: Zeige alle Handle-Distanzen
+                console.log(`🔍 Handle ${id}: distance=${distance.toFixed(1)}px, mouse=(${mouseX.toFixed(0)}, ${mouseY.toFixed(0)}), handle=(${handle.x.toFixed(0)}, ${handle.y.toFixed(0)})`);
+
+                if (distance <= 20) { // 20px click tolerance (erhöht für bessere UX)
+                    isDragging = true;
+                    dragHandle = id;
+                    // Cursor für Eckhandles
+                    e.target.style.cursor = 'nw-resize'; // Diagonal resize für Eckhandles
+                    e.target.style.pointerEvents = 'auto';  // ⭐ Während Dragging Canvas aktiv halten
+                    console.log('🎯 Resize gestartet:', id);
+                    return;
+                }
+            }
+
+            // ⭐ PRIORITÄT 2: Check if mouse is over Entry-Linie (weiße Linie)
+            if (window.boxCoordinates && window.currentPositionBox) {
+                const coords = window.boxCoordinates;
+                const entryY = coords.entryY;
+                const x1 = coords.x1;
+                const x2 = coords.x2;
+
+                // Prüfe ob Klick auf Entry-Linie (Y-Koordinate ±10px, X zwischen x1 und x2)
+                if (Math.abs(mouseY - entryY) <= 10 && mouseX >= x1 && mouseX <= x2) {
+                    isDragging = true;
+                    dragHandle = 'ENTRY-LINE';
+                    e.target.style.cursor = 'ns-resize';
+                    e.target.style.pointerEvents = 'auto';  // ⭐ Während Dragging Canvas aktiv halten
+                    console.log('🎯 Entry-Linie Drag gestartet');
+                    e.preventDefault();
+                    return;
+                }
+            }
+
+            // ⭐ PRIORITÄT 3: MULTI-BOX: Check alle Boxes für Delete Button Click
+            if (window.positionBoxManager) {
+                const allBoxes = window.positionBoxManager.getAll();
+
+                for (const box of allBoxes) {
+                    if (box.deleteButton) {
+                        const btn = box.deleteButton;
+                        const distance = Math.sqrt(
+                            Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                        );
+
+                        // ⭐ Erhöhte Toleranz für Delete Button
+                        if (distance <= (btn.size/2) + 5) {  // +5px extra Toleranz
+                            console.log(`🗑️ Delete Button geklickt - lösche Box ${box.id}`);
+                            console.log('📍 Delete Button:', {x: btn.x, y: btn.y, mouseX, mouseY, distance});
+
+                            // ⭐ Lösche NUR diese spezifische Box
+                            window.positionBoxManager.remove(box.id);
+                            window.positionBoxManager.drawAll();
+
+                            e.preventDefault();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // ⭐ PRIORITÄT 4: Check if mouse is over buy button
+            if (window.buyButtonCoords && window.currentPositionBox) {
+                const btn = window.buyButtonCoords;
+                const distance = Math.sqrt(
+                    Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                );
+
+                if (distance <= btn.size/2) {
+                    console.log('💰 Buy Button geklickt - öffne Trade Setup Modal');
+
+                    // ⭐ VISUAL FEEDBACK: Setze Selected State
+                    window.buyButtonSelected = true;
+                    drawPositionBox();  // Redraw mit Selected State
+
+                    // Öffne Trade Setup Modal mit Position Box Daten
+                    if (window.currentPositionBox) {
+                        const positionData = {
+                            symbol: 'NQ=F',
+                            entryPrice: window.currentPositionBox.entryPrice || 18500,
+                            stopLoss: window.currentPositionBox.stopLoss || 18400,
+                            takeProfit: window.currentPositionBox.takeProfit || 18600,
+                            direction: window.currentPositionBox.direction || 'long'
+                        };
+
+                        // ⭐ FIX: Korrekte Funktion ist openTradeModal, nicht showTradeModal
+                        openTradeModal(positionData);
+                    }
+
+                    e.preventDefault();
+                    return;
+                }
+            }
+
+            // ⭐ WICHTIG: Wenn nicht über Box/Buttons geklickt → Event NICHT verarbeiten
+            // Lasse Event zum Chart durchfallen für Pan/Zoom
+            const isOverBox = isPointOverPositionBox(mouseX, mouseY, window.currentPositionBox);
+            const isOverButtons = isPointOverButtons(mouseX, mouseY);
+
+            if (!isOverBox && !isOverButtons) {
+                console.log('🎯 Click außerhalb Position Box - Event durchgelassen für Chart');
+                // Event wird NICHT preventDefault() → fällt zum Chart durch
+                return;
+            }
+        }
+
+        function onCanvasMouseMove(e) {
+            // ⭐ GUARD: Nur verarbeiten wenn Position Box existiert
+            if (!window.currentPositionBox) {
+                return;
+            }
+
+            const canvas = e.target;
+            const rect = canvas.getBoundingClientRect();
+
+            // ⭐ FIX: Skaliere Mouse-Koordinaten von CSS zu Canvas
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+
+            if (!isDragging) {
+                // Update cursor based on hover over handles
+                let cursorType = 'default';
+                for (const [id, handle] of Object.entries(window.resizeHandles || {})) {
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - handle.x, 2) + Math.pow(mouseY - handle.y, 2)
+                    );
+                    if (distance <= 20) {  // 20px hover tolerance (gleich wie click tolerance)
+                        cursorType = 'nw-resize'; // Diagonal für Eckhandles
+                        break;
+                    }
+                }
+
+                // ⭐ NEU: Check hover over Delete Button
+                if (cursorType === 'default' && window.deleteButtonCoords) {
+                    const btn = window.deleteButtonCoords;
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                    );
+                    if (distance <= btn.size/2) {
+                        cursorType = 'pointer'; // Pointer für Delete Button
+                    }
+                }
+
+                // ⭐ NEU: Check hover over Buy Button
+                if (cursorType === 'default' && window.buyButtonCoords) {
+                    const btn = window.buyButtonCoords;
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - btn.x, 2) + Math.pow(mouseY - btn.y, 2)
+                    );
+                    if (distance <= btn.size/2) {
+                        cursorType = 'pointer'; // Pointer für Buy Button
+                    }
+                }
+
+                // Check hover over Entry-Linie
+                if (cursorType === 'default' && window.boxCoordinates && window.currentPositionBox) {
+                    const coords = window.boxCoordinates;
+                    const entryY = coords.entryY;
+                    const x1 = coords.x1;
+                    const x2 = coords.x2;
+
+                    if (Math.abs(mouseY - entryY) <= 10 && mouseX >= x1 && mouseX <= x2) {
+                        cursorType = 'ns-resize'; // Vertikal für Entry-Linie
+                    }
+                }
+
+                e.target.style.cursor = cursorType;
+                return;
+            }
+
+            // Dragging logic - resize the box (HORIZONTAL + VERTIKAL)
+            try {
+                // SICHERE API AUFRUFE für Coordinate Conversion
+                if (!chart || !candlestickSeries) {
+                    console.warn('❌ Chart not ready for coordinate conversion');
+                    return;
+                }
+
+                // Vertical Price änderung
+                const newPrice = candlestickSeries.coordinateToPrice(mouseY);
+
+                // Horizontal Time/Width änderung
+                const canvas = window.positionCanvas;
+                const chartWidth = canvas.width;
+
+                // Berechne neue X-Position als Prozent der Chart-Breite
+                const newXPercent = mouseX / chartWidth;
+
+                if (!isNaN(newPrice) && newPrice > 0 && newXPercent >= 0 && newXPercent <= 1) {
+                    updateBoxFromHandle(dragHandle, newPrice, newXPercent, mouseX);
+                } else {
+                    console.warn('❌ Invalid values:', {price: newPrice, xPercent: newXPercent});
+                }
+            } catch (error) {
+                console.error('❌ Fehler beim Box Resize:', error);
+                // Fallback: Stoppe Dragging bei Fehler
+                isDragging = false;
+                dragHandle = null;
+                e.target.style.cursor = 'default';
+            }
+        }
+
+        function onCanvasMouseUp(e) {
+            // ⭐ GUARD: Nur verarbeiten wenn Position Box existiert
+            if (!window.currentPositionBox) {
+                return;
+            }
+
+            if (isDragging) {
+                console.log('🎯 Box Resize beendet:', dragHandle);
+                isDragging = false;
+                dragHandle = null;
+                e.target.style.cursor = 'default';
+
+                // ⭐ WICHTIG: Nach Dragging prüfen ob Mouse noch über Box ist
+                const canvas = e.target;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const mouseX = (e.clientX - rect.left) * scaleX;
+                const mouseY = (e.clientY - rect.top) * scaleY;
+
+                const isOverBox = isPointOverPositionBox(mouseX, mouseY, window.currentPositionBox);
+                const isOverButtons = isPointOverButtons(mouseX, mouseY);
+
+                // ⭐ DYNAMISCHE POINTER-EVENTS: Nur 'auto' wenn noch über Box/Buttons
+                if (!isOverBox && !isOverButtons) {
+                    canvas.style.pointerEvents = 'none';  // Zurück zu 'none' → Chart wird wieder frei
+                    console.log('🎯 Dragging beendet - Canvas deaktiviert (Mouse außerhalb Box)');
+                } else {
+                    console.log('🎯 Dragging beendet - Canvas bleibt aktiv (Mouse über Box)');
+                }
+            }
+        }
+
+        // ⭐⭐⭐ HILFSFUNKTION: Finde nächsten Kerzen-Index zu einer Zeit ⭐⭐⭐
+        function findNearestCandleIndex(targetTime, allData) {
+            if (!allData || allData.length === 0) {
+                console.warn('⚠️ findNearestCandleIndex: Keine Daten verfügbar');
+                return null;
+            }
+
+            let minDiff = Infinity;
+            let nearestIndex = 0;
+
+            for (let i = 0; i < allData.length; i++) {
+                const diff = Math.abs(allData[i].time - targetTime);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    nearestIndex = i;
+                }
+            }
+
+            console.log(`🔍 findNearestCandleIndex: Zeit ${targetTime} → Index ${nearestIndex} (Diff: ${minDiff}s)`);
+            return nearestIndex;
+        }
+
+        function updateBoxFromHandle(handleId, newPrice, newXPercent, mouseX) {
+            const box = window.currentPositionBox;
+            if (!box) return;
+
+            // ENTRY-LINIE: Verschieben nur Entry-Preis vertikal
+            if (handleId === 'ENTRY-LINE') {
+                box.entryPrice = newPrice;
+
+                // SOFORTIGE KOORDINATEN-CACHE AKTUALISIERUNG
+                box.entryY = candlestickSeries.priceToCoordinate(newPrice);
+                console.log('🎯 ENTRY-Koordinate sofort cached:', box.entryY);
+
+                // Update Price Lines mit neuem Entry-Preis
+                if (window.positionPriceLines && window.positionPriceLines.entry) {
+                    candlestickSeries.removePriceLine(window.positionPriceLines.entry);
+                    window.positionPriceLines.entry = candlestickSeries.createPriceLine({
+                        price: newPrice,
+                        color: '#ffffff',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Solid,
+                        axisLabelVisible: true,
+                        title: 'Entry'
+                    });
+                }
+
+                console.log('📊 ENTRY-LINIE VERSCHOBEN:', {
+                    newEntry: newPrice,
+                    SL: box.stopLoss,
+                    TP: box.takeProfit
+                });
+            } else {
+                // ECKHANDLES: Sowohl Preise als auch Breite ändern
+
+                // Update prices based on which handle was dragged
+                if (handleId.includes('SL')) {
+                    // BEGRENZUNG: SL darf nicht über Entry-Preis gezogen werden
+                    if (newPrice >= box.entryPrice) {
+                        console.warn('⚠️ SL darf nicht über Entry-Preis! Entry:', box.entryPrice, 'SL Versuch:', newPrice);
+                        newPrice = box.entryPrice - 1; // 1 Punkt unter Entry
+                    }
+                    box.stopLoss = newPrice;
+
+                    // SOFORTIGE KOORDINATEN-CACHE AKTUALISIERUNG
+                    box.slY = candlestickSeries.priceToCoordinate(newPrice);
+                    console.log('🎯 SL-Koordinate sofort cached:', box.slY);
+
+                    // Update SL Price Line
+                    if (window.positionPriceLines && window.positionPriceLines.stopLoss) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.stopLoss);
+                        window.positionPriceLines.stopLoss = candlestickSeries.createPriceLine({
+                            price: newPrice,
+                            color: '#f23645',
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Solid,
+                            axisLabelVisible: true,
+                            title: 'SL'
+                        });
+                    }
+
+                    console.log('📉 SL aktualisiert:', newPrice);
+                } else if (handleId.includes('TP')) {
+                    // BEGRENZUNG: TP darf nicht unter Entry-Preis gezogen werden
+                    if (newPrice <= box.entryPrice) {
+                        console.warn('⚠️ TP darf nicht unter Entry-Preis! Entry:', box.entryPrice, 'TP Versuch:', newPrice);
+                        newPrice = box.entryPrice + 1; // 1 Punkt über Entry
+                    }
+                    box.takeProfit = newPrice;
+
+                    // SOFORTIGE KOORDINATEN-CACHE AKTUALISIERUNG
+                    box.tpY = candlestickSeries.priceToCoordinate(newPrice);
+                    console.log('🎯 TP-Koordinate sofort cached:', box.tpY);
+
+                    // Update TP Price Line
+                    if (window.positionPriceLines && window.positionPriceLines.takeProfit) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.takeProfit);
+                        window.positionPriceLines.takeProfit = candlestickSeries.createPriceLine({
+                            price: newPrice,
+                            color: '#089981',
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Solid,
+                            axisLabelVisible: true,
+                            title: 'TP'
+                        });
+                    }
+
+                    console.log('📈 TP aktualisiert:', newPrice);
+                }
+
+                // ⭐ HORIZONTALE RESIZE: X-Achse Bewegung für Eckhandles
+                const isLeftHandle = handleId.includes('-TL') || handleId.includes('-BL');
+                const isRightHandle = handleId.includes('-TR') || handleId.includes('-BR');
+
+                if (isLeftHandle || isRightHandle) {
+                    // Update Percentage-based coordinates (Fallback)
+                    if (isLeftHandle) {
+                        box.x1Percent = newXPercent;
+                    } else if (isRightHandle) {
+                        box.x2Percent = newXPercent;
+                    }
+
+                    // ⭐⭐⭐ WICHTIG: Update Kerzen-Index + Zeit für Canvas-Zeichnung ⭐⭐⭐
+                    try {
+                        const timeScale = chart.timeScale();
+                        if (timeScale && typeof timeScale.coordinateToTime === 'function') {
+                            // Konvertiere Mouse X-Koordinate zu Zeit
+                            const newTime = timeScale.coordinateToTime(mouseX);
+
+                            if (newTime !== null && !isNaN(newTime)) {
+                                // ⭐ NEU: Finde Kerzen-Index zur neuen Zeit
+                                const allData = candlestickSeries.data();
+                                const newIndex = findNearestCandleIndex(newTime, allData);
+
+                                if (isLeftHandle) {
+                                    box.timeStart = newTime;
+                                    if (newIndex !== null) {
+                                        box.candleStartIndex = newIndex;
+                                        console.log(`◀️ LINKS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
+                                    }
+                                } else if (isRightHandle) {
+                                    box.timeEnd = newTime;
+                                    if (newIndex !== null) {
+                                        box.candleEndIndex = newIndex;
+                                        console.log(`▶️ RECHTS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('⚠️ Zeit-Konvertierung fehlgeschlagen, verwende Percentage:', error);
+                    }
+                }
+            }
+
+            // Stelle sicher dass timeStart < timeEnd und x1 < x2
+            if (box.timeStart && box.timeEnd && box.timeStart > box.timeEnd) {
+                const temp = box.timeStart;
+                box.timeStart = box.timeEnd;
+                box.timeEnd = temp;
+                console.log('🔄 Box Zeit-Seiten getauscht');
+            }
+            if (box.x1Percent && box.x2Percent && box.x1Percent > box.x2Percent) {
+                const temp = box.x1Percent;
+                box.x1Percent = box.x2Percent;
+                box.x2Percent = temp;
+                console.log('🔄 Box Percent-Seiten getauscht');
+            }
+
+            // Redraw the entire position box
+            drawPositionBox();
+        }
+
+        // VERALTETE FUNKTIONEN ENTFERNT - NUR NOCH CANVAS-BASIERT
+
+        function createPriceLines(entryPrice, stopLoss, takeProfit) {
+            // Entferne alte Price Lines falls vorhanden
+            removePriceLines();
+
+            // Speichere Price Lines in globaler Variable für späteres Entfernen
+            window.positionPriceLines = {};
+
+            try {
+                // Entry Price Line (weiß)
+                window.positionPriceLines.entry = candlestickSeries.createPriceLine({
+                    price: entryPrice,
+                    color: '#ffffff',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'Entry'
+                });
+
+                // Stop Loss Price Line (rot)
+                window.positionPriceLines.stopLoss = candlestickSeries.createPriceLine({
+                    price: stopLoss,
+                    color: '#f23645',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'SL'
+                });
+
+                // Take Profit Price Line (grün)
+                window.positionPriceLines.takeProfit = candlestickSeries.createPriceLine({
+                    price: takeProfit,
+                    color: '#089981',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'TP'
+                });
+
+                console.log('📊 Price Lines erstellt:', {entry: entryPrice, sl: stopLoss, tp: takeProfit});
+            } catch (error) {
+                console.error('❌ Fehler beim Erstellen der Price Lines:', error);
+            }
+        }
+
+        function removePriceLines() {
+            // Entferne alle vorhandenen Price Lines
+            if (window.positionPriceLines) {
+                try {
+                    if (window.positionPriceLines.entry) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.entry);
+                    }
+                    if (window.positionPriceLines.stopLoss) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.stopLoss);
+                    }
+                    if (window.positionPriceLines.takeProfit) {
+                        candlestickSeries.removePriceLine(window.positionPriceLines.takeProfit);
+                    }
+                } catch (error) {
+                    console.warn('⚠️ Fehler beim Entfernen der Price Lines:', error);
+                }
+                window.positionPriceLines = null;
+            }
+        }
+
+        function removeCurrentPositionBox() {
+            if (window.currentPositionBox) {
+                // Entferne Canvas Overlay
+                const canvas = document.getElementById('position-canvas');
+                if (canvas) {
+                    canvas.remove();
+                }
+
+                // Entferne Price Lines (DEAKTIVIERT da Price Lines deaktiviert)
+                // removePriceLines();
+
+                // Lösche Box Object und globale Variablen
+                window.currentPositionBox = null;
+                window.positionCanvas = null;
+                window.positionCtx = null;
+                window.boxCoordinates = null;
+                window.resizeHandles = null;
+                window.deleteButtonCoords = null;
+                window.buyButtonCoords = null;
+
+                console.log('🗑️ Position Box entfernt - Chart ist wieder frei');
+            }
+        }
+
+        // ===== GLOBAL FUNCTIONS FOR ONCLICK HANDLERS =====
+        // Test global scope
+        console.log('🌍 Global functions being defined...');
+
+        function togglePositionTool() {
+            console.log('📦 Position Box Tool Button geklickt via onclick');
+            window.positionBoxMode = !window.positionBoxMode;
+
+            const positionTool = document.getElementById('positionBoxTool');
+            if (!positionTool) {
+                console.error('❌ positionBoxTool Element nicht gefunden!');
+                return;
+            }
+
+            if (window.positionBoxMode) {
+                // Deaktiviere Short Position Mode wenn Long aktiviert wird
+                if (window.shortPositionMode) {
+                    window.shortPositionMode = false;
+                    const shortTool = document.getElementById('shortPositionTool');
+                    if (shortTool) {
+                        shortTool.classList.remove('active');
+                        shortTool.style.background = '#333';
+                        shortTool.style.color = '#fff';
+                    }
+                }
+                // Aktiviere Tool
+                positionTool.classList.add('active');
+                console.log('📦 Position Box Tool AKTIVIERT');
+            } else {
+                // ⭐ SAUBERES TOOL-DEAKTIVIEREN
+                positionTool.classList.remove('active');
+                positionTool.style.background = '#333';
+                positionTool.style.color = '#fff';
+
+                // Entferne aktive Position Box beim Deaktivieren
+                if (window.currentPositionBox) {
+                    removeCurrentPositionBox();
+                }
+
+                console.log('📦 Position Box Tool DEAKTIVIERT - Alle Boxen entfernt');
+            }
+        }
+
+        function toggleShortPositionTool() {
+            console.log('📉 Short Position Tool Button geklickt via onclick');
+            window.shortPositionMode = !window.shortPositionMode;
+
+            const shortTool = document.getElementById('shortPositionTool');
+            if (!shortTool) {
+                console.error('❌ shortPositionTool Element nicht gefunden!');
+                return;
+            }
+
+            if (window.shortPositionMode) {
+                // Deaktiviere Long Position Mode wenn Short aktiviert wird
+                if (window.positionBoxMode) {
+                    window.positionBoxMode = false;
+                    const positionTool = document.getElementById('positionBoxTool');
+                    if (positionTool) {
+                        positionTool.classList.remove('active');
+                        positionTool.style.background = '#333';
+                        positionTool.style.color = '#fff';
+                    }
+                }
+                // Aktiviere Tool
+                shortTool.classList.add('active');
+                console.log('📉 Short Position Tool AKTIVIERT');
+            } else {
+                // ⭐ SAUBERES TOOL-DEAKTIVIEREN
+                shortTool.classList.remove('active');
+                shortTool.style.background = '#333';
+                shortTool.style.color = '#fff';
+
+                // Entferne aktive Position Box beim Deaktivieren
+                if (window.currentPositionBox) {
+                    removeCurrentPositionBox();
+                }
+
+                console.log('📉 Short Position Tool DEAKTIVIERT - Alle Boxen entfernt');
+            }
+        }
+
+        function clearAllPositions() {
+            console.log('[CLEAR ALL] Button geklickt via onclick - FORCE DEAKTIVIERE TOOL');
+
+            try {
+                // Deaktiviere beide Position Tools komplett
+                window.positionBoxMode = false;
+                window.shortPositionMode = false;
+
+                const positionTool = document.getElementById('positionBoxTool');
+                if (positionTool) {
+                    positionTool.classList.remove('active');
+                    positionTool.style.background = '#333';
+                    positionTool.style.color = '#fff';
+                    console.log('[SUCCESS] Long Position Tool deaktiviert via onclick');
+                } else {
+                    console.error('[ERROR] positionBoxTool Element nicht gefunden beim Clear!');
+                }
+
+                const shortTool = document.getElementById('shortPositionTool');
+                if (shortTool) {
+                    shortTool.classList.remove('active');
+                    shortTool.style.background = '#333';
+                    shortTool.style.color = '#fff';
+                    console.log('[SUCCESS] Short Position Tool deaktiviert via onclick');
+                } else {
+                    console.error('[ERROR] shortPositionTool Element nicht gefunden beim Clear!');
+                }
+
+                // Versuche Position Box zu entfernen (falls vorhanden)
+                if (typeof removeCurrentPositionBox === 'function') {
+                    removeCurrentPositionBox();
+                    console.log('[SUCCESS] Position Box entfernt');
+                } else {
+                    console.log('⚠️ removeCurrentPositionBox function not available yet');
+                }
+            } catch (error) {
+                console.error('❌ Fehler in clearAllPositions:', error);
+            }
+        }
+
+        // ===== TIMEFRAME FUNCTIONS =====
+        // High-Performance Timeframe Change Function
+        async function changeTimeframe(timeframe) {
+            // Prevent double-requests
+            if (window.isTimeframeChanging || timeframe === window.currentTimeframe) {
+                return;
+            }
+
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('timeframe_change', {
+                    from_timeframe: window.currentTimeframe,
+                    to_timeframe: timeframe,
+                    timestamp: new Date()
+                });
+            }
+
+            console.log(`Wechsle zu Timeframe: ${timeframe}`);
+            window.isTimeframeChanging = true;
+
+            try {
+                // Check browser cache first
+                const cacheKey = `tf_${timeframe}`;
+                if (window.timeframeCache.has(cacheKey)) {
+                    console.log(`[CACHE-HIT] Browser Cache Hit für ${timeframe} (${window.timeframeCache.size} total entries)`);
+                    const cachedData = window.timeframeCache.get(cacheKey);
+                    console.log(`[CACHE-HIT] Cached data: ${cachedData.length} candles, first: ${new Date(cachedData[0]?.time * 1000).toISOString()}`);
+
+                    // 🚀 CRITICAL FIX: Cache-Validation gegen Server-State
+                    // Prüfe ob Cache-Daten nach GoTo-Operation noch gültig sind
+                    let cacheValid = true;
+                    if (window.lastGoToDate && cachedData.length > 0) {
+                        const cacheDataDate = new Date(cachedData[0]?.time * 1000).toISOString().split('T')[0];
+                        if (cacheDataDate !== window.lastGoToDate) {
+                            console.log(`[CACHE-VALIDATION] Cache ungültig: Daten ${cacheDataDate} vs Server ${window.lastGoToDate}`);
+                            window.timeframeCache.delete(cacheKey);
+                            console.log(`[CACHE-INVALIDATION] Stale cache entry removed for ${timeframe}`);
+                            cacheValid = false;
+                        }
+                    }
+
+                    if (cacheValid) {
+                        // Instant UI update from cache mit Smart Positioning
+                        updateTimeframeButtons(timeframe);
+                        candlestickSeries.setData(cachedData);
+
+                        // Smart Positioning: Nach Cache-Hit zurück zu 50-Kerzen Standard
+                        if (window.smartPositioning) {
+                            window.smartPositioning.resetToStandardPosition(cachedData);
+                        }
+
+                        window.currentTimeframe = timeframe;
+                        window.isTimeframeChanging = false;
+                        return;
+                    }
+                }
+
+                // 🚀 CACHE-MISS LOGGING: Detailliertes Logging für Server-Requests
+                console.log(`[CACHE-MISS] No cache für ${timeframe} - Server-Request erforderlich (${window.timeframeCache.size} total entries)`);
+                if (window.lastGoToDate) {
+                    console.log(`[CACHE-MISS] Server-State: lastGoToDate=${window.lastGoToDate}`);
+                }
+
+                // Optimistic UI update
+                updateTimeframeButtons(timeframe);
+
+                // Performance-optimized API call mit adaptivem Timeout
+                const controller = new AbortController();
+                // ADAPTIVE TIMEOUT: Länger nach Go To Date wegen CSV-Processing
+                const adaptiveTimeout = window.current_go_to_date ? 15000 : 8000; // 15s nach Go To Date, sonst 8s
+                const timeoutId = setTimeout(() => controller.abort(), adaptiveTimeout);
+
+                const response = await fetch('/api/chart/change_timeframe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ timeframe: timeframe }),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+                const result = await response.json();
+
+                if (result.status === 'success' && result.data && result.data.length > 0) {
+                    console.log(`Timeframe gewechselt zu ${timeframe}: ${result.count} Kerzen`);
+
+                    // Optimized data formatting - no unnecessary parsing
+                    const formattedData = result.data.filter(item =>
+                        item && item.time &&
+                        item.open != null && item.high != null &&
+                        item.low != null && item.close != null
+                    ).map(item => ({
+                        time: item.time,  // Already correct format
+                        open: parseFloat(item.open) || 0,  // Ensure float with fallback
+                        high: parseFloat(item.high) || 0,
+                        low: parseFloat(item.low) || 0,
+                        close: parseFloat(item.close) || 0
+                    }));
+
+                    // Cache for instant future access
+                    window.timeframeCache.set(cacheKey, formattedData);
+                    console.log(`[CACHE-SET] Cached ${formattedData.length} candles für ${timeframe} (total cache: ${window.timeframeCache.size} entries)`);
+                    console.log(`[CACHE-SET] Data range: ${new Date(formattedData[0]?.time * 1000).toISOString()} - ${new Date(formattedData[formattedData.length-1]?.time * 1000).toISOString()}`);
+
+                    // Limit cache size to prevent memory issues
+                    if (window.timeframeCache.size > 8) {
+                        const firstKey = window.timeframeCache.keys().next().value;
+                        window.timeframeCache.delete(firstKey);
+                        console.log(`[CACHE-CLEANUP] Oldest cache entry removed: ${firstKey}`);
+                    }
+
+                    // Fast chart update mit Smart Positioning
+                    candlestickSeries.setData(formattedData);
+
+                    // Smart Positioning: Nach Timeframe-Wechsel zurück zu 50-Kerzen Standard
+                    if (window.smartPositioning) {
+                        window.smartPositioning.resetToStandardPosition(formattedData);
+                    }
+
+                    window.currentTimeframe = timeframe;
+                } else {
+                    console.error('Timeframe-Wechsel fehlgeschlagen:', result.message);
+                    updateTimeframeButtons(window.currentTimeframe);
+                }
+
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.warn('Timeframe request timeout - aber WebSocket Daten könnten noch kommen');
+                    // NICHT den Button-State zurücksetzen - WebSocket könnte noch antworten!
+                    // Race Condition Fix: Lasse Button auf neuem Timeframe, falls WebSocket später antwortet
+                } else {
+                    console.error('Fehler beim Timeframe-Wechsel:', error);
+                    // Nur bei echten Fehlern Button-State zurücksetzen
+                    updateTimeframeButtons(window.currentTimeframe);
+                }
+            } finally {
+                window.isTimeframeChanging = false;
+            }
+        }
+
+        // Update Timeframe Button States
+        function updateTimeframeButtons(activeTimeframe) {
+            const timeframeButtons = document.querySelectorAll('.timeframe-btn');
+            timeframeButtons.forEach(btn => {
+                const btnTimeframe = btn.getAttribute('data-timeframe');
+                if (btnTimeframe === activeTimeframe) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+
+        // ============ DEBUG CONTROLS EVENT HANDLERS ============
+        // WICHTIG: Funktionen MÜSSEN vor DOMContentLoaded definiert werden!
+
+        // Hilfsfunktion: Aktuelles Timeframe aus UI abrufen
+        function getCurrentTimeframe() {
+            // Zuerst prüfen: Debug Timeframe Selector
+            const debugSelector = document.getElementById('debugTimeframSelector');
+            if (debugSelector && debugSelector.value) {
+                return debugSelector.value;
+            }
+
+            // Fallback: Chart Timeframe Button
+            const activeButton = document.querySelector('.timeframe-btn.active');
+            if (activeButton) {
+                return activeButton.textContent.trim();
+            }
+
+            // Letzter Fallback
+            return globalState?.currentTimeframe || '5m';
+        }
+
+        // Debug Skip Button Handler
+        function handleDebugSkip() {
+            // Dynamische Nachricht basierend auf Timeframe
+            const currentTimeframe = getCurrentTimeframe();
+            let skipMessage = "🚀 DEBUG SKIP: +1 Minute";
+
+            if (currentTimeframe === '1m') {
+                skipMessage = "🚀 DEBUG SKIP: +1 Minute";
+            } else if (['2m', '3m', '5m', '15m', '30m'].includes(currentTimeframe)) {
+                const timeframeMinutes = {'2m': 2, '3m': 3, '5m': 5, '15m': 15, '30m': 30};
+                const skipMins = timeframeMinutes[currentTimeframe] || 1;
+                skipMessage = `🚀 DEBUG SKIP: +${skipMins} Minutes`;
+            } else if (['1h', '4h'].includes(currentTimeframe)) {
+                const timeframeHours = {'1h': 1, '4h': 4};
+                const skipHrs = timeframeHours[currentTimeframe] || 1;
+                skipMessage = `🚀 DEBUG SKIP: +${skipHrs} Hour${skipHrs > 1 ? 's' : ''}`;
+            }
+
+            console.log(`${skipMessage} - Button clicked!`);
+            serverLog('🔧 handleDebugSkip called');
+
+            fetch('/api/debug/skip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Debug Skip Response:', data);
+                serverLog('✅ Debug Skip successful', data);
+            })
+            .catch(error => {
+                console.error('❌ Debug Skip Error:', error);
+                serverLog('❌ Debug Skip failed', error);
+            });
+        }
+
+        // Debug Play/Pause Button Handler
+        function handleDebugPlayPause() {
+            console.log('🚀 DEBUG PLAY/PAUSE: Toggle - Button clicked!');
+            serverLog('🔧 handleDebugPlayPause called');
+
+            fetch('/api/debug/toggle_play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Debug PlayPause Response:', data);
+                serverLog('✅ Debug PlayPause successful', data);
+
+                // Update button text
+                const playPauseBtn = document.getElementById('playPauseBtn');
+                if (playPauseBtn) {
+                    playPauseBtn.textContent = data.play_mode ? '⏸️' : '▶️';
+                }
+            })
+            .catch(error => {
+                console.error('❌ Debug PlayPause Error:', error);
+                serverLog('❌ Debug PlayPause failed', error);
+            });
+        }
+
+        // Debug Control Timeframe Handler - ONLY sets variable, NO chart reload
+        function handleDebugTimeframe(timeframe) {
+            console.log('🔧 DEBUG CONTROL: Variable-only change zu', timeframe);
+            serverLog(`[DEBUG-CONTROL] Variable change to: ${timeframe}`);
+
+            fetch(`/api/debug/set_control_timeframe/${timeframe}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Debug Control Response:', data);
+                serverLog('✅ Debug Control Variable successful', data);
+            })
+            .catch(error => {
+                console.error('❌ Debug Control Error:', error);
+                serverLog('❌ Debug Control Variable failed', error);
+            });
+        }
+
+        // Go To Date Modal Functions
+        function openDateModal() {
+            console.log('[GO TO DATE] Opening Modal...');
+            const modal = document.getElementById('dateModal');
+            const dateInput = document.getElementById('goToDateInput');
+
+            // Setze ein verfügbares Datum als Default (Dezember 2024)
+            // Die CSV-Daten gehen von 31. Dezember 2024 rückwärts
+            const defaultDate = new Date('2024-12-25'); // Ein Datum das in den Daten ist
+            const dateString = defaultDate.toISOString().split('T')[0];
+            dateInput.value = dateString;
+
+            // Setze min/max Werte für verfügbare Daten (ungefähr)
+            dateInput.setAttribute('min', '2024-12-01'); // Ca. Startdatum der Daten
+            dateInput.setAttribute('max', '2024-12-30'); // Enddatum der Daten
+
+            modal.style.display = 'flex';
+            dateInput.focus();
+        }
+
+        function closeDateModal() {
+            console.log('[GO TO DATE] Closing Modal...');
+            const modal = document.getElementById('dateModal');
+            modal.style.display = 'none';
+        }
+
+        // ===== TRADE MODAL FUNCTIONS =====
+        let currentTradeSetup = null;
+
+        function openTradeModal(tradeData) {
+            console.log('💰 Opening Trade Modal:', tradeData);
+
+            currentTradeSetup = tradeData;
+
+            // Update Modal Content
+            document.getElementById('tradeType').textContent = tradeData.isShort ? 'SHORT' : 'LONG';
+            document.getElementById('tradeEntry').textContent = tradeData.entryPrice.toFixed(2);
+            document.getElementById('tradeStopLoss').textContent = tradeData.stopLoss.toFixed(2);
+            document.getElementById('tradeTakeProfit').textContent = tradeData.takeProfit.toFixed(2);
+
+            // Calculate and update position size
+            updatePositionSize();
+
+            // Show modal
+            const modal = document.getElementById('tradeModal');
+            modal.style.display = 'flex';
+        }
+
+        function closeTradeModal() {
+            console.log('💰 Closing Trade Modal...');
+            const modal = document.getElementById('tradeModal');
+            modal.style.display = 'none';
+            currentTradeSetup = null;
+
+            // ⭐ VISUAL FEEDBACK: Entferne Selected State vom $ Button
+            window.buyButtonSelected = false;
+            if (window.currentPositionBox) {
+                drawPositionBox();  // Redraw ohne Selected State
+            }
+        }
+
+        function setRiskAmount(amount) {
+            document.getElementById('riskAmount').value = amount;
+
+            // Update active button
+            document.querySelectorAll('.risk-preset-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            updatePositionSize();
+        }
+
+        function setRRRatio(risk, reward) {
+            console.log(`📊 Setting R:R Ratio to ${risk}:${reward}`);
+
+            // Update active button
+            document.querySelectorAll('.rr-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Recalculate TP based on new ratio
+            if (currentTradeSetup) {
+                const entryPrice = currentTradeSetup.entryPrice;
+                const stopLoss = currentTradeSetup.stopLoss;
+                const riskAmount = Math.abs(entryPrice - stopLoss);
+                const rewardAmount = riskAmount * (reward / risk);
+
+                let newTakeProfit;
+                if (currentTradeSetup.isShort) {
+                    newTakeProfit = entryPrice - rewardAmount;
+                } else {
+                    newTakeProfit = entryPrice + rewardAmount;
+                }
+
+                currentTradeSetup.takeProfit = newTakeProfit;
+                document.getElementById('tradeTakeProfit').textContent = newTakeProfit.toFixed(2);
+
+                updatePositionSize();
+            }
+        }
+
+        function updatePositionSize() {
+            if (!currentTradeSetup) return;
+
+            const riskEUR = parseFloat(document.getElementById('riskAmount').value);
+            const entryPrice = currentTradeSetup.entryPrice;
+            const stopLoss = currentTradeSetup.stopLoss;
+            const takeProfit = currentTradeSetup.takeProfit;
+
+            // Calculate position size based on risk
+            const riskPerUnit = Math.abs(entryPrice - stopLoss);
+            const positionSize = riskEUR / riskPerUnit;
+
+            // Calculate max profit
+            const rewardPerUnit = Math.abs(takeProfit - entryPrice);
+            const maxProfit = positionSize * rewardPerUnit;
+
+            // Update display
+            document.getElementById('positionSize').textContent = `${positionSize.toFixed(2)} NQ`;
+            document.getElementById('maxProfit').textContent = `+${maxProfit.toFixed(0)}€`;
+        }
+
+        function executeTrade() {
+            console.log('🚀 Executing Trade:', currentTradeSetup);
+
+            const riskEUR = parseFloat(document.getElementById('riskAmount').value);
+            const positionSize = parseFloat(document.getElementById('positionSize').textContent);
+
+            const tradeExecution = {
+                ...currentTradeSetup,
+                riskEUR: riskEUR,
+                positionSize: positionSize,
+                executionTime: new Date(),
+                id: 'TRADE_' + Date.now()
+            };
+
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('trade_executed', tradeExecution);
+            }
+
+            // Send to backend (placeholder)
+            console.log('💰 Trade executed successfully:', tradeExecution);
+            alert(`Trade ausgeführt!\nTyp: ${tradeExecution.isShort ? 'SHORT' : 'LONG'}\nRisiko: ${riskEUR}€\nGröße: ${positionSize.toFixed(2)} NQ`);
+
+            closeTradeModal();
+        }
+
+        function goToSelectedDate() {
+            const dateInput = document.getElementById('goToDateInput');
+            const selectedDate = dateInput.value;
+
+            if (!selectedDate) {
+                alert('Bitte wähle ein Datum aus!');
+                return;
+            }
+
+            // RL Action Tracking
+            if (window.RLSystem) {
+                window.RLSystem.trackAction('go_to_date', {
+                    selected_date: selectedDate,
+                    current_timeframe: window.currentTimeframe,
+                    timestamp: new Date()
+                });
+            }
+
+            console.log('[GO TO DATE] Request:', selectedDate);
+            serverLog('[GO TO DATE] Request: ' + selectedDate);
+
+            // Modal schließen
+            closeDateModal();
+
+            // API Call zum Backend
+            fetch('/api/debug/go_to_date', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date: selectedDate })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Go To Date Response:', data);
+                serverLog('[SUCCESS] Go To Date successful: ' + data.message, data);
+
+                if (data.status === 'success') {
+                    console.log('[CHART] Chart wird zu neuem Datum reinitialisiert...');
+                    // WebSocket wird automatisch das chart_reinitialize Event senden
+                } else {
+                    console.error('❌ Go To Date failed:', data.message);
+                    alert('Fehler: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('❌ Go To Date Error:', error);
+                serverLog('❌ Go To Date failed', error);
+                alert('Fehler beim Laden des Datums: ' + error.message);
+            });
+        }
+
+        // Modal schließen bei Escape-Taste
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const modal = document.getElementById('dateModal');
+                if (modal.style.display === 'flex') {
+                    closeDateModal();
+                }
+            }
+        });
+
+        // Modal schließen bei Klick außerhalb
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('dateModal');
+            if (event.target === modal) {
+                closeDateModal();
+            }
+        });
+
+        // RL Trading System - Einfache und sichere Implementation
+        window.RLSystem = {
+            mode: 'offline',
+            isRecording: false,
+            demoActions: [],
+
+            startDemo: function() {
+                this.mode = 'demo';
+                this.isRecording = true;
+                this.updateUI();
+                console.log('✅ RL Demo-Modus aktiviert - Tracking gestartet');
+            },
+
+            startBot: function() {
+                this.mode = 'bot';
+                this.isRecording = false;
+                this.updateUI();
+                console.log('✅ RL Bot-Modus aktiviert');
+            },
+
+            stop: function() {
+                console.log(`📊 RL Session beendet - ${this.demoActions.length} Actions aufgezeichnet`);
+                this.mode = 'offline';
+                this.isRecording = false;
+                this.updateUI();
+            },
+
+            updateUI: function() {
+                const status = document.getElementById('rlStatus');
+                const demoBtn = document.getElementById('rlDemoBtn');
+                const botBtn = document.getElementById('rlBotBtn');
+                const stopBtn = document.getElementById('rlStopBtn');
+
+                if (status) {
+                    if (this.mode === 'demo') {
+                        status.textContent = '🟢 Demo';
+                        status.style.color = '#4ade80';
+                    } else if (this.mode === 'bot') {
+                        status.textContent = '🤖 Bot';
+                        status.style.color = '#60a5fa';
+                    } else {
+                        status.textContent = 'Offline';
+                        status.style.color = '#666';
+                    }
+                }
+
+                if (this.mode === 'offline') {
+                    if (demoBtn) demoBtn.style.display = 'inline-block';
+                    if (botBtn) botBtn.style.display = 'inline-block';
+                    if (stopBtn) stopBtn.style.display = 'none';
+                } else {
+                    if (demoBtn) demoBtn.style.display = 'none';
+                    if (botBtn) botBtn.style.display = 'none';
+                    if (stopBtn) stopBtn.style.display = 'inline-block';
+                }
+            },
+
+            trackAction: function(actionType, data) {
+                if (this.mode === 'demo' && this.isRecording) {
+                    const action = {
+                        id: Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                        type: actionType,
+                        timestamp: new Date(),
+                        data: data
+                    };
+                    this.demoActions.push(action);
+                    console.log(`📝 RL Action tracked: ${actionType}`, data);
+                }
+            }
+        };
+
+        // Warte bis DOM und Script geladen sind
+        document.addEventListener('DOMContentLoaded', function() {
+            serverLog('🔧 DOM loaded - Initialisiere Chart und Event Handlers...');
+
+            // WICHTIG: Chart zuerst initialisieren
+            console.log('🔧 Initialisiere Chart beim DOMContentLoaded...');
+            initChart();
+
+            // RL System UI initialisieren
+            if (window.RLSystem) {
+                window.RLSystem.updateUI();
+                console.log('✅ RL System initialisiert');
+            }
+
+            // Registriere Button Event Handlers
+            const positionBoxTool = document.getElementById('positionBoxTool');
+            const shortPositionTool = document.getElementById('shortPositionTool');
+            const clearAllBtn = document.getElementById('clearAll');
+
+            // Debug Button Event Handlers - konsolidiert hier
+            // Skip Button
+            const skipBtn = document.getElementById('skipBtn');
+            console.log('🔧 Debug setup - Skip Button element:', skipBtn);
+            if (skipBtn) {
+                skipBtn.addEventListener('click', handleDebugSkip);
+                console.log('✅ Skip Button event listener attached');
+            } else {
+                console.error('❌ Skip Button not found!');
+            }
+
+            // Play/Pause Button
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            console.log('🔧 Debug setup - PlayPause Button element:', playPauseBtn);
+            if (playPauseBtn) {
+                playPauseBtn.addEventListener('click', handleDebugPlayPause);
+                console.log('✅ PlayPause Button event listener attached');
+            } else {
+                console.error('❌ PlayPause Button not found!');
+            }
+
+            // Speed Slider
+            const speedSlider = document.getElementById('speedSlider');
+            const speedDisplay = document.getElementById('speedDisplay');
+            if (speedSlider && speedDisplay) {
+                speedSlider.addEventListener('input', function() {
+                    speedDisplay.textContent = `${this.value}x`;
+                });
+
+                speedSlider.addEventListener('change', function() {
+                    handleDebugSpeed(this.value);
+                });
+            }
+
+            // Timeframe Selector
+            const timeframeSelector = document.getElementById('timeframeSelector');
+            if (timeframeSelector) {
+                timeframeSelector.addEventListener('change', function() {
+                    handleDebugTimeframe(this.value);
+                });
+            }
+
+            // Go To Date Button
+            const goToDateBtn = document.getElementById('goToDateBtn');
+            console.log('🔧 Debug setup - Go To Date Button element:', goToDateBtn);
+            if (goToDateBtn) {
+                goToDateBtn.addEventListener('click', openDateModal);
+                console.log('✅ Go To Date Button event listener attached');
+            } else {
+                console.error('❌ Go To Date Button not found!');
+            }
+
+            console.log('🛠️ Debug Controls Event Handlers konsolidiert und initialized');
+
+            if (positionBoxTool) {
+                positionBoxTool.addEventListener('click', togglePositionTool);
+                console.log('✅ Position Box Tool Event Handler registriert');
+            } else {
+                console.error('❌ positionBoxTool Button nicht gefunden');
+            }
+
+            if (shortPositionTool) {
+                shortPositionTool.addEventListener('click', toggleShortPositionTool);
+                console.log('✅ Short Position Tool Event Handler registriert');
+            } else {
+                console.error('❌ shortPositionTool Button nicht gefunden');
+            }
+
+            if (clearAllBtn) {
+                clearAllBtn.addEventListener('click', clearAllPositions);
+                console.log('✅ Clear All Button Event Handler registriert');
+            } else {
+                console.error('❌ clearAll Button nicht gefunden');
+            }
+
+            // Registriere Timeframe Button Event Handlers
+            const timeframeButtons = document.querySelectorAll('.timeframe-btn');
+            timeframeButtons.forEach(btn => {
+                const timeframe = btn.getAttribute('data-timeframe');
+                btn.addEventListener('click', () => changeTimeframe(timeframe));
+                console.log(`✅ Timeframe Button ${timeframe} Event Handler registriert`);
+            });
+
+            if (timeframeButtons.length > 0) {
+                console.log(`✅ ${timeframeButtons.length} Timeframe Buttons Event Handler registriert`);
+            } else {
+                console.error('❌ Keine Timeframe Buttons gefunden');
+            }
+
+            // Zusätzliche Sicherheit: Prüfe ob LightweightCharts verfügbar ist
+            if (typeof LightweightCharts !== 'undefined') {
+                console.log('✅ LightweightCharts library loaded');
+                // DIREKT TESTEN: Chart erstellen ohne loadChart()
+                try {
+                    serverLog('🔧 DIRECT CHART TEST - Starting detailed debug...');
+
+                    // 1. Container Debug
+                    const container = document.getElementById('chart_container');
+                    serverLog('🔍 Container Debug:', {
+                        gefunden: !!container,
+                        clientWidth: container?.clientWidth,
+                        clientHeight: container?.clientHeight,
+                        offsetWidth: container?.offsetWidth,
+                        offsetHeight: container?.offsetHeight,
+                        rect: container?.getBoundingClientRect()
+                    });
+
+                    if (!container) {
+                        console.error('❌ Chart container nicht gefunden! ID: chart_container');
+                        return;
+                    }
+
+                    // 2. LightweightCharts Debug
+                    console.log('🔍 LightweightCharts Debug:');
+                    console.log('  - LightweightCharts verfügbar:', typeof LightweightCharts);
+                    console.log('  - createChart function:', typeof LightweightCharts.createChart);
+
+                    // 3. Chart Creation Debug
+                    console.log('🔧 Creating chart with options...');
+                    const chartOptions = {
+                        width: 800,
+                        height: 600,
+                        timeScale: { timeVisible: true },
+                        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+                        layout: {
+                            background: { type: 'solid', color: '#FFFFFF' },
+                            textColor: '#333'
+                        }
+                    };
+                    console.log('  - Chart Options:', chartOptions);
+
+                    const chart = LightweightCharts.createChart(container, chartOptions);
+                    console.log('✅ Chart object created:', chart);
+
+                    // 4. Series Debug
+                    console.log('🔧 Adding candlestick series...');
+                    const candlestickSeries = chart.addCandlestickSeries({
+                        upColor: '#089981',
+                        downColor: '#f23645',
+                        borderVisible: false,
+                        wickUpColor: '#089981',
+                        wickDownColor: '#f23645'
+                    });
+                    console.log('✅ Candlestick series created:', candlestickSeries);
+
+                    // 5. API Call Debug
+                    console.log('🔧 Fetching chart data...');
+                    fetch('/api/chart/data')
+                        .then(response => {
+                            console.log('📡 API Response Status:', response.status);
+                            console.log('📡 API Response OK:', response.ok);
+                            return response.json();
+                        })
+                        .then(data => {
+                            console.log('📊 DETAILED DATA DEBUG:');
+                            console.log('  - Data object:', data);
+                            console.log('  - Data.data exists:', !!data.data);
+                            console.log('  - Data.data length:', data.data?.length);
+                            console.log('  - First 3 candles:', data.data?.slice(0, 3));
+                            console.log('  - Last 3 candles:', data.data?.slice(-3));
+
+                            if (data.data && data.data.length > 0) {
+                                console.log('🔧 Setting data on candlestick series...');
+                                candlestickSeries.setData(data.data);
+                                console.log('✅ Data set successfully!');
+
+                                // 6. Chart Rendering Debug
+                                console.log('🔍 POST-RENDER DEBUG:');
+                                setTimeout(() => {
+                                    console.log('  - Container nach Render clientWidth:', container.clientWidth);
+                                    console.log('  - Container nach Render clientHeight:', container.clientHeight);
+                                    const canvasElements = container.querySelectorAll('canvas');
+                                    console.log('  - Anzahl Canvas Elemente:', canvasElements.length);
+                                    canvasElements.forEach((canvas, i) => {
+                                        console.log(`  - Canvas ${i}: ${canvas.width}x${canvas.height}`);
+                                    });
+                                }, 1000);
+
+                                console.log('✅ CHART ERFOLGREICH GELADEN!');
+                            } else {
+                                console.error('❌ Keine Daten erhalten oder leeres Array');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('❌ Chart API Error Details:');
+                            console.error('  - Error object:', error);
+                            console.error('  - Error message:', error.message);
+                            console.error('  - Error stack:', error.stack);
+                        });
+
+                } catch (error) {
+                    console.error('❌ DIRECT CHART ERROR:', error);
+                }
+                connectWebSocket();
+                loadAccountData(); // Lade initiale Account-Daten
+            } else {
+                console.error('❌ LightweightCharts library not loaded');
+                // Fallback: Versuche nochmal nach kurzer Wartezeit
+                setTimeout(() => {
+                    if (typeof LightweightCharts !== 'undefined') {
+                        console.log('✅ LightweightCharts library loaded (delayed)');
+                        // DIREKT TESTEN: Chart erstellen (2. Fallback)
+                        try {
+                            console.log('🔧 FALLBACK CHART TEST - Creating chart...');
+                            const chart = LightweightCharts.createChart(document.getElementById('chart_container'), {
+                                width: 800,
+                                height: 600,
+                                timeScale: { timeVisible: true },
+                                grid: { vertLines: { visible: false }, horzLines: { visible: false } }
+                            });
+
+                            const candlestickSeries = chart.addCandlestickSeries();
+
+                            fetch('/api/chart/data')
+                                .then(response => response.json())
+                                .then(data => {
+                                    console.log('🔧 FALLBACK - Daten empfangen:', data);
+                                    if (data.data && data.data.length > 0) {
+                                        candlestickSeries.setData(data.data);
+                                        console.log('✅ FALLBACK CHART ERFOLGREICH!');
+                                    }
+                                })
+                                .catch(error => console.error('❌ Fallback Chart Error:', error));
+
+                        } catch (error) {
+                            console.error('❌ FALLBACK CHART ERROR:', error);
+                        }
+                        connectWebSocket();
+                        loadAccountData(); // Lade initiale Account-Daten
+                    } else {
+                        console.error('❌ LightweightCharts library failed to load');
+                    }
+                }, 1000);
+            }
+        });
