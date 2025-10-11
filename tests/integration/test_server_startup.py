@@ -1,5 +1,5 @@
 """
-Pre-Start Test fuer main_v2.py Server
+Pre-Start Test fuer chart_server.py (Refactored System)
 Validiert dass alle Komponenten korrekt initialisiert werden BEVOR der Server startet
 """
 
@@ -23,7 +23,7 @@ def test_initial_chart_data_loading():
     print("TEST 1: Initial Chart Data Loading")
     print("="*60)
 
-    # Simuliere die Logik aus main_v2.py initialize_components()
+    # Simuliere die Logik aus chart_server.py initialize_components()
     import pandas as pd
 
     csv_path = Path("src/data/aggregated/5m/nq-2024.csv")
@@ -161,7 +161,7 @@ def test_router_imports():
 def run_all_tests():
     """Führt alle Tests aus"""
     print("\n" + "="*70)
-    print("🧪 PRE-START VALIDATION für main_v2.py Server")
+    print("🧪 PRE-START VALIDATION für chart_server.py (Refactored System)")
     print("="*70)
 
     tests = [

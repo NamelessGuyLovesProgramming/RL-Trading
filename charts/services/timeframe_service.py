@@ -142,6 +142,7 @@ class TimeframeService:
     def preload_adjacent_timeframes(self, current_timeframe: str):
         """
         Pre-lädt benachbarte Timeframes für schnelleres Switching
+        Phase 7 Optimization
 
         Args:
             current_timeframe: Aktueller Timeframe
@@ -164,7 +165,14 @@ class TimeframeService:
             for tf in adjacent_timeframes:
                 # Cache vorbereiten (im Hintergrund)
                 self.timeframe_repo.load_timeframe_data(tf, start_date=None, end_date=None, max_candles=200)
-                print(f"[TimeframeService] Preloaded {tf}")
+
+                # Phase 7: Mark as preloaded in cache
+                if hasattr(self.timeframe_repo, 'cache') and hasattr(self.timeframe_repo.cache, 'mark_preloaded'):
+                    self.timeframe_repo.cache.mark_preloaded(tf)
+
+                print(f"[TimeframeService] ✅ Preloaded {tf}")
 
         except ValueError:
             print(f"[TimeframeService] WARNING: Unknown timeframe {current_timeframe}")
+        except Exception as e:
+            print(f"[TimeframeService] ERROR during preload: {e}")

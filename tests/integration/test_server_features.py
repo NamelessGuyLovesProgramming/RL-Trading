@@ -1,5 +1,5 @@
 """
-Feature Tests für main_v2.py Server
+Feature Tests für chart_server.py (Refactored System)
 Testet Timeframe-Switch, Go To Date und Skip-Funktionalität
 """
 
@@ -274,10 +274,118 @@ def test_skip_forward():
     return True
 
 
+def test_go_to_date_skip_integration():
+    """
+    Test 4: Go To Date → Skip Integration
+    Kritischer Test: Prüft ob Skip nach Go To Date die NEUE Zeit nutzt
+    Bug-Szenario: Go To 17.12 → Skip → Go To 13.12 → Skip sollte 13.12 nutzen, nicht 17.12!
+    """
+    print("\n" + "="*70)
+    print("TEST 4: Go To Date → Skip Integration (Critical Bug Fix)")
+    print("="*70)
+
+    # Wechsle zu 5m
+    print("\n[INIT] Wechsle zu 5m Timeframe...")
+    change_timeframe('5m')
+    time.sleep(1)
+
+    # STEP 1: Go To Date 17.12.2024
+    print("\n--- STEP 1: Go To Date 17.12.2024 ---")
+    result1 = go_to_date("2024-12-17")
+
+    if result1.get('status') != 'success':
+        print(f"❌ FEHLER: Go To Date 17.12 fehlgeschlagen")
+        return False
+
+    print(f"✅ Go To Date 17.12.2024 erfolgreich")
+
+    # STEP 2: Skip nach 17.12
+    print("\n--- STEP 2: Skip nach 17.12 ---")
+    skip1_result = skip_forward()
+
+    if skip1_result.get('status') != 'success':
+        print(f"❌ FEHLER: Skip nach 17.12 fehlgeschlagen")
+        return False
+
+    # Hole Chart-Daten nach erstem Skip
+    data_after_skip1 = get_chart_data()
+    candles1 = data_after_skip1.get('data', [])
+
+    if not candles1:
+        print(f"❌ FEHLER: Keine Kerzen nach erstem Skip")
+        return False
+
+    last_candle1 = candles1[-1]
+    last_time1 = datetime.fromtimestamp(last_candle1['time'])
+
+    print(f"✅ Skip 1 erfolgreich: {last_time1.strftime('%Y-%m-%d %H:%M')} (Close: {last_candle1['close']})")
+
+    # Validiere: Sollte 17.12.2024 sein
+    if last_time1.date().day != 17 or last_time1.date().month != 12:
+        print(f"❌ FEHLER: Skip 1 sollte 17.12 sein, ist aber {last_time1.date()}")
+        return False
+
+    print(f"✅ Skip 1 Datum korrekt: 17.12.2024")
+
+    # STEP 3: Go To Date 13.12.2024
+    print("\n--- STEP 3: Go To Date 13.12.2024 ---")
+    result2 = go_to_date("2024-12-13")
+
+    if result2.get('status') != 'success':
+        print(f"❌ FEHLER: Go To Date 13.12 fehlgeschlagen")
+        return False
+
+    print(f"✅ Go To Date 13.12.2024 erfolgreich")
+
+    # STEP 4: Skip nach 13.12 (KRITISCHER TEST!)
+    print("\n--- STEP 4: Skip nach 13.12 (CRITICAL TEST) ---")
+    skip2_result = skip_forward()
+
+    if skip2_result.get('status') != 'success':
+        print(f"❌ FEHLER: Skip nach 13.12 fehlgeschlagen")
+        return False
+
+    # Hole Chart-Daten nach zweitem Skip
+    data_after_skip2 = get_chart_data()
+    candles2 = data_after_skip2.get('data', [])
+
+    if not candles2:
+        print(f"❌ FEHLER: Keine Kerzen nach zweitem Skip")
+        return False
+
+    last_candle2 = candles2[-1]
+    last_time2 = datetime.fromtimestamp(last_candle2['time'])
+
+    print(f"✅ Skip 2 erfolgreich: {last_time2.strftime('%Y-%m-%d %H:%M')} (Close: {last_candle2['close']})")
+
+    # KRITISCHE VALIDIERUNG: Sollte 13.12.2024 sein, NICHT 17.12!
+    print(f"\n🔍 KRITISCHE VALIDIERUNG:")
+    print(f"   Erwartetes Datum: 13.12.2024")
+    print(f"   Tatsächliches Datum: {last_time2.strftime('%Y-%m-%d')}")
+
+    if last_time2.date().day != 13 or last_time2.date().month != 12 or last_time2.date().year != 2024:
+        print(f"❌ FEHLER: Skip 2 sollte 13.12.2024 sein, ist aber {last_time2.date()}")
+        print(f"   BUG DETECTED: Skip nutzt alte Zeit-Position statt neue!")
+        return False
+
+    if last_time2.date().day == 17:
+        print(f"❌ CRITICAL BUG: Skip 2 nutzt 17.12 statt 13.12!")
+        print(f"   sync_manager wurde nach Go To Date nicht zurückgesetzt!")
+        return False
+
+    print(f"✅ Skip 2 Datum korrekt: 13.12.2024")
+    print(f"✅ sync_manager wurde korrekt nach Go To Date zurückgesetzt")
+
+    print("\n✅ TEST 4 ERFOLGREICH: Go To Date → Skip Integration funktioniert korrekt")
+    print("   ✅ sync_manager wird nach Go To Date korrekt zurückgesetzt")
+    print("   ✅ Skip nutzt NEUE Zeit-Position, nicht alte")
+    return True
+
+
 def run_all_feature_tests():
     """Führt alle Feature-Tests aus"""
     print("\n" + "="*70)
-    print("🧪 FEATURE TESTS für main_v2.py Server")
+    print("🧪 FEATURE TESTS für chart_server.py (Refactored System)")
     print("="*70)
 
     # Check Server
@@ -288,7 +396,7 @@ def run_all_feature_tests():
             return False
     except requests.exceptions.RequestException as e:
         print(f"❌ FEHLER: Server nicht erreichbar: {e}")
-        print(f"   Stelle sicher dass main_v2.py auf {BASE_URL} läuft")
+        print(f"   Stelle sicher dass chart_server.py auf {BASE_URL} läuft")
         return False
 
     print(f"✅ Server erreichbar: {BASE_URL}")
@@ -297,6 +405,7 @@ def run_all_feature_tests():
         ("Timeframe-Switch Konsistenz", test_timeframe_consistency),
         ("Go To Date", test_go_to_date),
         ("Skip Forward", test_skip_forward),
+        ("Go To Date → Skip Integration", test_go_to_date_skip_integration),  # Neuer kritischer Test
         ("Final Timeframe-Switch Konsistenz", test_timeframe_consistency),  # Finale Konsistenzprüfung
     ]
 

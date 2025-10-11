@@ -85,7 +85,9 @@ def setup_chart_routes(app, timeframe_service, manager, chart_lifecycle_manager,
             print(f"[TF-SERVICE] Integrating {len(global_skip_events)} skip events")
 
             if global_skip_events:
-                skip_candles = universal_renderer.render_skip_candles_for_timeframe(target_timeframe)
+                skip_candles = universal_renderer.render_skip_candles_for_timeframe(
+                    target_timeframe, global_skip_events
+                )
 
                 if skip_candles:
                     skip_candles_dict = {c['time']: c for c in skip_candles}
@@ -125,6 +127,11 @@ def setup_chart_routes(app, timeframe_service, manager, chart_lifecycle_manager,
                 unified_time_manager.register_timeframe_activity(
                     target_timeframe, last_candle['time']
                 )
+
+            # PHASE 5.5: Preload Adjacent Timeframes (Performance Optimization - Phase 7)
+            asyncio.create_task(asyncio.to_thread(
+                timeframe_service.preload_adjacent_timeframes, target_timeframe
+            ))
 
             # PHASE 6: WebSocket Broadcast
             current_global_time = unified_time_manager.get_current_time()

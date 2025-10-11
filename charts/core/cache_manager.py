@@ -18,6 +18,11 @@ class ChartDataCache:
         self.timeframe_data = {}  # {timeframe: pandas.DataFrame}
         self.loaded_timeframes = set()
         self.available_timeframes = ["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h"]  # CORRECTED: Alle Timeframe-Ordner verfügbar
+
+        # Phase 7: Smart Cache Invalidation
+        self.cache_metadata = {}  # {timeframe: {'last_modified': timestamp, 'hit_count': int}}
+        self.preloaded_timeframes = set()  # Track which timeframes are preloaded
+
         print("[CACHE] ChartDataCache initialisiert")
 
     def load_all_timeframes(self):
@@ -248,10 +253,87 @@ class ChartDataCache:
         start_time = pd.to_datetime(df['time'].iloc[0], unit='s')
         end_time = pd.to_datetime(df['time'].iloc[-1], unit='s')
 
+        # Phase 7: Track cache hit
+        if timeframe in self.cache_metadata:
+            self.cache_metadata[timeframe]['hit_count'] += 1
+        else:
+            import time
+            self.cache_metadata[timeframe] = {
+                'last_modified': time.time(),
+                'hit_count': 1
+            }
+
         return {
             'timeframe': timeframe,
             'total_candles': len(df),
             'start_time': start_time,
             'end_time': end_time,
             'loaded': True
+        }
+
+    def mark_preloaded(self, timeframe):
+        """
+        Phase 7: Markiert einen Timeframe als preloaded
+        Preloaded timeframes haben niedrigere Priorität für Cache Eviction
+        """
+        self.preloaded_timeframes.add(timeframe)
+        print(f"[CACHE] {timeframe} marked as preloaded")
+
+    def should_invalidate_cache(self, timeframe, reason="unknown"):
+        """
+        Phase 7: Smart Cache Invalidation - entscheidet ob Cache invalidiert werden soll
+
+        Args:
+            timeframe: Timeframe string
+            reason: Grund für potentielle Invalidierung
+
+        Returns:
+            bool: True wenn Cache invalidiert werden soll
+        """
+        # Nur invalidieren bei expliziten Gründen:
+        # - CSV-Datei wurde geändert
+        # - Expliziter User-Request
+        # - Memory-Druck (optional, später)
+
+        if reason == "csv_modified":
+            print(f"[CACHE] Invalidating {timeframe}: CSV file modified")
+            return True
+
+        if reason == "explicit_request":
+            print(f"[CACHE] Invalidating {timeframe}: Explicit request")
+            return True
+
+        # Default: NICHT invalidieren (Smart Cache)
+        print(f"[CACHE] Keeping {timeframe} cached (reason: {reason} not critical)")
+        return False
+
+    def invalidate_timeframe(self, timeframe):
+        """
+        Phase 7: Invalidiert einen einzelnen Timeframe im Cache
+
+        Args:
+            timeframe: Timeframe string
+        """
+        if timeframe in self.timeframe_data:
+            del self.timeframe_data[timeframe]
+            self.loaded_timeframes.discard(timeframe)
+            if timeframe in self.cache_metadata:
+                del self.cache_metadata[timeframe]
+            self.preloaded_timeframes.discard(timeframe)
+            print(f"[CACHE] Invalidated {timeframe}")
+        else:
+            print(f"[CACHE] {timeframe} not in cache, nothing to invalidate")
+
+    def get_cache_stats(self):
+        """
+        Phase 7: Gibt Cache-Statistiken zurück
+
+        Returns:
+            dict: Cache-Statistiken
+        """
+        return {
+            'loaded_timeframes': len(self.loaded_timeframes),
+            'preloaded_timeframes': len(self.preloaded_timeframes),
+            'metadata': self.cache_metadata,
+            'available_timeframes': self.available_timeframes
         }

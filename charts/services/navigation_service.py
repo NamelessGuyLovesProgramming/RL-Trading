@@ -18,7 +18,9 @@ class NavigationService:
                  debug_controller,  # DebugController
                  unified_time_manager,  # UnifiedTimeManager
                  unified_state,  # UnifiedStateManager
-                 validator):  # ChartDataValidator
+                 validator,  # ChartDataValidator
+                 global_skip_events,  # List of skip events
+                 universal_renderer):  # UniversalSkipRenderer
         """
         Initialisiert NavigationService mit Dependencies
 
@@ -28,12 +30,16 @@ class NavigationService:
             unified_time_manager: Globale Zeit-Koordination
             unified_state: Globaler State Manager
             validator: Chart-Daten Validierung
+            global_skip_events: Globale Skip-Event Liste
+            universal_renderer: Skip Renderer für Event-Erstellung
         """
         self.timeframe_repo = timeframe_repo
         self.debug_controller = debug_controller
         self.unified_time = unified_time_manager
         self.unified_state = unified_state
         self.validator = validator
+        self.global_skip_events = global_skip_events
+        self.universal_renderer = universal_renderer
 
         print("[NavigationService] Initialized with dependency injection")
 
@@ -58,6 +64,11 @@ class NavigationService:
         # Update DebugController Start-Zeit
         self.debug_controller.set_start_time(target_date)
 
+        # CRITICAL: Reset sync_manager positions nach Go To Date
+        if hasattr(self.debug_controller, 'sync_manager') and self.debug_controller.sync_manager:
+            self.debug_controller.sync_manager.set_base_time(target_date)
+            print(f"[NavigationService] Sync manager reset to: {target_date}")
+
         # Berechne Zeit-Bereich
         timeframe_minutes = self.unified_time._get_timeframe_minutes(timeframe)
         lookback_time = target_date - timedelta(minutes=timeframe_minutes * visible_candles)
@@ -73,6 +84,10 @@ class NavigationService:
         # Update State
         if self.unified_state:
             self.unified_state.update_skip_position(target_date, source="goto")
+
+        # CRITICAL: Clear skip events bei Go To Date (neuer Kontext)
+        self.global_skip_events.clear()
+        print(f"[NavigationService] Skip events cleared after Go To Date")
 
         print(f"[NavigationService] Go to date completed: {len(validated_data)} candles loaded")
 
@@ -119,6 +134,22 @@ class NavigationService:
                 'success': False,
                 'error': 'Candle validation failed'
             }
+
+        # CRITICAL FIX: Erstelle und speichere Skip-Event für andere Timeframes
+        # Erstelle master_clock Dict aus UnifiedTimeManager's current time
+        current_time = self.unified_time.get_current_time()
+        master_clock = {
+            'current_time': current_time,
+            'initialized': True if current_time else False
+        }
+
+        skip_event = self.universal_renderer.create_skip_event(
+            candle=candle,
+            original_timeframe=timeframe,
+            master_clock=master_clock
+        )
+        self.global_skip_events.append(skip_event)
+        print(f"[NavigationService] Skip event saved: {timeframe} -> Total: {len(self.global_skip_events)} events")
 
         print(f"[NavigationService] Skip completed: {skip_result['type']}")
 
