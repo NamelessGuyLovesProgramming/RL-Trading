@@ -17,18 +17,11 @@ async def serve_chart_page():
     """
     Serviert Haupt-Chart HTML-Seite
 
-    Phase 9: Svelte Frontend Integration
-    - Versucht zuerst Svelte-Build zu laden (static/index.html)
-    - Fallback: Legacy Template (templates/chart.html)
+    Phase 9: Svelte Migration pausiert (zu komplex, Legacy Template beibehalten)
+    - Primary: Legacy Template (templates/chart.html)
+    - Reason: Legacy hat komplexe UI (Sidebars, Modals, Account-Infos)
     """
-    # Phase 9: Versuche Svelte-Build zu servieren
-    svelte_path = Path("static/index.html")
-    if svelte_path.exists():
-        print("[PHASE 9] Serving Svelte Frontend ✨")
-        with open(svelte_path, 'r', encoding='utf-8') as f:
-            return HTMLResponse(content=f.read())
-
-    # Fallback: Legacy Template
+    # Primary: Legacy Template (stable, feature-complete)
     legacy_path = Path("templates/chart.html")
     if legacy_path.exists():
         print("[LEGACY] Serving Legacy HTML Template")
@@ -40,7 +33,7 @@ async def serve_chart_page():
         content="""
         <h1>Chart Server 2.0</h1>
         <p>No frontend available</p>
-        <p>Run: <code>cd frontend && npm run build</code></p>
+        <p>Legacy template not found</p>
         """,
         status_code=404
     )

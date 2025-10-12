@@ -100,7 +100,20 @@
       "Bash(start cmd /c \"cd /d C:\\Users\\vgude\\VsStudio\\RL-Trading && py charts\\chart_server.py\")",
       "Bash(pytest:*)",
       "Bash(git rm:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(npm create:*)",
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev)",
+      "Bash(npm run build)",
+      "Bash(md css js)",
+      "Bash(start py charts/chart_server.py)",
+      "Bash(del fix_phase9.py refactor_plan_option2_phase9.md)",
+      "Bash(for dir in chartsrepositories staticcss staticjs testsintegration testsunittest_repositories debug temp models)",
+      "Bash(do echo \"=== $dir ===\")",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []
