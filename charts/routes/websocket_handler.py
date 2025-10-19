@@ -22,6 +22,7 @@ async def handle_websocket_commands(
     navigation_service,
     debug_service,
     position_service,
+    account_service,
     unified_time_manager,
     chart_lifecycle_manager,
     data_validator,
@@ -204,6 +205,192 @@ async def handle_websocket_commands(
                     })
 
 
+            elif command_type == 'execute_trade':
+                try:
+                    # Trade-Daten vom Client
+                    trade_data = data.get('trade')
+                    if not trade_data:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'No trade data provided'
+                        })
+                        continue
+
+                    # Extrahiere Trade-Details
+                    entry_price = trade_data.get('entryPrice')
+                    stop_loss = trade_data.get('stopLoss')
+                    take_profit = trade_data.get('takeProfit')
+                    direction = 'short' if trade_data.get('isShort', False) else 'long'
+                    position_size = trade_data.get('positionSize', 1.0)
+                    risk_eur = trade_data.get('riskEUR', 100.0)
+                    is_rl_online = trade_data.get('isRLOnline', False)
+
+                    # Validiere Trade-Daten
+                    if not all([entry_price, stop_loss, take_profit]):
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Incomplete trade data (entry, stop_loss, take_profit required)'
+                        })
+                        continue
+
+                    # Erstelle Position mit PositionService
+                    position_result = position_service.create_position(
+                        entry_price=entry_price,
+                        sl_price=stop_loss,
+                        tp_price=take_profit,
+                        direction=direction,
+                        size=position_size,
+                        symbol='NQ'
+                    )
+
+                    if not position_result['success']:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': f"Position creation failed: {position_result.get('error', 'Unknown error')}"
+                        })
+                        continue
+
+                    position_id = position_result['position_id']
+                    position_data = position_result['position_data']
+
+                    # Füge Position-ID hinzu
+                    position_data['id'] = position_id
+
+                    # Registriere Trade im Account (RL-KI oder Nutzer)
+                    account_result = account_service.execute_trade(
+                        position_data=position_data,
+                        is_rl_online=is_rl_online
+                    )
+
+                    if not account_result['success']:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': f"Account execution failed: {account_result.get('error', 'Unknown error')}"
+                        })
+                        continue
+
+                    account_type = account_result['account_type']
+                    account_summary = account_result['account_summary']
+
+                    logger.info(f"[WS] Preparing broadcasts for trade {position_id}...")
+
+                    # Broadcast Trade Execution zu allen Clients
+                    logger.info(f"[WS] Broadcasting trade_executed...")
+                    await manager.broadcast({
+                        'type': 'trade_executed',
+                        'position': position_data,
+                        'position_id': position_id,
+                        'account_type': account_type,
+                        'account_summary': account_summary,
+                        'execution_time': datetime.now().isoformat()
+                    })
+                    logger.info(f"[WS] trade_executed broadcast complete")
+
+                    # Broadcast Account Update
+                    logger.info(f"[WS] Broadcasting account_update...")
+                    all_accounts = account_service.get_all_accounts_summary()
+                    await manager.broadcast({
+                        'type': 'account_update',
+                        'accounts': all_accounts
+                    })
+                    logger.info(f"[WS] account_update broadcast complete")
+
+                    logger.info(f"[WS] Trade executed: {position_id} on {account_type} account")
+                    logger.info(f"[WS] Direction: {direction}, Entry: {entry_price}, Size: {position_size}")
+
+                except Exception as e:
+                    logger.error(f"[WS] Execute trade error: {e}")
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'Execute trade failed: {str(e)}'
+                    })
+
+
+            elif command_type == 'close_position':
+                try:
+                    # Position ID vom Client
+                    position_id = data.get('position_id')
+                    if not position_id:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'No position_id provided'
+                        })
+                        continue
+
+                    # Finde aktuelle Position
+                    active_positions = account_service.get_active_positions()
+                    position = next((p for p in active_positions if p.get('id') == position_id), None)
+
+                    if not position:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': f'Position {position_id} not found'
+                        })
+                        continue
+
+                    # Aktuellen Preis vom Unified Time Manager holen
+                    current_time = unified_time_manager.get_current_time()
+                    current_candle = manager.chart_state.get('data', [])[-1] if manager.chart_state.get('data') else None
+
+                    if not current_candle:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'No current price available'
+                        })
+                        continue
+
+                    close_price = current_candle['close']
+                    account_type = position.get('account_type', 'user')
+
+                    # Position schließen
+                    close_result = account_service.close_position(
+                        position_id=position_id,
+                        close_price=close_price,
+                        close_reason='manual',
+                        account_type=account_type
+                    )
+
+                    if not close_result['success']:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': f"Position close failed: {close_result.get('error', 'Unknown error')}"
+                        })
+                        continue
+
+                    realized_pnl = close_result['realized_pnl']
+                    account_summary = close_result['account_summary']
+
+                    logger.info(f"[WS] Position manually closed: {position_id}")
+                    logger.info(f"[WS] Close price: {close_price}, Realized PnL: {realized_pnl:+.2f}€")
+
+                    # Broadcast Position Closure
+                    await manager.broadcast({
+                        'type': 'position_closed',
+                        'position_id': position_id,
+                        'close_price': close_price,
+                        'close_reason': 'manual',
+                        'realized_pnl': realized_pnl,
+                        'account_type': account_type,
+                        'close_time': datetime.now().isoformat()
+                    })
+
+                    # Broadcast Account Update
+                    all_accounts = account_service.get_all_accounts_summary()
+                    await manager.broadcast({
+                        'type': 'account_update',
+                        'accounts': all_accounts
+                    })
+
+                    logger.info(f"[WS] Manual close broadcasted for position {position_id}")
+
+                except Exception as e:
+                    logger.error(f"[WS] Close position error: {e}")
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'Close position failed: {str(e)}'
+                    })
+
+
             elif command_type == 'remove_position':
                 try:
                     position_id = data.get('position_id')
@@ -256,6 +443,86 @@ async def handle_websocket_commands(
                     # Update chart state
                     if hasattr(manager, 'chart_state') and 'data' in manager.chart_state:
                         manager.chart_state['data'].append(candle)
+
+                    # 💰 Update Position PnL & Check SL/TP
+                    current_price = candle['close']
+                    candle_high = candle['high']
+                    candle_low = candle['low']
+
+                    active_positions = account_service.get_active_positions()
+                    logger.info(f"[WS SKIP] Active positions: {len(active_positions)}")
+
+                    positions_to_close = []
+
+                    for position in active_positions:
+                        position_id = position['id']
+                        account_type = position.get('account_type', 'user')
+                        direction = position['direction']
+                        entry = position['entry_price']
+                        sl = position['sl_price']
+                        tp = position['tp_price']
+
+                        logger.info(f"[WS SKIP] Checking position {position_id}: {direction}, Entry={entry}, SL={sl}, TP={tp}")
+                        logger.info(f"[WS SKIP] Candle: High={candle_high}, Low={candle_low}, Close={current_price}")
+
+                        # Update unrealized PnL
+                        account_service.update_position_pnl(position_id, current_price, account_type)
+
+                        # ⭐ BUGFIX: Check SL/TP using High/Low, not just Close!
+                        # SL/TP werden getriggert wenn Candle sie berührt (High/Low)
+                        # Close Price wird verwendet für PnL Berechnung
+
+                        sl_hit = False
+                        tp_hit = False
+
+                        if direction == 'long':
+                            # Long SL: Wird getriggert wenn Low <= SL
+                            if candle_low <= sl:
+                                sl_hit = True
+                                logger.info(f"[WS SKIP] 🔴 SL HIT! Long position {position_id}: Low={candle_low} <= SL={sl}")
+                            # Long TP: Wird getriggert wenn High >= TP
+                            elif candle_high >= tp:
+                                tp_hit = True
+                                logger.info(f"[WS SKIP] 🟢 TP HIT! Long position {position_id}: High={candle_high} >= TP={tp}")
+                        else:  # short
+                            # Short SL: Wird getriggert wenn High >= SL
+                            if candle_high >= sl:
+                                sl_hit = True
+                                logger.info(f"[WS SKIP] 🔴 SL HIT! Short position {position_id}: High={candle_high} >= SL={sl}")
+                            # Short TP: Wird getriggert wenn Low <= TP
+                            elif candle_low <= tp:
+                                tp_hit = True
+                                logger.info(f"[WS SKIP] 🟢 TP HIT! Short position {position_id}: Low={candle_low} <= TP={tp}")
+
+                        if sl_hit:
+                            # ⭐ EXAKTES RISK-MANAGEMENT: Schließe bei SL zum SL-Preis, nicht Close!
+                            positions_to_close.append((position_id, sl, 'stop_loss', account_type))
+                        elif tp_hit:
+                            # ⭐ EXAKTES RISK-MANAGEMENT: Schließe bei TP zum TP-Preis, nicht Close!
+                            positions_to_close.append((position_id, tp, 'take_profit', account_type))
+
+                    # Close positions that hit SL/TP
+                    for position_id, close_price, reason, account_type in positions_to_close:
+                        close_result = account_service.close_position(position_id, close_price, reason, account_type)
+                        if close_result['success']:
+                            logger.info(f"[WS] Position closed: {position_id} - {reason} at {close_price}")
+
+                            # Broadcast position closure
+                            await manager.broadcast({
+                                'type': 'position_closed',
+                                'position_id': position_id,
+                                'close_price': close_price,
+                                'close_reason': reason,
+                                'realized_pnl': close_result['realized_pnl'],
+                                'account_type': account_type
+                            })
+
+                    # Broadcast updated accounts after PnL updates
+                    all_accounts = account_service.get_all_accounts_summary()
+                    await manager.broadcast({
+                        'type': 'account_update',
+                        'accounts': all_accounts
+                    })
 
                     sync_status = unified_time_manager.get_timeframe_sync_status()
 

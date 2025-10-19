@@ -40,6 +40,10 @@
         let ws;
         let isInitialized = false;
 
+        // Make chart and candlestickSeries globally available for PnL rendering
+        window.chart = null;
+        window.candlestickSeries = null;
+
         // Chart initialisieren
         // EINFACHE CHART POSITIONING FUNKTION
         function setChartWith20PercentMargin(chartData) {
@@ -303,6 +307,9 @@
                 }
             });
 
+            // Make chart globally available for PnL rendering
+            window.chart = chart;
+
             candlestickSeries = chart.addCandlestickSeries({
                 upColor: '#089981',
                 downColor: '#f23645',
@@ -311,6 +318,9 @@
                 wickUpColor: '#089981',
                 wickDownColor: '#f23645'
             });
+
+            // Make candlestickSeries globally available for PnL rendering
+            window.candlestickSeries = candlestickSeries;
 
             // Smart Positioning System initialisieren
             try {
@@ -434,6 +444,10 @@
 
                             // console.log(`🔄 ${window.positionBoxManager.count()} Boxes neu gezeichnet (Zoom/Pan Event)`);
                         }
+
+                        // 💰 Render PnL labels after zoom/pan
+                        renderLivePnLLabels();
+
                         redrawScheduled = false;
                     });
                 }
@@ -481,6 +495,10 @@
                             redrawScheduled = true;
                             requestAnimationFrame(() => {
                                 window.positionBoxManager.drawAll();
+
+                                // 💰 Render PnL labels after price scale change
+                                renderLivePnLLabels();
+
                                 redrawScheduled = false;
                                 // console.log('🔄 Boxes neu gezeichnet (Preis-Skala Event)');
                             });
@@ -525,6 +543,15 @@
                     window.positionBoxManager.drawAll();
                     console.log(`🔄 ${window.positionBoxManager.count()} Position Boxes neu gezeichnet nach Window Resize`);
                 }
+
+                // 💰 Update PnL labels canvas size on resize
+                if (window.pnlLabelsCanvas) {
+                    window.pnlLabelsCanvas.width = chartContainer.clientWidth;
+                    window.pnlLabelsCanvas.height = chartContainer.clientHeight;
+                }
+
+                // 💰 Render PnL labels after resize
+                renderLivePnLLabels();
             });
 
             // LADE ECHTE NQ-DATEN über WebSocket
@@ -537,7 +564,34 @@
 
             // Chart Click Handler für Position Box Tool
             chart.subscribeClick((param) => {
-                // Debug-Logs entfernt
+                // Check for close button clicks first (highest priority)
+                if (param.point && window.closeButtonPositions) {
+                    const clickX = param.point.x;
+                    const clickY = param.point.y;
+
+                    console.log(`[Close] Click at (${clickX}, ${clickY}), checking ${Object.keys(window.closeButtonPositions).length} buttons`);
+
+                    for (const positionId in window.closeButtonPositions) {
+                        const btn = window.closeButtonPositions[positionId];
+                        console.log(`[Close] Button ${positionId} bounds: x=${btn.x}-${btn.x+btn.width}, y=${btn.y}-${btn.y+btn.height}`);
+
+                        if (clickX >= btn.x && clickX <= btn.x + btn.width &&
+                            clickY >= btn.y && clickY <= btn.y + btn.height) {
+                            console.log(`[Close] ✅ X button clicked for position ${positionId}`);
+
+                            // Send close position request
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({
+                                    type: 'close_position',
+                                    position_id: positionId
+                                }));
+                                console.log(`[Close] Close request sent for ${positionId}`);
+                            }
+                            return; // Prevent other click handlers
+                        }
+                    }
+                    console.log(`[Close] ❌ Click outside all close buttons`);
+                }
 
                 // ⭐ MULTI-BOX SUPPORT: Mehrere Boxes erlaubt!
                 // (Alte Guard wurde entfernt)
@@ -596,6 +650,17 @@
                     console.log('❌ Position Box Mode nicht aktiv oder ungültiger Klick');
                 }
             });
+
+            // ⭐ Kontinuierlicher Rendering-Loop für PnL Labels
+            // Labels müssen bei jedem Frame neu gezeichnet werden, weil sich die Y-Koordinaten bei Zoom ändern
+            function continuousLabelRendering() {
+                if (window.positionLines && Object.keys(window.positionLines).length > 0) {
+                    renderLivePnLLabels();
+                }
+                requestAnimationFrame(continuousLabelRendering);
+            }
+            requestAnimationFrame(continuousLabelRendering);
+            console.log('[PnL] Continuous label rendering loop started');
 
             isInitialized = true;
             // console.log('✅ Chart initialisiert, lade NQ-Daten...');
@@ -807,34 +872,74 @@
 
         function updateAccountDisplay(accountType, accountData) {
             // Aktualisiert die Account-Anzeige in der UI
+            console.log(`🔧 updateAccountDisplay called: ${accountType}`, accountData);
             const prefix = accountType === 'ai' ? 'ai' : 'user';
 
             // Update Balance
             const balanceEl = document.getElementById(`${prefix}-balance`);
+            console.log(`🔍 Element ${prefix}-balance:`, balanceEl);
             if (balanceEl) {
-                balanceEl.textContent = accountData.balance;
+                const balance = typeof accountData.balance === 'number'
+                    ? accountData.balance
+                    : parseFloat(accountData.balance);
+                console.log(`💰 Setting balance to: ${formatEUR(balance)}`);
+                balanceEl.textContent = formatEUR(balance);
                 balanceEl.className = 'account-value-amount neutral';
+                console.log(`✅ Balance updated in DOM`);
+            } else {
+                console.error(`❌ Element ${prefix}-balance NOT FOUND`);
             }
 
             // Update Realized PnL
             const realizedEl = document.getElementById(`${prefix}-realized`);
             if (realizedEl) {
-                realizedEl.textContent = accountData.realized_pnl;
-                realizedEl.className = `account-value-amount ${getPnLClass(accountData.realized_pnl)}`;
+                const realizedPnL = typeof accountData.realized_pnl === 'number'
+                    ? accountData.realized_pnl
+                    : parseFloat(accountData.realized_pnl);
+                realizedEl.textContent = formatPnL(realizedPnL);
+                realizedEl.className = `account-value-amount ${getPnLClass(realizedPnL)}`;
             }
 
             // Update Unrealized PnL
             const unrealizedEl = document.getElementById(`${prefix}-unrealized`);
             if (unrealizedEl) {
-                unrealizedEl.textContent = accountData.unrealized_pnl;
-                unrealizedEl.className = `account-value-amount ${getPnLClass(accountData.unrealized_pnl)}`;
+                const unrealizedPnL = typeof accountData.unrealized_pnl === 'number'
+                    ? accountData.unrealized_pnl
+                    : parseFloat(accountData.unrealized_pnl);
+                unrealizedEl.textContent = formatPnL(unrealizedPnL);
+                unrealizedEl.className = `account-value-amount ${getPnLClass(unrealizedPnL)}`;
             }
         }
 
-        function getPnLClass(pnlString) {
+        function formatEUR(value) {
+            // Formatiert Zahl als EUR-String
+            return new Intl.NumberFormat('de-DE', {
+                style: 'decimal',
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0
+            }).format(value) + '€';
+        }
+
+        function formatPnL(value) {
+            // Formatiert PnL mit Vorzeichen
+            const sign = value >= 0 ? '+' : '';
+            return sign + new Intl.NumberFormat('de-DE', {
+                style: 'decimal',
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0
+            }).format(value) + '€';
+        }
+
+        function getPnLClass(pnlValue) {
             // Bestimmt CSS-Klasse basierend auf PnL-Wert
-            if (pnlString.includes('+')) return 'positive';
-            if (pnlString.includes('-')) return 'negative';
+            if (typeof pnlValue === 'string') {
+                if (pnlValue.includes('+')) return 'positive';
+                if (pnlValue.includes('-')) return 'negative';
+                return 'neutral';
+            }
+            // Numeric value
+            if (pnlValue > 0) return 'positive';
+            if (pnlValue < 0) return 'negative';
             return 'neutral';
         }
 
@@ -1387,6 +1492,36 @@
                         console.log('[UNIFIED] Candle Type:', message.candle_type);
                         console.log('[UNIFIED] Debug Time:', message.debug_time);
 
+                        // 💰 Update PnL for all active positions
+                        const currentPrice = validatedCandle.close;
+                        if (window.positionLines) {
+                            Object.keys(window.positionLines).forEach(positionId => {
+                                const posData = window.positionLines[positionId];
+                                if (posData && posData.position) {
+                                    const position = posData.position;
+                                    const direction = position.direction || 'long';
+                                    const entry = position.entry_price;
+                                    const size = position.size || 1;
+
+                                    // Calculate unrealized PnL
+                                    let pnl = 0;
+                                    if (direction === 'long') {
+                                        pnl = (currentPrice - entry) * size;
+                                    } else {
+                                        pnl = (entry - currentPrice) * size;
+                                    }
+
+                                    // Store updated PnL
+                                    posData.unrealizedPnL = pnl;
+
+                                    // PriceLine title remains empty - Canvas labels handle display
+                                }
+                            });
+
+                            // Render PnL labels on Canvas
+                            renderLivePnLLabels();
+                        }
+
                         // Update document title with unified architecture info
                         document.title = `${message.timeframe} Unified Skip (${message.system})`;
 
@@ -1532,6 +1667,9 @@
                                     wickUpColor: '#089981',
                                     wickDownColor: '#f23645'
                                 });
+
+                                // Update global reference after recreation
+                                window.candlestickSeries = candlestickSeries;
 
                                 console.log('[CHART-RECREATION] ✅ Chart series recreation completed successfully');
                                 console.log('[CHART-RECREATION] Version:', message.command?.version);
@@ -1685,6 +1823,70 @@
                     }, 2000);
                     break;
 
+                case 'trade_executed':
+                    // 🚀 Trade wurde erfolgreich ausgeführt
+                    console.log('✅ Trade executed:', message.position_id);
+                    console.log('📊 Account:', message.account_type);
+                    console.log('💰 Position:', message.position);
+
+                    // Zeige Position im Chart an
+                    if (message.position) {
+                        addPositionOverlay(message.position);
+
+                        // 💰 Initial PnL render (starts at 0)
+                        setTimeout(() => renderLivePnLLabels(), 100);
+                    }
+
+                    // Zeige Erfolgs-Notification
+                    const accountLabel = message.account_type === 'ai' ? 'RL-KI' : 'Nutzer';
+                    console.log(`✅ Trade auf ${accountLabel} Account ausgeführt`);
+                    break;
+
+                case 'position_closed':
+                    // 🔴 Position wurde geschlossen
+                    console.log('🔴 Position closed:', message.position_id);
+                    console.log('💰 Realized PnL:', message.realized_pnl);
+                    console.log('🔖 Reason:', message.close_reason);
+                    console.log('💵 Close Price:', message.close_price);
+
+                    // Entferne Position vom Chart
+                    if (message.position_id) {
+                        removePositionOverlay(message.position_id);
+
+                        // Re-render PnL labels (falls noch andere Positionen offen)
+                        setTimeout(() => renderLivePnLLabels(), 50);
+
+                        // Zeige Notification
+                        const pnlText = message.realized_pnl >= 0
+                            ? `+${message.realized_pnl.toFixed(0)}€`
+                            : `${message.realized_pnl.toFixed(0)}€`;
+                        const reasonText = {
+                            'manual': 'Manuell',
+                            'stop_loss': 'Stop Loss',
+                            'take_profit': 'Take Profit'
+                        }[message.close_reason] || message.close_reason;
+
+                        console.log(`🔴 Position geschlossen: ${reasonText} - ${pnlText}`);
+                    }
+                    break;
+
+                case 'account_update':
+                    // 💶 Account-Update empfangen
+                    console.log('💰 Account Update:', message.accounts);
+
+                    if (message.accounts) {
+                        // Update RL-KI Account
+                        if (message.accounts.ai_account) {
+                            updateAccountDisplay('ai', message.accounts.ai_account);
+                        }
+
+                        // Update Nutzer Account
+                        if (message.accounts.user_account) {
+                            updateAccountDisplay('user', message.accounts.user_account);
+                        }
+                    }
+                    break;
+
                 default:
                     console.log('[UNKNOWN] Unknown message type:', message.type);
             }
@@ -1708,80 +1910,117 @@
                 });
             }
 
-            // Entry Line (grün für Long, rot für Short)
+            // ⭐ NEUE IMPLEMENTATION: Draggable PriceLines für executed Positions
+            // Verwende candlestickSeries für PriceLines (TradingView API requirement)
+
+            // Entry PriceLine (draggable, grün für Long, rot für Short)
             const entryColor = position.type === 'LONG' ? '#089981' : '#f23645';
-            const entrySeries = chart.addLineSeries({
+
+            // Calculate PnL for title
+            const currentPrice = position.entry_price; // Will be updated dynamically
+            const unrealizedPnL = position.unrealizedPnL || 0;
+            const pnlText = `${unrealizedPnL >= 0 ? '+' : ''}${unrealizedPnL.toFixed(0)}€`;
+
+            const entryPriceLine = candlestickSeries.createPriceLine({
+                price: position.entry_price,
                 color: entryColor,
                 lineWidth: 2,
                 lineStyle: 0, // Solid
-                title: `Entry ${positionId}`
+                axisLabelVisible: true,
+                title: '' // Empty title - Canvas labels will be drawn instead
             });
-            entrySeries.setData([{time: 0, value: position.entry_price}]);
 
-            // Stop Loss Line (rot)
-            let stopLossSeries = null;
-            if (position.stop_loss) {
-                stopLossSeries = chart.addLineSeries({
+            // Berechne potenzielle PnL für SL/TP
+            const direction = position.direction || (position.type === 'LONG' ? 'long' : 'short');
+            const size = position.size || 1;
+            const entry = position.entry_price;
+
+            // Stop Loss PriceLine mit potenziellem Verlust
+            let slPriceLine = null;
+            if (position.sl_price) {
+                const slLoss = direction === 'long'
+                    ? (position.sl_price - entry) * size
+                    : (entry - position.sl_price) * size;
+                slPriceLine = candlestickSeries.createPriceLine({
+                    price: position.sl_price,
                     color: '#ff4444',
-                    lineWidth: 1,
-                    lineStyle: 1, // Dashed
-                    title: `SL ${positionId}`
+                    lineWidth: 2,
+                    lineStyle: 0, // Solid
+                    axisLabelVisible: true,
+                    title: `SL ${slLoss >= 0 ? '+' : ''}${slLoss.toFixed(0)}€`
                 });
-                stopLossSeries.setData([{time: 0, value: position.stop_loss}]);
             }
 
-            // Take Profit Line (grün)
-            let takeProfitSeries = null;
-            if (position.take_profit) {
-                takeProfitSeries = chart.addLineSeries({
+            // Take Profit PriceLine mit potenziellem Gewinn
+            let tpPriceLine = null;
+            if (position.tp_price) {
+                const tpProfit = direction === 'long'
+                    ? (position.tp_price - entry) * size
+                    : (entry - position.tp_price) * size;
+                tpPriceLine = candlestickSeries.createPriceLine({
+                    price: position.tp_price,
                     color: '#44ff44',
-                    lineWidth: 1,
-                    lineStyle: 1, // Dashed
-                    title: `TP ${positionId}`
+                    lineWidth: 2,
+                    lineStyle: 0, // Solid
+                    axisLabelVisible: true,
+                    title: `TP +${tpProfit.toFixed(0)}€`
                 });
-                takeProfitSeries.setData([{time: 0, value: position.take_profit}]);
             }
 
-            // Position Box (transparente Box zwischen Entry und TP/SL)
-            const boxSeries = chart.addAreaSeries({
-                topColor: position.type === 'LONG' ? 'rgba(8, 153, 129, 0.1)' : 'rgba(242, 54, 69, 0.1)',
-                bottomColor: position.type === 'LONG' ? 'rgba(8, 153, 129, 0.05)' : 'rgba(242, 54, 69, 0.05)',
-                lineColor: 'transparent'
-            });
+            // Initialize positionLines if not exists
+            if (!window.positionLines) {
+                window.positionLines = {};
+                console.log('[Position] Initialized window.positionLines');
+            }
 
-            // Box-Daten basierend auf Position-Typ
-            const boxTop = position.type === 'LONG' ?
-                (position.take_profit || position.entry_price * 1.02) :
-                position.entry_price;
-            const boxBottom = position.type === 'LONG' ?
-                position.entry_price :
-                (position.take_profit || position.entry_price * 0.98);
-
-            boxSeries.setData([{time: 0, value: boxTop}]);
-
-            // Speichere alle Series für diese Position
+            // Speichere PriceLines für diese Position
             window.positionLines[positionId] = {
-                entry: entrySeries,
-                stopLoss: stopLossSeries,
-                takeProfit: takeProfitSeries,
-                box: boxSeries,
-                position: position
+                entryPriceLine: entryPriceLine,
+                slPriceLine: slPriceLine,
+                tpPriceLine: tpPriceLine,
+                position: position,
+                unrealizedPnL: 0 // Initial PnL
             };
 
-            console.log(`✅ Position overlay added: ${positionId} ${position.type}`);
+            console.log(`✅ Position overlay added: ${positionId} ${position.type}`, window.positionLines[positionId]);
         }
 
         function removePositionOverlay(positionId) {
             const positionData = window.positionLines[positionId];
             if (positionData) {
-                // Entferne alle Series
-                chart.removeSeries(positionData.entry);
-                if (positionData.stopLoss) chart.removeSeries(positionData.stopLoss);
-                if (positionData.takeProfit) chart.removeSeries(positionData.takeProfit);
-                chart.removeSeries(positionData.box);
+                // Entferne PriceLines
+                if (positionData.entryPriceLine) {
+                    candlestickSeries.removePriceLine(positionData.entryPriceLine);
+                }
+                if (positionData.slPriceLine) {
+                    candlestickSeries.removePriceLine(positionData.slPriceLine);
+                }
+                if (positionData.tpPriceLine) {
+                    candlestickSeries.removePriceLine(positionData.tpPriceLine);
+                }
 
                 // Lösche aus Container
                 delete window.positionLines[positionId];
+
+                // ⭐ BUGFIX: Lösche auch Close Button Position
+                if (window.closeButtonPositions && window.closeButtonPositions[positionId]) {
+                    delete window.closeButtonPositions[positionId];
+                    console.log(`🔴 Close button removed for: ${positionId}`);
+                }
+
+                // ⭐ CRITICAL FIX: Immediately clear and re-render labels
+                // Clear canvas if no more positions, otherwise re-render remaining
+                if (Object.keys(window.positionLines).length === 0 && window.pnlLabelsCanvas && window.pnlLabelsCtx) {
+                    // No more positions → clear canvas immediately
+                    const canvas = window.pnlLabelsCanvas;
+                    const ctx = window.pnlLabelsCtx;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    console.log('🧹 Canvas cleared - no more positions');
+                } else {
+                    // Still have positions → re-render remaining labels
+                    setTimeout(() => renderLivePnLLabels(), 50);
+                }
+
                 console.log(`❌ Position overlay removed: ${positionId}`);
             }
         }
@@ -1798,6 +2037,212 @@
                     addPositionOverlay(position);
                 }
             });
+        }
+
+        /**
+         * Renders live PnL labels on Canvas for all active positions
+         * Shows unrealized PnL on the left side of entry price lines
+         */
+        function renderLivePnLLabels() {
+            // console.log('[PnL] renderLivePnLLabels() called'); // Removed: Called every frame
+
+            // Create PnL labels canvas if it doesn't exist
+            if (!window.pnlLabelsCanvas || !window.pnlLabelsCtx) {
+                console.log('[PnL] Canvas not found, creating overlay...');
+
+                const chartContainer = document.getElementById('chart_container');
+                if (!chartContainer) {
+                    console.error('[PnL] Chart container not found');
+                    return;
+                }
+
+                // Create canvas overlay for PnL labels
+                let canvas = document.getElementById('pnl-labels-canvas');
+                if (!canvas) {
+                    canvas = document.createElement('canvas');
+                    canvas.id = 'pnl-labels-canvas';
+                    canvas.style.position = 'absolute';
+                    canvas.style.top = '0';
+                    canvas.style.left = '0';
+                    canvas.style.pointerEvents = 'none'; // Transparent for clicks - clicks handled on chart container
+                    canvas.style.zIndex = '10'; // Above position-canvas
+                    canvas.width = chartContainer.clientWidth;
+                    canvas.height = chartContainer.clientHeight;
+                    chartContainer.appendChild(canvas);
+                }
+
+                window.pnlLabelsCanvas = canvas;
+                window.pnlLabelsCtx = canvas.getContext('2d');
+                console.log('[PnL] Canvas overlay created');
+            }
+
+            if (!window.positionLines || Object.keys(window.positionLines).length === 0) {
+                // console.warn('[PnL] No active positions'); // Removed: Called every frame
+                // ⭐ CRITICAL FIX: Clear canvas when no positions exist
+                if (window.pnlLabelsCanvas && window.pnlLabelsCtx) {
+                    const canvas = window.pnlLabelsCanvas;
+                    const ctx = window.pnlLabelsCtx;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+                return;
+            }
+
+            if (!window.chart || !window.candlestickSeries) {
+                // console.warn('[PnL] Chart or candlestickSeries not available'); // Removed: Called every frame
+                return;
+            }
+
+            // console.log('[PnL] Rendering for', Object.keys(window.positionLines).length, 'positions'); // Removed: Called every frame
+
+            const ctx = window.pnlLabelsCtx;
+            const canvas = window.pnlLabelsCanvas;
+            const chartContainer = document.getElementById('chart_container');
+
+            if (!chartContainer) {
+                console.error('[PnL] Chart container not found during rendering');
+                return;
+            }
+
+            // ⭐⭐⭐ CRITICAL: Clear canvas before redrawing to prevent text overlap ⭐⭐⭐
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // console.log('[PnL] Canvas cleared'); // Removed: Called every frame
+
+            // Get chart time scale for price-to-pixel conversion
+            const timeScale = window.chart.timeScale();
+
+            // Store close button positions for click detection
+            if (!window.closeButtonPositions) {
+                window.closeButtonPositions = {};
+            }
+            window.closeButtonPositions = {}; // Reset
+
+            // Iterate over all active positions
+            Object.keys(window.positionLines).forEach(positionId => {
+                const posData = window.positionLines[positionId];
+                // console.log(`[PnL] Processing position ${positionId}:`, posData); // Removed: Called every frame
+
+                if (!posData || !posData.position || !posData.entryPriceLine) {
+                    // console.warn(`[PnL] Invalid position data for ${positionId}`); // Removed: Called every frame
+                    return;
+                }
+
+                const position = posData.position;
+                const entryPrice = position.entry_price;
+                const pnl = posData.unrealizedPnL || 0;
+
+                // console.log(`[PnL] Position ${positionId} data:`, { entryPrice, pnl }); // Removed: Called every frame
+
+                // Convert price to Y coordinate using TradingView API
+                // NOTE: priceToCoordinate() is called directly on the series, not on priceScale()!
+                const yCoord = window.candlestickSeries.priceToCoordinate(entryPrice);
+
+                if (yCoord === null || yCoord === undefined) {
+                    // console.warn(`[PnL] Price not in visible range for ${positionId}`); // Removed: Called every frame
+                    return;
+                }
+
+                // console.log(`[PnL] Y coordinate for ${positionId}: ${yCoord}`); // Removed: Called every frame
+
+                // Three separate labels on right side: [Size] [PnL] [X]
+                // Position labels BEFORE the price scale (Y-axis), not on top of it
+                const chartWidth = chartContainer.clientWidth;
+                const yPos = yCoord;
+                const size = position.size || 1;
+
+                // Get price scale width to position labels before it
+                const priceScaleWidth = 70; // Price scale width (Y-axis)
+                const marginRight = 15; // Margin from price scale (more space)
+
+                // Format texts
+                const sizeText = `${size}`;
+                const pnlText = `${pnl >= 0 ? '+' : ''}${pnl.toFixed(0)}€`;
+                const closeText = 'X';
+
+                // Colors - Modern Trading Theme
+                const pnlColor = pnl >= 0 ? '#26a69a' : '#ef5350'; // Teal green / Soft red
+                const pnlBgColor = pnl >= 0 ? 'rgba(38, 166, 154, 0.15)' : 'rgba(239, 83, 80, 0.15)'; // Light tint
+                const sizeBgColor = 'rgba(66, 133, 244, 0.15)'; // Light blue tint
+                const sizeColor = '#4285f4'; // Google blue
+                const closeBgColor = 'rgba(239, 83, 80, 0.9)'; // Solid red
+                const closeColor = '#ffffff';
+
+                // Styling - Larger and more readable
+                ctx.font = 'bold 13px Arial'; // Slightly larger font
+                const padding = 6;
+                const rectHeight = 22; // Taller boxes
+                const gap = 5; // Gap between boxes
+
+                // Measure widths
+                const sizeWidth = ctx.measureText(sizeText).width + padding * 2;
+                const pnlWidth = ctx.measureText(pnlText).width + padding * 2;
+                const xWidth = ctx.measureText(closeText).width + padding * 2;
+
+                // Calculate positions from right to left, before price scale
+                let currentX = chartWidth - priceScaleWidth - marginRight;
+
+                // === X Button (rightmost) ===
+                const xBoxX = currentX - xWidth;
+                const xBoxY = yPos - rectHeight / 2;
+
+                // Modern rounded corners effect (fake with border)
+                ctx.fillStyle = closeBgColor;
+                ctx.fillRect(xBoxX, xBoxY, xWidth, rectHeight);
+                ctx.strokeStyle = '#d32f2f'; // Darker red border
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(xBoxX, xBoxY, xWidth, rectHeight);
+
+                ctx.fillStyle = closeColor;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(closeText, xBoxX + xWidth / 2, yPos);
+
+                // Store X button for click detection
+                window.closeButtonPositions[positionId] = {
+                    x: xBoxX,
+                    y: xBoxY,
+                    width: xWidth,
+                    height: rectHeight,
+                    positionId: positionId
+                };
+
+                currentX = xBoxX - gap;
+
+                // === PnL Label (middle) ===
+                const pnlBoxX = currentX - pnlWidth;
+                const pnlBoxY = yPos - rectHeight / 2;
+
+                ctx.fillStyle = pnlBgColor;
+                ctx.fillRect(pnlBoxX, pnlBoxY, pnlWidth, rectHeight);
+                ctx.strokeStyle = pnlColor;
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(pnlBoxX, pnlBoxY, pnlWidth, rectHeight);
+
+                ctx.fillStyle = pnlColor;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(pnlText, pnlBoxX + pnlWidth / 2, yPos);
+
+                currentX = pnlBoxX - gap;
+
+                // === Size Label (leftmost) ===
+                const sizeBoxX = currentX - sizeWidth;
+                const sizeBoxY = yPos - rectHeight / 2;
+
+                ctx.fillStyle = sizeBgColor;
+                ctx.fillRect(sizeBoxX, sizeBoxY, sizeWidth, rectHeight);
+                ctx.strokeStyle = sizeColor;
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(sizeBoxX, sizeBoxY, sizeWidth, rectHeight);
+
+                ctx.fillStyle = sizeColor;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(sizeText, sizeBoxX + sizeWidth / 2, yPos);
+
+                // console.log(`[PnL] ✅ Successfully rendered PnL label for ${positionId}`); // Removed: Called every frame
+            });
+
+            // console.log('[PnL] renderLivePnLLabels() completed'); // Removed: Called every frame
         }
 
         // ===== POSITION BOX MANAGER - ENTERPRISE REPOSITORY PATTERN =====
@@ -2374,8 +2819,16 @@
             // Wir schalten Canvas nur auf 'auto' wenn über Box/Buttons
             chartContainer.addEventListener('mousemove', function(e) {
                 const canvas = window.positionCanvas;
-                if (!canvas || !window.currentPositionBox) {
-                    if (canvas) canvas.style.pointerEvents = 'none';
+                if (!canvas) {
+                    return;
+                }
+
+                // ⭐ BUGFIX: Prüfe auch auf closeButtonPositions, nicht nur currentPositionBox
+                const hasPositionBox = !!window.currentPositionBox;
+                const hasCloseButtons = window.closeButtonPositions && Object.keys(window.closeButtonPositions).length > 0;
+
+                if (!hasPositionBox && !hasCloseButtons) {
+                    canvas.style.pointerEvents = 'none';
                     return;
                 }
 
@@ -2431,6 +2884,17 @@
                 );
                 if (distance <= (btn.size / 2) + 5) {  // 5px extra Toleranz
                     return true;
+                }
+            }
+
+            // ⭐ BUGFIX: Prüfe Close Buttons für aktive Positionen
+            if (window.closeButtonPositions) {
+                for (const positionId in window.closeButtonPositions) {
+                    const btn = window.closeButtonPositions[positionId];
+                    if (x >= btn.x && x <= btn.x + btn.width &&
+                        y >= btn.y && y <= btn.y + btn.height) {
+                        return true;
+                    }
                 }
             }
 
@@ -2519,18 +2983,6 @@
                 const maxY = Math.max(entryY, slY, tpY) + tolerance;
 
                 const isOver = x >= minX && x <= maxX && y >= minY && y <= maxY;
-
-                // ⭐ DEBUG: Hover Detection Diagnostics (nur bei TP-Handle-Bereich Y < 100)
-                if (y < 100) {
-                    console.log('🔍 Hover Detection:', {
-                        mouseY: y.toFixed(0),
-                        minY: minY.toFixed(0),
-                        maxY: maxY.toFixed(0),
-                        isOver,
-                        cacheUsed: !!box.cachedPixelCoordinates,
-                        tpY: tpY?.toFixed(0)
-                    });
-                }
 
                 return isOver;
 
@@ -3022,12 +3474,6 @@
         }
 
         function onCanvasMouseDown(e) {
-            // ⭐ GUARD: Nur verarbeiten wenn Position Box existiert
-            if (!window.currentPositionBox) {
-                console.log('🛡️ Canvas MouseDown ignoriert - keine Position Box aktiv');
-                return;
-            }
-
             const canvas = e.target;
             const rect = canvas.getBoundingClientRect();
 
@@ -3044,6 +3490,35 @@
                 canvas: {x: mouseX, y: mouseY},
                 scale: {x: scaleX, y: scaleY}
             });
+
+            // ⭐ PRIORITÄT 0: Close Position Button Check (HÖCHSTE PRIORITÄT!)
+            if (window.closeButtonPositions) {
+                for (const positionId in window.closeButtonPositions) {
+                    const btn = window.closeButtonPositions[positionId];
+
+                    // Check if click is within button bounds
+                    if (mouseX >= btn.x && mouseX <= btn.x + btn.width &&
+                        mouseY >= btn.y && mouseY <= btn.y + btn.height) {
+
+                        console.log(`🔴 Close Position Button geklickt für Position: ${positionId}`);
+
+                        // Sende Close Position Command an Server
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const closeCommand = {
+                                type: 'close_position',
+                                position_id: positionId
+                            };
+                            ws.send(JSON.stringify(closeCommand));
+                            console.log('📤 Close Position Command gesendet:', closeCommand);
+                        } else {
+                            console.error('❌ WebSocket nicht verbunden - kann Position nicht schließen');
+                        }
+
+                        e.preventDefault();
+                        return;
+                    }
+                }
+            }
 
             // ⭐ PRIORITÄT 1: Delete Button Check (HÖCHSTE PRIORITÄT für gute UX!)
             if (window.positionBoxManager) {
@@ -3077,6 +3552,11 @@
                         }
                     }
                 }
+            }
+
+            // ⭐ GUARD: Remaining handlers need currentPositionBox
+            if (!window.currentPositionBox) {
+                return; // No position box active, ignore other interactions
             }
 
             // ⭐ PRIORITÄT 2: Check if mouse is over any resize handle
@@ -3551,13 +4031,15 @@
 
             try {
                 // Entry Price Line (orange - besser sichtbar als weiß)
+                // Note: PnL wird initial 0€ sein, wird später dynamisch aktualisiert
+                const size = currentTradeSetup?.size || 1;
                 window.positionPriceLines.entry = candlestickSeries.createPriceLine({
                     price: entryPrice,
                     color: '#FFA500',  // Orange statt weiß
                     lineWidth: 3,      // Dicker für bessere Sichtbarkeit
                     lineStyle: LightweightCharts.LineStyle.Solid,
                     axisLabelVisible: true,
-                    title: 'Entry'
+                    title: '' // Empty title - Canvas labels will be drawn instead
                 });
 
                 // Stop Loss Price Line (rot)
@@ -3613,6 +4095,17 @@
                 if (canvas) {
                     canvas.remove();
                 }
+
+                // ⭐ CRITICAL FIX: Reset canvas references so it gets recreated next time
+                if (window.positionBoxManager) {
+                    window.positionBoxManager.canvas = null;
+                    window.positionBoxManager.ctx = null;
+                    // ⭐⭐ CRITICAL: Clear all boxes from manager (MUST be Array, not Object)
+                    window.positionBoxManager.boxes = [];
+                    window.positionBoxManager.activeBoxId = null;
+                    console.log('🧹 Cleared all boxes from positionBoxManager');
+                }
+                window.positionCanvas = null;
 
                 // ⭐⭐⭐ REAKTIVIERT: Cleanup Price Lines ⭐⭐⭐
                 removePriceLines();
@@ -4136,27 +4629,58 @@
         function executeTrade() {
             console.log('🚀 Executing Trade:', currentTradeSetup);
 
-            const riskEUR = parseFloat(document.getElementById('riskAmount').value);
-            const positionSize = parseFloat(document.getElementById('positionSize').textContent);
-
-            const tradeExecution = {
-                ...currentTradeSetup,
-                riskEUR: riskEUR,
-                positionSize: positionSize,
-                executionTime: new Date(),
-                id: 'TRADE_' + Date.now()
-            };
-
-            // RL Action Tracking
-            if (window.RLSystem) {
-                window.RLSystem.trackAction('trade_executed', tradeExecution);
+            if (!currentTradeSetup) {
+                console.error('❌ No trade setup available');
+                return;
             }
 
-            // Send to backend (placeholder)
-            console.log('💰 Trade executed successfully:', tradeExecution);
-            alert(`Trade ausgeführt!\nTyp: ${tradeExecution.isShort ? 'SHORT' : 'LONG'}\nRisiko: ${riskEUR}€\nGröße: ${positionSize.toFixed(2)} NQ`);
+            // Lese Trade-Parameter
+            const riskEUR = parseFloat(document.getElementById('riskAmount').value);
+            const positionSizeText = document.getElementById('positionSize').textContent;
+            const positionSize = parseFloat(positionSizeText.replace(' NQ', ''));
 
-            closeTradeModal();
+            // Prüfe RL Status
+            const isRLOnline = window.RLSystem && window.RLSystem.mode === 'demo';
+
+            // Erstelle Trade-Daten für Backend
+            const tradeData = {
+                entryPrice: currentTradeSetup.entryPrice,
+                stopLoss: currentTradeSetup.stopLoss,
+                takeProfit: currentTradeSetup.takeProfit,
+                isShort: currentTradeSetup.direction === 'short',
+                riskEUR: riskEUR,
+                positionSize: positionSize,
+                isRLOnline: isRLOnline
+            };
+
+            console.log('📡 Sending trade to backend:', tradeData);
+            console.log(`📊 Account: ${isRLOnline ? 'RL-KI' : 'Nutzer'}`);
+
+            // 🧹 Cleanup: Entferne alte Position-Tool Lines (Entry/SL/TP vom Drawing)
+            // Diese werden durch addPositionOverlay() nach Trade-Execution neu erstellt
+            removePriceLines();
+            removeCurrentPositionBox();
+
+            // Sende WebSocket Command
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'execute_trade',
+                    trade: tradeData
+                }));
+
+                console.log('✅ Trade command sent to backend');
+
+                // RL Action Tracking
+                if (window.RLSystem) {
+                    window.RLSystem.trackAction('trade_executed', tradeData);
+                }
+
+                // Schließe Modal
+                closeTradeModal();
+            } else {
+                console.error('❌ WebSocket not connected');
+                alert('Fehler: Keine Verbindung zum Server');
+            }
         }
 
         function goToSelectedDate() {

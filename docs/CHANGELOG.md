@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] - 2025-10-19
+
+### 🎯 FEATURE - Trade Execution & Live Position Visualization
+
+Complete implementation of trade execution system with real-time position tracking and modern UI visualization.
+
+#### Added
+
+**Backend - Account Service**:
+- ✅ `charts/services/account_service.py` - Dual account management (AI + User)
+- ✅ Separate 500,000€ starting capital per account
+- ✅ Trade execution with automatic account assignment (RL online → AI account, offline → User account)
+- ✅ Position lifecycle management (open, update PnL, close)
+- ✅ Real-time PnL calculation (realized + unrealized)
+- ✅ Trade statistics tracking (win rate, total trades, winning/losing trades)
+- ✅ Auto-close on Stop Loss / Take Profit hit
+- ✅ Position history tracking (closed positions log)
+
+**Frontend - Live Position Labels**:
+- ✅ Modern canvas-based position labels on entry price line
+- ✅ Three separate labels: `[Size] [PnL] [X]` aligned right before Y-axis
+- ✅ Material Design color scheme:
+  - Size label: Google Blue (#4285f4)
+  - PnL label: Teal green (profit) / Soft red (loss)
+  - Close button: Solid red with white X
+- ✅ Continuous rendering (~60 FPS) for stable tracking during zoom/pan
+- ✅ Real-time PnL updates via WebSocket
+- ✅ Click X button to manually close position
+- ✅ Labels auto-disappear on position close
+
+**WebSocket Integration**:
+- ✅ `execute_trade` command - Creates position and assigns to correct account
+- ✅ `close_position` command - Closes position manually
+- ✅ `position_opened` event - Broadcasts new position to all clients
+- ✅ `position_closed` event - Broadcasts closed position with realized PnL
+- ✅ `pnl_update` event - Real-time unrealized PnL updates
+
+#### Fixed
+
+**Critical Bugs**:
+- ✅ Position Tool canvas not recreating after trade execution
+  - Root cause: Canvas references not reset after removal
+  - Fix: Reset `positionBoxManager.canvas`, `.ctx`, `.boxes[]` in `removeCurrentPositionBox()`
+- ✅ Old Position Tool boxes stacking under new boxes
+  - Root cause: `positionBoxManager.boxes` not cleared on trade execution
+  - Fix: Set `boxes = []` (Array, not Object) when clearing manager
+- ✅ Labels not disappearing after trade close
+  - Root cause: Canvas not cleared when no positions remain
+  - Fix: Two-stage canvas clearing (in `removePositionOverlay()` + `renderLivePnLLabels()`)
+- ✅ Labels shifting during Y-axis zoom
+  - Root cause: Static rendering without coordinate recalculation
+  - Fix: Continuous rendering loop with `requestAnimationFrame()` + `priceToCoordinate()`
+- ✅ X button click detection not working
+  - Root cause: Canvas overlay blocking clicks
+  - Fix: Set `pointerEvents: 'none'` on labels canvas, handle clicks via `chart.subscribeClick()`
+
+**Performance Optimizations**:
+- ✅ Reduced console logging in high-frequency functions (60 FPS rendering)
+- ✅ Efficient canvas clearing only when needed
+- ✅ Optimized button click detection with early returns
+
+#### Changed
+
+**UI/UX Improvements**:
+- Enhanced label sizing: 22px height, 13px bold font, 1.5px borders
+- Better spacing: 70px Y-axis width + 15px margin
+- Improved visual separation between labels (5px gap)
+- Professional modern design with subtle transparency
+
+**Code Quality**:
+- Separated PnL labels canvas (`pnl-labels-canvas`, z-index 10) from position box canvas (`position-canvas`, z-index 5)
+- Clean separation of concerns (Position Tool vs Live Trades)
+- Comprehensive debug logging for troubleshooting
+
+---
+
 ## [2.0.0] - 2025-10-11
 
 ### 🎉 MAJOR REFACTOR - Clean Architecture
