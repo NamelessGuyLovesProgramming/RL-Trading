@@ -2659,8 +2659,8 @@
             // ⭐ ÄNDERUNG: Alle Boxes zeichnen statt nur eine
             window.positionBoxManager.drawAll();
 
-            // ⭐⭐⭐ REAKTIVIERT: Price Lines auf Y-Achse für bessere Preisanzeige ⭐⭐⭐
-            createPriceLines(entryPrice, stopLoss, takeProfit);
+            // ⭐⭐⭐ DEAKTIVIERT: Price Lines für Position Tool nicht erwünscht ⭐⭐⭐
+            // createPriceLines(entryPrice, stopLoss, takeProfit);
 
             // console.log(`📦 Neue Position Box erstellt: ${boxId} (Total: ${window.positionBoxManager.count()})`);
 
@@ -3429,9 +3429,9 @@
                 delete box.dragOffsetX;
                 delete box.dragOffsetY;
 
-                // Redraw ohne Offsets und erstelle Price Lines
+                // Redraw ohne Offsets (Price Lines deaktiviert)
                 drawPositionBox();
-                createPriceLines(box.entryPrice, box.stopLoss, box.takeProfit);
+                // createPriceLines(box.entryPrice, box.stopLoss, box.takeProfit);
             }
 
             // Reset Drag State
