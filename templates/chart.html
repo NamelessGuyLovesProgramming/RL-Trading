@@ -41,6 +41,13 @@
                         <span id="tradeType" class="trade-value">LONG</span>
                     </div>
                     <div class="trade-info-row">
+                        <span class="trade-label">Order:</span>
+                        <select id="orderType" class="order-type-select" onchange="onOrderTypeChange()">
+                            <option value="market">Market Order</option>
+                            <option value="limit">Limit Order</option>
+                        </select>
+                    </div>
+                    <div class="trade-info-row">
                         <span class="trade-label">Entry:</span>
                         <span id="tradeEntry" class="trade-value">21,250.50</span>
                     </div>

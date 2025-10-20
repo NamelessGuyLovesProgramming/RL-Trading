@@ -1139,6 +1139,12 @@
                         const validatedData = validateCandleData(data);
                         candlestickSeries.setData(validatedData);
 
+                        // Store last candle close price for market orders
+                        if (validatedData.length > 0) {
+                            const lastCandle = validatedData[validatedData.length - 1];
+                            window.lastCandleClose = lastCandle.close;
+                        }
+
                         if (validatedData.length !== data.length) {
                             console.warn(`⚠️ ${data.length - validatedData.length} invalid candles removed from initial data`);
                         }
@@ -1455,6 +1461,9 @@
                         };
                         candlestickSeries.update(validatedCandle);
 
+                        // Store last candle close price for market orders
+                        window.lastCandleClose = validatedCandle.close;
+
                         console.log('🚀 Revolutionary Skip:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('📊 Candle Type:', message.candle_type);
                         console.log('⏰ Debug Time:', message.debug_time);
@@ -1487,6 +1496,9 @@
                             close: parseFloat(message.candle.close)
                         };
                         candlestickSeries.update(validatedCandle);
+
+                        // Store last candle close price for market orders
+                        window.lastCandleClose = validatedCandle.close;
 
                         console.log('[UNIFIED] Skip Event:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('[UNIFIED] Candle Type:', message.candle_type);
@@ -4530,15 +4542,50 @@
 
         // ===== TRADE MODAL FUNCTIONS =====
         let currentTradeSetup = null;
+        window.activeLimitOrders = [];  // Active limit orders array
+        window.lastCandleClose = null;  // Store last candle close price
 
-        function openTradeModal(tradeData) {
+        // Start limit order monitoring interval
+        setInterval(() => {
+            const currentPrice = getCurrentMarketPrice();
+            if (currentPrice && typeof checkLimitOrders === 'function') {
+                checkLimitOrders(currentPrice);
+            }
+        }, 1000);  // Check every second
+
+        function getCurrentMarketPrice() {
+            // Get current market price from last candle close
+            if (window.lastCandleClose !== null && window.lastCandleClose !== undefined) {
+                return window.lastCandleClose;
+            }
+            return null;
+        }
+
+                function openTradeModal(tradeData) {
             console.log('💰 Opening Trade Modal:', tradeData);
 
             currentTradeSetup = tradeData;
 
+            // Restore saved order type from localStorage
+            const savedOrderType = localStorage.getItem('preferredOrderType') || 'market';
+            const orderTypeSelect = document.getElementById('orderType');
+            if (orderTypeSelect) {
+                orderTypeSelect.value = savedOrderType;
+            }
+
             // Update Modal Content
             document.getElementById('tradeType').textContent = tradeData.isShort ? 'SHORT' : 'LONG';
-            document.getElementById('tradeEntry').textContent = tradeData.entryPrice.toFixed(2);
+
+            // Set entry price based on order type
+            const currentMarketPrice = getCurrentMarketPrice();
+
+            if (savedOrderType === 'market' && currentMarketPrice) {
+                document.getElementById('tradeEntry').textContent = currentMarketPrice.toFixed(2);
+                currentTradeSetup.entryPrice = currentMarketPrice;
+            } else {
+                document.getElementById('tradeEntry').textContent = tradeData.entryPrice.toFixed(2);
+            }
+
             document.getElementById('tradeStopLoss').textContent = tradeData.stopLoss.toFixed(2);
             document.getElementById('tradeTakeProfit').textContent = tradeData.takeProfit.toFixed(2);
 
@@ -4550,7 +4597,33 @@
             modal.style.display = 'flex';
         }
 
-        function closeTradeModal() {
+        function onOrderTypeChange() {
+            const orderType = document.getElementById('orderType').value;
+            console.log('📋 Order Type changed to:', orderType);
+
+            // Save to localStorage
+            localStorage.setItem('preferredOrderType', orderType);
+
+            // Update entry price based on order type
+            if (orderType === 'market') {
+                const currentMarketPrice = getCurrentMarketPrice();
+                if (currentMarketPrice && currentTradeSetup) {
+                    document.getElementById('tradeEntry').textContent = currentMarketPrice.toFixed(2);
+                    currentTradeSetup.entryPrice = currentMarketPrice;
+                    updatePositionSize();
+                }
+            } else {
+                // Limit Order - restore position box entry price
+                if (window.currentPositionBox && currentTradeSetup) {
+                    const boxEntryPrice = window.currentPositionBox.entryPrice;
+                    document.getElementById('tradeEntry').textContent = boxEntryPrice.toFixed(2);
+                    currentTradeSetup.entryPrice = boxEntryPrice;
+                    updatePositionSize();
+                }
+            }
+        }
+
+                function closeTradeModal() {
             console.log('💰 Closing Trade Modal...');
             const modal = document.getElementById('tradeModal');
             modal.style.display = 'none';
@@ -4605,7 +4678,112 @@
             }
         }
 
-        function updatePositionSize() {
+        function checkLimitOrders(currentPrice) {
+            if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
+                return;
+            }
+
+            const triggeredOrders = [];
+
+            window.activeLimitOrders.forEach((order, index) => {
+                let triggered = false;
+
+                if (order.isShort) {
+                    // Short position: trigger when price reaches or goes above entry
+                    triggered = currentPrice >= order.entryPrice;
+                } else {
+                    // Long position: trigger when price reaches or goes below entry
+                    triggered = currentPrice <= order.entryPrice;
+                }
+
+                if (triggered) {
+                    console.log('🎯 Limit Order TRIGGERED:', order);
+                    triggeredOrders.push({order, index});
+                }
+            });
+
+            // Execute triggered orders (in reverse to avoid index issues)
+            triggeredOrders.reverse().forEach(({order, index}) => {
+                // Remove price line
+                if (order.priceLine) {
+                    lineSeries.removePriceLine(order.priceLine);
+                }
+
+                // Execute trade via backend
+                const tradeData = {
+                    entryPrice: order.entryPrice,
+                    stopLoss: order.stopLoss,
+                    takeProfit: order.takeProfit,
+                    isShort: order.isShort,
+                    riskEUR: order.riskEUR,
+                    positionSize: order.positionSize,
+                    isRLOnline: order.isRLOnline,
+                    orderType: 'limit'  // Mark as limit order execution
+                };
+
+                console.log('📡 Executing Limit Order via backend:', tradeData);
+
+                fetch('/api/execute_trade', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(tradeData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('✅ Limit Order executed:', data);
+                })
+                .catch(error => {
+                    console.error('❌ Limit Order execution failed:', error);
+                });
+
+                // Remove from active orders
+                window.activeLimitOrders.splice(index, 1);
+            });
+        }
+
+                function placeLimitOrder() {
+            console.log('📌 Placing Limit Order:', currentTradeSetup);
+
+            const riskEUR = parseFloat(document.getElementById('riskAmount').value);
+            const positionSizeText = document.getElementById('positionSize').textContent;
+            const positionSize = parseFloat(positionSizeText.replace(' NQ', ''));
+
+            // Create limit order object
+            const limitOrder = {
+                id: Date.now(),
+                entryPrice: currentTradeSetup.entryPrice,
+                stopLoss: currentTradeSetup.stopLoss,
+                takeProfit: currentTradeSetup.takeProfit,
+                direction: currentTradeSetup.direction || (currentTradeSetup.isShort ? 'short' : 'long'),
+                isShort: currentTradeSetup.direction === 'short',
+                riskEUR: riskEUR,
+                positionSize: positionSize,
+                isRLOnline: window.RLSystem && window.RLSystem.mode === 'demo',
+                priceLine: null  // Will be created below
+            };
+
+            // Create price line visualization
+            const priceLine = lineSeries.createPriceLine({
+                price: limitOrder.entryPrice,
+                color: limitOrder.isShort ? '#ef4444' : '#22c55e',
+                lineWidth: 2,
+                lineStyle: 2,  // Dashed
+                axisLabelVisible: true,
+                title: `Limit ${limitOrder.isShort ? 'SHORT' : 'LONG'}: ${positionSize.toFixed(2)} NQ`
+            });
+
+            limitOrder.priceLine = priceLine;
+
+            // Add to active limit orders
+            window.activeLimitOrders.push(limitOrder);
+            console.log('✅ Limit Order placed:', limitOrder);
+            console.log('📊 Active Limit Orders:', window.activeLimitOrders.length);
+
+            // Close modal
+            closeTradeModal();
+        }
+
+                function updatePositionSize() {
             if (!currentTradeSetup) return;
 
             const riskEUR = parseFloat(document.getElementById('riskAmount').value);
@@ -4633,6 +4811,18 @@
                 console.error('❌ No trade setup available');
                 return;
             }
+
+            // Check order type
+            const orderType = document.getElementById('orderType')?.value || 'market';
+            console.log('📋 Order Type:', orderType);
+
+            if (orderType === 'limit') {
+                // Place limit order instead of executing immediately
+                placeLimitOrder();
+                return;
+            }
+
+            // Continue with Market Order execution...
 
             // Lese Trade-Parameter
             const riskEUR = parseFloat(document.getElementById('riskAmount').value);
