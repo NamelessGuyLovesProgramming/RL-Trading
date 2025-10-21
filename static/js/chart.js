@@ -445,6 +445,11 @@
                             // console.log(`🔄 ${window.positionBoxManager.count()} Boxes neu gezeichnet (Zoom/Pan Event)`);
                         }
 
+                        // Redraw limit orders too
+                        if (window.activeLimitOrders && window.activeLimitOrders.length > 0) {
+                            drawLimitOrders();
+                        }
+
                         // 💰 Render PnL labels after zoom/pan
                         renderLivePnLLabels();
 
@@ -591,6 +596,27 @@
                         }
                     }
                     console.log(`[Close] ❌ Click outside all close buttons`);
+                }
+
+                // Check for limit order close button clicks
+                if (param.point && window.limitOrderCloseButtons) {
+                    const clickX = param.point.x;
+                    const clickY = param.point.y;
+
+                    console.log(`[LimitClose] Click at (${clickX}, ${clickY}), checking ${Object.keys(window.limitOrderCloseButtons).length} limit order buttons`);
+
+                    for (const limitId in window.limitOrderCloseButtons) {
+                        const btn = window.limitOrderCloseButtons[limitId];
+
+                        if (clickX >= btn.x && clickX <= btn.x + btn.width &&
+                            clickY >= btn.y && clickY <= btn.y + btn.height) {
+                            console.log(`[LimitClose] ✅ X button clicked for limit order ${btn.orderId}`);
+
+                            // Cancel limit order
+                            window.cancelLimitOrder(btn.orderId);
+                            return; // Prevent other click handlers
+                        }
+                    }
                 }
 
                 // ⭐ MULTI-BOX SUPPORT: Mehrere Boxes erlaubt!
@@ -4689,11 +4715,11 @@
                 let triggered = false;
 
                 if (order.isShort) {
-                    // Short position: trigger when price reaches or goes above entry
-                    triggered = currentPrice >= order.entryPrice;
-                } else {
-                    // Long position: trigger when price reaches or goes below entry
+                    // Short Limit: trigger when price reaches or goes BELOW entry (selling at resistance)
                     triggered = currentPrice <= order.entryPrice;
+                } else {
+                    // Long Limit: trigger when price reaches or goes ABOVE entry (buying at support)
+                    triggered = currentPrice >= order.entryPrice;
                 }
 
                 if (triggered) {
@@ -4706,7 +4732,7 @@
             triggeredOrders.reverse().forEach(({order, index}) => {
                 // Remove price line
                 if (order.priceLine) {
-                    lineSeries.removePriceLine(order.priceLine);
+                    candlestickSeries.removePriceLine(order.priceLine);
                 }
 
                 // Execute trade via backend
@@ -4723,22 +4749,34 @@
 
                 console.log('📡 Executing Limit Order via backend:', tradeData);
 
-                fetch('/api/execute_trade', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(tradeData)
-                })
-                .then(response => response.json())
-                .then(data => {
-                    console.log('✅ Limit Order executed:', data);
-                })
-                .catch(error => {
-                    console.error('❌ Limit Order execution failed:', error);
-                });
+                // Send via WebSocket (same as market orders)
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'execute_trade',
+                        trade: tradeData
+                    }));
+                    console.log('✅ Limit Order command sent via WebSocket');
+                } else {
+                    console.error('❌ WebSocket not connected');
+                }
 
                 // Remove from active orders
                 window.activeLimitOrders.splice(index, 1);
+
+                // Remove from close buttons registry (using "limit_" prefix)
+                const buttonKey = `limit_${order.id}`;
+                if (window.limitOrderCloseButtons && window.limitOrderCloseButtons[buttonKey]) {
+                    delete window.limitOrderCloseButtons[buttonKey];
+                    console.log(`🗑️ Removed close button for order ${order.id}`);
+                }
             });
+
+            // Redraw canvas to remove executed order labels
+            if (triggeredOrders.length > 0) {
+                drawLimitOrders();
+            }
+
+            // Orders were triggered and removed from array
         }
 
                 function placeLimitOrder() {
@@ -4762,14 +4800,14 @@
                 priceLine: null  // Will be created below
             };
 
-            // Create price line visualization
-            const priceLine = lineSeries.createPriceLine({
+            // Create price line visualization (without title - we use canvas label instead)
+            const priceLine = candlestickSeries.createPriceLine({
                 price: limitOrder.entryPrice,
                 color: limitOrder.isShort ? '#ef4444' : '#22c55e',
                 lineWidth: 2,
                 lineStyle: 2,  // Dashed
                 axisLabelVisible: true,
-                title: `Limit ${limitOrder.isShort ? 'SHORT' : 'LONG'}: ${positionSize.toFixed(2)} NQ`
+                title: ''  // No title - using canvas label
             });
 
             limitOrder.priceLine = priceLine;
@@ -4779,9 +4817,169 @@
             console.log('✅ Limit Order placed:', limitOrder);
             console.log('📊 Active Limit Orders:', window.activeLimitOrders.length);
 
+            // Draw limit order labels on canvas
+            drawLimitOrders();
+
             // Close modal
             closeTradeModal();
         }
+
+        // Draw all limit orders on canvas with close buttons
+        function drawLimitOrders() {
+            // Create or get canvas
+            let canvas = document.getElementById('limitOrderCanvas');
+            if (!canvas) {
+                canvas = document.createElement('canvas');
+                canvas.id = 'limitOrderCanvas';
+                canvas.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 11;';
+                document.getElementById('chart_container').appendChild(canvas);
+
+                // Add click handler for canvas
+                canvas.addEventListener('click', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const clickX = e.clientX - rect.left;
+                    const clickY = e.clientY - rect.top;
+
+                    console.log(`[LimitCanvas] Click at canvas coords (${clickX.toFixed(1)}, ${clickY.toFixed(1)})`);
+
+                    // Check if click is on any close button
+                    if (window.limitOrderCloseButtons) {
+                        for (const limitId in window.limitOrderCloseButtons) {
+                            const btn = window.limitOrderCloseButtons[limitId];
+
+                            console.log(`[LimitCanvas] Button ${btn.orderId}: x=${btn.x.toFixed(1)}, y=${btn.y.toFixed(1)}, w=${btn.width}, h=${btn.height}`);
+                            console.log(`[LimitCanvas] Check: X in [${btn.x.toFixed(1)}, ${(btn.x + btn.width).toFixed(1)}], Y in [${btn.y.toFixed(1)}, ${(btn.y + btn.height).toFixed(1)}]`);
+
+                            if (clickX >= btn.x && clickX <= btn.x + btn.width &&
+                                clickY >= btn.y && clickY <= btn.y + btn.height) {
+                                console.log(`[LimitCanvas] ✅ Close button clicked for order ${btn.orderId}`);
+                                window.cancelLimitOrder(btn.orderId);
+                                e.stopPropagation();
+                                return;
+                            } else {
+                                console.log(`[LimitCanvas] ❌ Click outside button ${btn.orderId}`);
+                            }
+                        }
+                    }
+
+                    console.log(`[LimitCanvas] No button clicked - enabling drag mode (TODO)`);
+                });
+            }
+
+            const container = document.getElementById('chart_container');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Initialize closeButtonPositions for limit orders
+            if (!window.limitOrderCloseButtons) {
+                window.limitOrderCloseButtons = {};
+            }
+            window.limitOrderCloseButtons = {};
+
+            // If no orders, canvas is now clear - we're done
+            if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
+                console.log('✅ Canvas cleared - no limit orders to draw');
+                return;
+            }
+
+            window.activeLimitOrders.forEach((order) => {
+                const y = candlestickSeries.priceToCoordinate(order.entryPrice);
+
+                if (y === null) return;
+
+                // Position: right side of chart, BEFORE the Y-axis (not on it)
+                const x = canvas.width - 220;  // More left to be before Y-axis
+                const boxWidth = 140;
+                const boxHeight = 24;
+
+                // Colors
+                const bgColor = order.isShort ? 'rgba(239, 68, 68, 0.9)' : 'rgba(34, 197, 94, 0.9)';
+                const borderColor = order.isShort ? '#ef4444' : '#22c55e';
+
+                // Draw box
+                ctx.fillStyle = bgColor;
+                ctx.fillRect(x, y - boxHeight / 2, boxWidth, boxHeight);
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y - boxHeight / 2, boxWidth, boxHeight);
+
+                // Draw text
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 11px Arial';
+                const text = `LIMIT ${order.isShort ? 'SHORT' : 'LONG'} ${order.entryPrice.toFixed(2)}`;
+                ctx.fillText(text, x + 5, y + 4);
+
+                // Draw close button (X)
+                const btnX = x + boxWidth - 18;
+                const btnY = y - 8;
+                const btnSize = 16;
+
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(btnX, btnY, btnSize, btnSize);
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(btnX, btnY, btnSize, btnSize);
+
+                // Draw X
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(btnX + 4, btnY + 4);
+                ctx.lineTo(btnX + btnSize - 4, btnY + btnSize - 4);
+                ctx.moveTo(btnX + btnSize - 4, btnY + 4);
+                ctx.lineTo(btnX + 4, btnY + btnSize - 4);
+                ctx.stroke();
+
+                // Store button position for click detection (using "limit_" prefix)
+                window.limitOrderCloseButtons[`limit_${order.id}`] = {
+                    x: btnX,
+                    y: btnY,
+                    width: btnSize,
+                    height: btnSize,
+                    orderId: order.id
+                };
+            });
+
+            console.log(`✅ Drew ${window.activeLimitOrders.length} limit orders on canvas`);
+        }
+
+        window.cancelLimitOrder = function(orderId) {
+            console.log('❌ Cancelling Limit Order:', orderId);
+
+            const orderIndex = window.activeLimitOrders.findIndex(order => order.id === orderId);
+            if (orderIndex === -1) {
+                console.error('Order not found:', orderId);
+                return;
+            }
+
+            const order = window.activeLimitOrders[orderIndex];
+
+            // Remove price line from chart
+            if (order.priceLine) {
+                candlestickSeries.removePriceLine(order.priceLine);
+            }
+
+            // Remove from array
+            window.activeLimitOrders.splice(orderIndex, 1);
+
+            console.log('✅ Limit Order cancelled');
+            console.log('📊 Remaining Limit Orders:', window.activeLimitOrders.length);
+
+            // Redraw limit orders canvas
+            if (window.activeLimitOrders.length > 0) {
+                drawLimitOrders();
+            } else {
+                // Clear canvas if no more orders
+                const canvas = document.getElementById('limitOrderCanvas');
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+        };
 
                 function updatePositionSize() {
             if (!currentTradeSetup) return;
