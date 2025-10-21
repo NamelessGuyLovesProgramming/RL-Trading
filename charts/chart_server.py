@@ -56,6 +56,7 @@ from charts.services import (
 # Router imports
 from charts.routes import chart as chart_routes
 from charts.routes import debug as debug_routes
+from charts.routes import account as account_routes
 from charts.routes import static as static_routes
 from charts.routes.websocket_handler import handle_websocket_commands
 
@@ -357,6 +358,11 @@ async def startup_event():
         debug_controller=debug_controller,
         global_skip_events=global_skip_events,
         debug_control_timeframe=debug_control_timeframe,
+        account_service=account_service
+    )
+
+    account_routes.setup_account_routes(
+        app=app,
         account_service=account_service
     )
 
