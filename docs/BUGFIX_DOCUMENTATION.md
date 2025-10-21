@@ -1,5 +1,101 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Position Tools - Entry-Line fixiert (nicht mehr verschiebbar) - 21.10.2025 ✨ FEATURE
+
+### Anforderung:
+Entry-Line in beiden Position Tools (Long 📈 + Short 📉) soll nicht mehr verschiebbar sein, während SL/TP Resize-Handles weiterhin funktionieren.
+
+**User Intent:**
+1. Entry-Line fixieren (keine vertikale Verschiebung)
+2. SL/TP Resize-Handles beibehalten (funktionieren normal)
+3. X-Button (Close) beibehalten (funktioniert normal)
+
+### Problem:
+Entry-Line war per Drag & Drop verschiebbar - User konnten Entry-Preis nach Platzierung der Position ändern, was zu inkonsistenten Positionen führen kann.
+
+**Symptome:**
+1. Klick auf weiße Entry-Line ermöglichte vertikales Verschieben ❌
+2. Entry-Preis wurde während Drag aktualisiert ❌
+3. Entry-Line hatte eigene Drag-Logik (Priorität 3 in onCanvasMouseDown)
+
+### Implementation Details:
+
+**File:** `static/js/chart.js`
+
+**1. Entry-Line Drag Detection entfernt (~Zeile 3708-3736):**
+```javascript
+// BEFORE - Entry-Line Detection
+if (window.positionBoxManager) {
+    const allBoxes = window.positionBoxManager.getAll();
+    for (const box of allBoxes) {
+        // Prüfe ob Klick auf Entry-Linie
+        if (Math.abs(mouseY - entryY) <= 10 && mouseX >= x1 && mouseX <= x2) {
+            isDragging = true;
+            dragHandle = 'ENTRY-LINE';  // ❌ Aktivierte Entry-Drag
+            // ...
+        }
+    }
+}
+
+// AFTER - Entry-Line nicht mehr detektierbar
+// ⭐ ENTRY-LINE NICHT MEHR VERSCHIEBBAR (Fixiert)
+// Entry-Line Drag Detection entfernt - nur SL/TP Resize-Handles erlaubt
+```
+
+**Effekt:** Klicks auf Entry-Line werden ignoriert → keine Drag-Aktivierung
+
+**2. Entry-Line Update Logic entfernt (~Zeile 3965-3990):**
+```javascript
+// BEFORE - Entry-Line Update
+function updateBoxFromHandle(handleId, newPrice, ...) {
+    if (handleId === 'ENTRY-LINE') {  // ❌ Verarbeitete Entry-Drag
+        box.entryPrice = newPrice;
+        // Update PriceLines, Koordinaten-Cache...
+    } else {
+        // SL/TP Resize Logic
+    }
+}
+
+// AFTER - Entry-Line Case entfernt
+function updateBoxFromHandle(handleId, newPrice, ...) {
+    // ⭐ ENTRY-LINE NICHT MEHR VERSCHIEBBAR (Fixiert)
+    // Entry-Line Update Logic entfernt - handleId 'ENTRY-LINE' wird nicht mehr verarbeitet
+
+    // ECKHANDLES: Sowohl Preise als auch Breite ändern (SL/TP Resize)
+    // ... SL/TP Logic unverändert ...
+}
+```
+
+**Effekt:** Selbst wenn 'ENTRY-LINE' als handleId übergeben wird, passiert nichts
+
+### Resultat:
+
+**Fixierte Features:**
+- ❌ Entry-Line **nicht mehr verschiebbar** (User Intent erfüllt)
+- ✅ SL/TP **Resize-Handles funktionieren** weiterhin normal
+- ✅ X-Button **funktioniert** weiterhin (Close Position)
+- ✅ Box-Body Drag **funktioniert** weiterhin (gesamte Position verschieben)
+
+**Unverändert:**
+- SL/TP Preis-Validierung (Entry-Kreuzung verhindert)
+- Resize-Handle Click-Detection
+- Buy Button Functionality
+- Delete Button Functionality
+
+### Prevention:
+
+**UI Consistency:**
+- Entry-Preis ist Basis-Parameter der Position → sollte nach Platzierung fixiert sein
+- SL/TP sind adjustierbare Risk-Parameters → Resize-Handles sinnvoll
+- Klare Trennung: Fixierte vs. Editierbare Parameter
+
+**Code Organization:**
+- Drag-Features in separaten Blöcken (Entry, SL, TP, Box-Body)
+- Jeder Block kann unabhängig aktiviert/deaktiviert werden
+- Kommentare mit ⭐ markieren deaktivierte Features für Nachvollziehbarkeit
+
+---
+
 ## Short Position Tool - Fehlende Resize Handles - 21.10.2025 🐛 BUG
 
 ### Problem:

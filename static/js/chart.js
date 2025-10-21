@@ -3705,35 +3705,8 @@
                 }
             }
 
-            // ⭐ PRIORITÄT 3: Check if mouse is over Entry-Linie (weiße Linie)
-            // ⭐⭐⭐ NEU: Check Entry-Line von ALLEN Boxes ⭐⭐⭐
-            if (window.positionBoxManager) {
-                const allBoxes = window.positionBoxManager.getAll();
-
-                for (const box of allBoxes) {
-                    if (!box.boxCoordinates) continue;
-
-                    const coords = box.boxCoordinates;
-                    const entryY = coords.entryY;
-                    const x1 = coords.x1;
-                    const x2 = coords.x2;
-
-                    // Prüfe ob Klick auf Entry-Linie (Y-Koordinate ±10px, X zwischen x1 und x2)
-                    if (Math.abs(mouseY - entryY) <= 10 && mouseX >= x1 && mouseX <= x2) {
-                        isDragging = true;
-                        dragHandle = 'ENTRY-LINE';
-                        window.currentPositionBox = box;  // ⭐ Setze als aktive Box
-                        window.positionBoxManager.setActive(box.id);
-                        window.boxCoordinates = box.boxCoordinates;  // ⭐ Aktualisiere globale Coords
-
-                        e.target.style.cursor = 'ns-resize';
-                        e.target.style.pointerEvents = 'auto';  // ⭐ Während Dragging Canvas aktiv halten
-                        console.log(`🎯 Entry-Linie Drag gestartet auf Box ${box.id}`);
-                        e.preventDefault();
-                        return;
-                    }
-                }
-            }
+            // ⭐ ENTRY-LINE NICHT MEHR VERSCHIEBBAR (Fixiert)
+            // Entry-Line Drag Detection entfernt - nur SL/TP Resize-Handles erlaubt
 
             // ⭐ PRIORITÄT 4: Check if mouse is over buy button
             if (window.buyButtonCoords && window.currentPositionBox) {
@@ -3989,34 +3962,10 @@
             const box = window.currentPositionBox;
             if (!box) return;
 
-            // ENTRY-LINIE: Verschieben nur Entry-Preis vertikal
-            if (handleId === 'ENTRY-LINE') {
-                box.entryPrice = newPrice;
+            // ⭐ ENTRY-LINE NICHT MEHR VERSCHIEBBAR (Fixiert)
+            // Entry-Line Update Logic entfernt - handleId 'ENTRY-LINE' wird nicht mehr verarbeitet
 
-                // SOFORTIGE KOORDINATEN-CACHE AKTUALISIERUNG
-                box.entryY = candlestickSeries.priceToCoordinate(newPrice);
-                console.log('🎯 ENTRY-Koordinate sofort cached:', box.entryY);
-
-                // Update Price Lines mit neuem Entry-Preis
-                if (window.positionPriceLines && window.positionPriceLines.entry) {
-                    candlestickSeries.removePriceLine(window.positionPriceLines.entry);
-                    window.positionPriceLines.entry = candlestickSeries.createPriceLine({
-                        price: newPrice,
-                        color: '#ffffff',
-                        lineWidth: 2,
-                        lineStyle: LightweightCharts.LineStyle.Solid,
-                        axisLabelVisible: true,
-                        title: 'Entry'
-                    });
-                }
-
-                console.log('📊 ENTRY-LINIE VERSCHOBEN:', {
-                    newEntry: newPrice,
-                    SL: box.stopLoss,
-                    TP: box.takeProfit
-                });
-            } else {
-                // ECKHANDLES: Sowohl Preise als auch Breite ändern
+            // ECKHANDLES: Sowohl Preise als auch Breite ändern (SL/TP Resize)
 
                 // Update prices based on which handle was dragged
                 if (handleId.includes('SL')) {
@@ -4134,7 +4083,6 @@
                         console.warn('⚠️ Zeit-Konvertierung fehlgeschlagen, verwende Percentage:', error);
                     }
                 }
-            }
 
             // Stelle sicher dass timeStart < timeEnd und x1 < x2
             if (box.timeStart && box.timeEnd && box.timeStart > box.timeEnd) {
