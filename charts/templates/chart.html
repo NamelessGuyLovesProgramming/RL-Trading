@@ -428,6 +428,7 @@
             color: #000;
             border-color: #60a5fa;
         }
+
     </style>
 </head>
 <body>
@@ -463,6 +464,13 @@
                     <div class="trade-info-row">
                         <span class="trade-label">Typ:</span>
                         <span id="tradeType" class="trade-value">LONG</span>
+                    </div>
+                    <div class="trade-info-row">
+                        <span class="trade-label">Order:</span>
+                        <select id="orderType" class="order-type-select" onchange="onOrderTypeChange()">
+                            <option value="market">Market Order</option>
+                            <option value="limit">Limit Order</option>
+                        </select>
                     </div>
                     <div class="trade-info-row">
                         <span class="trade-label">Entry:</span>
@@ -655,6 +663,7 @@
     </div>
 
     <div id="status" class="status disconnected">Disconnected</div>
+
     <div id="chart_container"></div>
 
     <script>
@@ -933,6 +942,15 @@
         }
 
         function initChart() {
+            // ⭐ GUARD: Verhindere Doppel-Initialisierung (Race Condition Fix)
+            if (isInitialized || chart) {
+                console.log('⚠️ Chart bereits initialisiert, überspringe Doppel-Init');
+                return;
+            }
+
+            // ⭐ SOFORT setzen (nicht am Ende!) → verhindert Race Condition
+            isInitialized = true;
+
             console.log('🔧 initChart() aufgerufen');
 
             const chartContainer = document.getElementById('chart_container');
@@ -940,6 +958,7 @@
 
             if (!chartContainer) {
                 console.error('❌ Chart Container nicht gefunden!');
+                isInitialized = false;  // Reset bei Fehler
                 return;
             }
 
@@ -1194,7 +1213,7 @@
                 }
             });
 
-            isInitialized = true;
+            // ⭐ isInitialized bereits am Anfang gesetzt (Race Condition Prevention)
             console.log('✅ Chart initialisiert, lade NQ-Daten...');
         }
 
@@ -2797,18 +2816,19 @@
             const chartContainer = document.getElementById('chart_container');
             canvas = document.createElement('canvas');
             canvas.id = 'position-canvas';
-            canvas.style.position = 'absolute';
-            canvas.style.top = '0';
-            canvas.style.left = '0';
-            canvas.style.width = '100%';
-            canvas.style.height = '100%';
+            // ⭐ FIX: position fixed (nicht absolute) - verhindert Layout-Konflikt mit fixed Container
+            canvas.style.position = 'fixed';
+            canvas.style.left = '35px';  // Gleich wie chart_container margin-left
+            canvas.style.top = '80px';   // Gleich wie chart_container top
+            canvas.style.right = '0';
+            canvas.style.bottom = '40px'; // Gleich wie chart_container bottom
             canvas.style.pointerEvents = 'none';  // ⭐ STANDARD: 'none' → Events gehen zum Chart durch
             canvas.style.zIndex = '1000';
             canvas.width = chartContainer.clientWidth;
             canvas.height = chartContainer.clientHeight;
 
-            chartContainer.style.position = 'relative';
-            chartContainer.appendChild(canvas);
+            // ⭐ Canvas direkt an body anhängen (da position: fixed)
+            document.body.appendChild(canvas);
 
             const ctx = canvas.getContext('2d');
 
@@ -4628,151 +4648,9 @@
                 console.error('❌ Keine Timeframe Buttons gefunden');
             }
 
-            // Zusätzliche Sicherheit: Prüfe ob LightweightCharts verfügbar ist
-            if (typeof LightweightCharts !== 'undefined') {
-                console.log('✅ LightweightCharts library loaded');
-                // DIREKT TESTEN: Chart erstellen ohne loadChart()
-                try {
-                    serverLog('🔧 DIRECT CHART TEST - Starting detailed debug...');
-
-                    // 1. Container Debug
-                    const container = document.getElementById('chart_container');
-                    serverLog('🔍 Container Debug:', {
-                        gefunden: !!container,
-                        clientWidth: container?.clientWidth,
-                        clientHeight: container?.clientHeight,
-                        offsetWidth: container?.offsetWidth,
-                        offsetHeight: container?.offsetHeight,
-                        rect: container?.getBoundingClientRect()
-                    });
-
-                    if (!container) {
-                        console.error('❌ Chart container nicht gefunden! ID: chart_container');
-                        return;
-                    }
-
-                    // 2. LightweightCharts Debug
-                    console.log('🔍 LightweightCharts Debug:');
-                    console.log('  - LightweightCharts verfügbar:', typeof LightweightCharts);
-                    console.log('  - createChart function:', typeof LightweightCharts.createChart);
-
-                    // 3. Chart Creation Debug
-                    console.log('🔧 Creating chart with options...');
-                    const chartOptions = {
-                        width: 800,
-                        height: 600,
-                        timeScale: { timeVisible: true },
-                        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-                        layout: {
-                            background: { type: 'solid', color: '#FFFFFF' },
-                            textColor: '#333'
-                        }
-                    };
-                    console.log('  - Chart Options:', chartOptions);
-
-                    const chart = LightweightCharts.createChart(container, chartOptions);
-                    console.log('✅ Chart object created:', chart);
-
-                    // 4. Series Debug
-                    console.log('🔧 Adding candlestick series...');
-                    const candlestickSeries = chart.addCandlestickSeries({
-                        upColor: '#089981',
-                        downColor: '#f23645',
-                        borderVisible: false,
-                        wickUpColor: '#089981',
-                        wickDownColor: '#f23645'
-                    });
-                    console.log('✅ Candlestick series created:', candlestickSeries);
-
-                    // 5. API Call Debug
-                    console.log('🔧 Fetching chart data...');
-                    fetch('/api/chart/data')
-                        .then(response => {
-                            console.log('📡 API Response Status:', response.status);
-                            console.log('📡 API Response OK:', response.ok);
-                            return response.json();
-                        })
-                        .then(data => {
-                            console.log('📊 DETAILED DATA DEBUG:');
-                            console.log('  - Data object:', data);
-                            console.log('  - Data.data exists:', !!data.data);
-                            console.log('  - Data.data length:', data.data?.length);
-                            console.log('  - First 3 candles:', data.data?.slice(0, 3));
-                            console.log('  - Last 3 candles:', data.data?.slice(-3));
-
-                            if (data.data && data.data.length > 0) {
-                                console.log('🔧 Setting data on candlestick series...');
-                                candlestickSeries.setData(data.data);
-                                console.log('✅ Data set successfully!');
-
-                                // 6. Chart Rendering Debug
-                                console.log('🔍 POST-RENDER DEBUG:');
-                                setTimeout(() => {
-                                    console.log('  - Container nach Render clientWidth:', container.clientWidth);
-                                    console.log('  - Container nach Render clientHeight:', container.clientHeight);
-                                    const canvasElements = container.querySelectorAll('canvas');
-                                    console.log('  - Anzahl Canvas Elemente:', canvasElements.length);
-                                    canvasElements.forEach((canvas, i) => {
-                                        console.log(`  - Canvas ${i}: ${canvas.width}x${canvas.height}`);
-                                    });
-                                }, 1000);
-
-                                console.log('✅ CHART ERFOLGREICH GELADEN!');
-                            } else {
-                                console.error('❌ Keine Daten erhalten oder leeres Array');
-                            }
-                        })
-                        .catch(error => {
-                            console.error('❌ Chart API Error Details:');
-                            console.error('  - Error object:', error);
-                            console.error('  - Error message:', error.message);
-                            console.error('  - Error stack:', error.stack);
-                        });
-
-                } catch (error) {
-                    console.error('❌ DIRECT CHART ERROR:', error);
-                }
-                connectWebSocket();
-                loadAccountData(); // Lade initiale Account-Daten
-            } else {
-                console.error('❌ LightweightCharts library not loaded');
-                // Fallback: Versuche nochmal nach kurzer Wartezeit
-                setTimeout(() => {
-                    if (typeof LightweightCharts !== 'undefined') {
-                        console.log('✅ LightweightCharts library loaded (delayed)');
-                        // DIREKT TESTEN: Chart erstellen (2. Fallback)
-                        try {
-                            console.log('🔧 FALLBACK CHART TEST - Creating chart...');
-                            const chart = LightweightCharts.createChart(document.getElementById('chart_container'), {
-                                width: 800,
-                                height: 600,
-                                timeScale: { timeVisible: true },
-                                grid: { vertLines: { visible: false }, horzLines: { visible: false } }
-                            });
-
-                            const candlestickSeries = chart.addCandlestickSeries();
-
-                            fetch('/api/chart/data')
-                                .then(response => response.json())
-                                .then(data => {
-                                    console.log('🔧 FALLBACK - Daten empfangen:', data);
-                                    if (data.data && data.data.length > 0) {
-                                        candlestickSeries.setData(data.data);
-                                        console.log('✅ FALLBACK CHART ERFOLGREICH!');
-                                    }
-                                })
-                                .catch(error => console.error('❌ Fallback Chart Error:', error));
-
-                        } catch (error) {
-                            console.error('❌ FALLBACK CHART ERROR:', error);
-                        }
-                        connectWebSocket();
-                        loadAccountData(); // Lade initiale Account-Daten
-                    } else {
-                        console.error('❌ LightweightCharts library failed to load');
-                    }
-                }, 1000);
-            }
+            // WebSocket und Account-Daten initialisieren
+            connectWebSocket();
+            loadAccountData();
         });
     </script>
 </body>

@@ -1,5 +1,169 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Doppel-Chart Bug - Race Condition beim Init - 21.10.2025 🎯 CRITICAL FIX
+
+### Problem Description
+**Symptom:** Zweiter, identischer Chart erscheint unterhalb des Haupt-Charts beim Laden der Seite.
+
+**Visual Evidence:**
+- 14 Canvas-Elemente statt 7-8
+- Doppelte Chart-Kerzen sichtbar
+- Tritt auf OHNE Position Tool Nutzung (beim reinen Seitenladen)
+
+**User Impact:**
+- Visuell verwirrende Darstellung
+- Performance-Impact durch doppeltes Rendering
+- Layout-Probleme durch zusätzliche Canvas-Elemente
+
+### Technical Root Cause
+
+**Root Cause 1 - Race Condition:** `initChart()` wurde ZWEIMAL aufgerufen ohne Guard gegen Doppel-Initialisierung.
+
+```javascript
+// VORHER - FEHLERHAFT (static/js/chart.js:279):
+function initChart() {
+    // Kein Guard!
+    const chartContainer = document.getElementById('chart_container');
+    chart = LightweightCharts.createChart(chartContainer, {...});
+    // ...
+    isInitialized = true;  // ❌ AM ENDE gesetzt → Race Condition!
+}
+
+// Aufruf-Sequenz:
+// 1. DOMContentLoaded (Zeile 5238) → initChart() #1 startet
+// 2. WebSocket 'initial_data' (Zeile 1636) → initChart() #2 startet
+// 3. isInitialized noch false → beide laufen durch!
+// → 2 Charts im gleichen Container → 14 Canvas!
+```
+
+**Root Cause 2 - Debug-Code:** Redundanter Debug-Code erstellt zusätzlichen Chart.
+
+```javascript
+// VORHER - FEHLERHAFT (static/js/chart.js:5331-5437):
+if (typeof LightweightCharts !== 'undefined') {
+    console.log('🔧 DIRECT CHART TEST - Starting...');
+    const chart = LightweightCharts.createChart(container, {...});  // ❌ Chart #2!
+    const candlestickSeries = chart.addCandlestickSeries({...});
+    // + 100 Zeilen Debug-Code
+}
+```
+
+**Root Cause 3 - Canvas Positionierung:** `position: absolute` in `position: fixed` Container verursacht Layout-Konflikte.
+
+```javascript
+// VORHER - FEHLERHAFT (charts/templates/chart.html:2809):
+canvas.style.position = 'absolute';  // ❌ Layout-Konflikt!
+canvas.style.width = '100%';
+canvas.style.height = '100%';
+chartContainer.appendChild(canvas);  // ❌ Falscher Parent
+```
+
+### Fix Implementation
+
+**Fix 1 - Race Condition Guard:**
+```javascript
+// NACHHER - KORREKT (static/js/chart.js:279-287):
+function initChart() {
+    // ⭐ GUARD: Verhindere Doppel-Initialisierung
+    if (isInitialized || chart) {
+        console.log('⚠️ Chart bereits initialisiert, überspringe Doppel-Init');
+        return;
+    }
+
+    // ⭐ SOFORT setzen (nicht am Ende!) → verhindert Race Condition
+    isInitialized = true;
+
+    const chartContainer = document.getElementById('chart_container');
+
+    if (!chartContainer) {
+        console.error('❌ Chart Container nicht gefunden!');
+        isInitialized = false;  // Reset bei Fehler
+        return;
+    }
+
+    chart = LightweightCharts.createChart(chartContainer, {...});
+    // ... rest
+}
+```
+
+**Fix 2 - Debug-Code entfernt:**
+```javascript
+// NACHHER - KORREKT (static/js/chart.js:5331-5333):
+// WebSocket und Account-Daten initialisieren
+connectWebSocket();
+loadAccountData();
+// ✅ Kein redundanter Chart mehr!
+```
+
+**Fix 3 - Canvas Positionierung:**
+```javascript
+// NACHHER - KORREKT (charts/templates/chart.html:2810-2821):
+canvas.style.position = 'fixed';  // ✅ Gleich wie Container
+canvas.style.left = '35px';       // ✅ Gleiche Position
+canvas.style.top = '80px';
+canvas.style.right = '0';
+canvas.style.bottom = '40px';
+canvas.style.zIndex = '1000';
+
+// ⭐ Canvas direkt an body anhängen (da position: fixed)
+document.body.appendChild(canvas);  // ✅ Korrekter Parent
+```
+
+### Fix Locations
+
+**Modified Files:**
+1. `charts/templates/chart.html`
+   - Zeile 945-952: Guard gegen Doppel-Init
+   - Zeile 1216: Alte `isInitialized = true` entfernt
+   - Zeile 2810-2821: Canvas-Positionierung gefixt
+   - Zeile 4640-4642: Debug-Code entfernt
+
+2. `static/js/chart.js`
+   - Zeile 280-287: Guard gegen Doppel-Init
+   - Zeile 701: Alte `isInitialized = true` entfernt
+   - Zeile 5331-5333: Debug-Code entfernt (100+ Zeilen)
+
+### Prevention Strategy
+
+**Canvas Lifecycle:**
+- Immer Guard gegen Doppel-Init: `if (isInitialized || chart) return;`
+- State-Flags SOFORT setzen, nicht am Ende der Funktion
+- Bei async Operations: Flag setzen BEVOR async Code startet
+
+**Debug-Code Management:**
+- Debug-Code der Charts erstellt MUSS entfernt werden vor Production
+- Alternativ: Feature-Flags für Debug-Modi nutzen
+
+**Position Handling:**
+- `position: fixed` Container benötigen `position: fixed` Children
+- Kein `position: absolute` + `height: 100%` in fixed Container
+
+### Verification
+
+**Before Fix:**
+```javascript
+document.querySelectorAll('canvas').length  // → 14 (2 Charts)
+```
+
+**After Fix:**
+```javascript
+document.querySelectorAll('canvas').length  // → 7-8 (1 Chart)
+```
+
+**Console Output Before:**
+```
+🔧 initChart() aufgerufen
+🔧 DIRECT CHART TEST - Starting...  ← Redundanter Chart
+✅ Chart object created: Pe {...}
+```
+
+**Console Output After:**
+```
+🔧 initChart() aufgerufen  ← Nur einmal!
+```
+
+---
+
 ## Limit Order Execution - Canvas Labels bleiben nach Trigger - 21.10.2025 🎯 EXECUTION FIX
 
 ### Problem Description
