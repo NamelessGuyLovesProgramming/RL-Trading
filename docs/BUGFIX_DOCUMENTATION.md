@@ -1,5 +1,86 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Autoscale Toggle Feature + Codebase Cleanup - 21.10.2025 ✨ FEATURE + CLEANUP
+
+### Feature: Autoscale Toggle Button
+
+**User Request:** Button zum Ein-/Ausschalten der automatischen Y-Achsen-Skalierung
+
+**Implementation:**
+- Position: Links unten am Rand der Y-Achse (bottom: 50px, left: 0)
+- Icon: ⚖️ (Balance/Scale Symbol)
+- Grün = Autoscale ON (Standard)
+- Grau = Autoscale OFF
+
+**Files Modified:**
+1. `static/css/chart.css` (Zeilen 453-482)
+   - Button-Styling mit Active/Hover States
+
+2. `templates/chart.html` (Zeilen 243-244)
+   - HTML Button-Element
+
+3. `static/js/chart.js` (Zeilen 572-596)
+   - Event Listener für Toggle-Funktion
+   - `chart.priceScale('right').applyOptions({ autoScale: boolean })`
+
+**Functionality:**
+```javascript
+// Standard: Autoscale aktiviert
+let autoscaleEnabled = true;
+
+// Toggle bei Click
+autoscaleBtn.addEventListener('click', () => {
+    autoscaleEnabled = !autoscaleEnabled;
+    chart.priceScale('right').applyOptions({
+        autoScale: autoscaleEnabled
+    });
+});
+```
+
+**User Benefit:**
+- Autoscale ON: Y-Achse passt sich beim Panning automatisch an → Immer optimale Sicht auf Kerzen
+- Autoscale OFF: Y-Achse bleibt fixiert → Vergleich verschiedener Zeiträume auf gleicher Skala
+
+---
+
+### Codebase Cleanup: Legacy Files Removed
+
+**Problem:** Verwirrung durch doppelte/veraltete Dateien
+- Legacy all-in-one `charts/templates/chart.html` (5688 Zeilen) wurde fälschlicherweise bearbeitet statt aktiver Dateien
+- Viele temporäre Patch-Scripte und Backups akkumuliert
+
+**Files Removed:**
+1. `charts/templates/chart.html` - Legacy all-in-one Version (5688 Zeilen)
+2. `charts/chart_server.py.backup` - Backup
+3. `charts/chart_server_legacy.py` - Legacy Server
+4. `templates/chart.html.backup` - Backup
+5. `temp_patch_html.py` - Temp Script
+6. `temp_patch_css.py` - Temp Script
+7. `temp_patch_chartjs.py` - Temp Script
+8. `temp_patch_chartjs_part2.py` - Temp Script
+9. `temp_patch_chartjs_part3.py` - Temp Script
+10. `temp_patch_chartjs_part3_v2.py` - Temp Script
+11. `temp_sync_html.py` - Temp Script
+
+**Current Clean Structure:**
+```
+templates/
+  └── chart.html         (Aktive HTML - 245 Zeilen)
+
+static/
+  ├── css/
+  │   └── chart.css      (Separates CSS)
+  └── js/
+      └── chart.js       (Separates JavaScript)
+```
+
+**Benefit:**
+- Keine Verwirrung mehr durch doppelte chart.html Versionen
+- Klare Trennung: HTML, CSS, JavaScript in separaten Dateien
+- Einfachere Wartung und Debugging
+
+---
+
 ## Doppel-Chart Bug - Race Condition beim Init - 21.10.2025 🎯 CRITICAL FIX
 
 ### Problem Description

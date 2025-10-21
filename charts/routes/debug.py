@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/debug", tags=["debug"])
 
 def setup_debug_routes(app, debug_service, navigation_service,
                        unified_time_manager, manager, debug_controller,
-                       global_skip_events, debug_control_timeframe):
+                       global_skip_events, debug_control_timeframe, account_service):
     """
     Registriert Debug-Routes am FastAPI App
 
@@ -25,6 +25,7 @@ def setup_debug_routes(app, debug_service, navigation_service,
         debug_controller: DebugController-Instanz
         global_skip_events: Global skip events list
         debug_control_timeframe: Debug control timeframe reference
+        account_service: AccountService-Instanz
     """
 
     # REFACTOR PHASE 4: Skip-Endpoint (bereits auf NavigationService migriert)
@@ -54,6 +55,84 @@ def setup_debug_routes(app, debug_service, navigation_service,
             # Update chart state
             if hasattr(manager, 'chart_state') and 'data' in manager.chart_state:
                 manager.chart_state['data'].append(candle)
+
+            # ⭐⭐⭐ SL/TP AUTO-CLOSE CHECK ⭐⭐⭐
+            current_price = candle['close']
+            candle_high = candle['high']
+            candle_low = candle['low']
+
+            active_positions = account_service.get_active_positions()
+            print(f"[SKIP] Active positions: {len(active_positions)}")
+
+            positions_to_close = []
+
+            for position in active_positions:
+                position_id = position['id']
+                account_type = position.get('account_type', 'user')
+                direction = position['direction']
+                entry = position['entry_price']
+                sl = position['sl_price']
+                tp = position['tp_price']
+
+                print(f"[SKIP] Checking position {position_id}: {direction}, Entry={entry}, SL={sl}, TP={tp}")
+                print(f"[SKIP] Candle: High={candle_high}, Low={candle_low}, Close={current_price}")
+
+                # Update unrealized PnL
+                account_service.update_position_pnl(position_id, current_price, account_type)
+
+                # Check SL/TP using High/Low, not just Close!
+                sl_hit = False
+                tp_hit = False
+
+                if direction == 'long':
+                    # Long SL: Wird getriggert wenn Low <= SL
+                    if candle_low <= sl:
+                        sl_hit = True
+                        print(f"[SKIP] 🔴 SL HIT! Long position {position_id}: Low={candle_low} <= SL={sl}")
+                    # Long TP: Wird getriggert wenn High >= TP
+                    elif candle_high >= tp:
+                        tp_hit = True
+                        print(f"[SKIP] 🟢 TP HIT! Long position {position_id}: High={candle_high} >= TP={tp}")
+                else:  # short
+                    # Short SL: Wird getriggert wenn High >= SL
+                    if candle_high >= sl:
+                        sl_hit = True
+                        print(f"[SKIP] 🔴 SL HIT! Short position {position_id}: High={candle_high} >= SL={sl}")
+                    # Short TP: Wird getriggert wenn Low <= TP
+                    elif candle_low <= tp:
+                        tp_hit = True
+                        print(f"[SKIP] 🟢 TP HIT! Short position {position_id}: Low={candle_low} <= TP={tp}")
+
+                if sl_hit:
+                    # EXAKTES RISK-MANAGEMENT: Schließe bei SL zum SL-Preis
+                    positions_to_close.append((position_id, sl, 'stop_loss', account_type))
+                elif tp_hit:
+                    # EXAKTES RISK-MANAGEMENT: Schließe bei TP zum TP-Preis
+                    positions_to_close.append((position_id, tp, 'take_profit', account_type))
+
+            # Close positions that hit SL/TP
+            for position_id, close_price, reason, account_type in positions_to_close:
+                close_result = account_service.close_position(position_id, close_price, reason, account_type)
+                if close_result['success']:
+                    print(f"[SKIP] Position closed: {position_id} - {reason} at {close_price}")
+
+                    # Broadcast position closure
+                    await manager.broadcast({
+                        'type': 'position_closed',
+                        'position_id': position_id,
+                        'close_price': close_price,
+                        'close_reason': reason,
+                        'realized_pnl': close_result['realized_pnl'],
+                        'account_type': account_type
+                    })
+
+            # Broadcast updated accounts after PnL updates
+            if active_positions:  # Nur wenn Positionen existieren
+                all_accounts = account_service.get_all_accounts_summary()
+                await manager.broadcast({
+                    'type': 'account_update',
+                    'accounts': all_accounts
+                })
 
             timeframe_display = {
                 '1m': "1min", '2m': "2min", '3m': "3min", '5m': "5min",

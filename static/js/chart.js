@@ -569,6 +569,32 @@
                 renderLivePnLLabels();
             });
 
+            // ⚖️ Autoscale Toggle Button
+            let autoscaleEnabled = true;  // Standard: aktiviert
+            const autoscaleBtn = document.getElementById('autoscaleBtn');
+
+            if (autoscaleBtn) {
+                autoscaleBtn.addEventListener('click', () => {
+                    autoscaleEnabled = !autoscaleEnabled;
+
+                    // Update Chart Options
+                    chart.priceScale('right').applyOptions({
+                        autoScale: autoscaleEnabled
+                    });
+
+                    // Update Button Styling
+                    if (autoscaleEnabled) {
+                        autoscaleBtn.classList.add('active');
+                        autoscaleBtn.title = 'Autoscale: ON';
+                    } else {
+                        autoscaleBtn.classList.remove('active');
+                        autoscaleBtn.title = 'Autoscale: OFF';
+                    }
+
+                    console.log('⚖️ Autoscale:', autoscaleEnabled ? 'ON' : 'OFF');
+                });
+            }
+
             // LADE ECHTE NQ-DATEN über WebSocket
             console.log('🔄 Lade echte NQ-Daten...');
 

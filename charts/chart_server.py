@@ -49,7 +49,8 @@ from charts.services import (
     TimeframeService,
     NavigationService,
     DebugService,
-    PositionService
+    PositionService,
+    AccountService
 )
 
 # Router imports
@@ -90,6 +91,7 @@ timeframe_service: TimeframeService = None
 navigation_service: NavigationService = None
 debug_service: DebugService = None
 position_service: PositionService = None
+account_service: AccountService = None
 
 # Global Data
 initial_chart_data = []
@@ -175,7 +177,7 @@ def initialize_components():
     global manager, unified_state, unified_time_manager, debug_controller
     global chart_lifecycle_manager, data_validator, price_repository
     global timeframe_data_repository, universal_renderer
-    global chart_service, timeframe_service, navigation_service, debug_service, position_service
+    global chart_service, timeframe_service, navigation_service, debug_service, position_service, account_service
     global initial_chart_data, global_skip_events, debug_control_timeframe
 
     logger.info("=" * 60)
@@ -301,6 +303,8 @@ def initialize_components():
         price_repo=price_repository
     )
 
+    account_service = AccountService()
+
     logger.info("[INIT] ✅ All components initialized successfully")
 
 
@@ -319,6 +323,7 @@ async def websocket_endpoint(websocket: WebSocket):
         navigation_service=navigation_service,
         debug_service=debug_service,
         position_service=position_service,
+        account_service=account_service,
         unified_time_manager=unified_time_manager,
         chart_lifecycle_manager=chart_lifecycle_manager,
         data_validator=data_validator,
@@ -351,7 +356,8 @@ async def startup_event():
         manager=manager,
         debug_controller=debug_controller,
         global_skip_events=global_skip_events,
-        debug_control_timeframe=debug_control_timeframe
+        debug_control_timeframe=debug_control_timeframe,
+        account_service=account_service
     )
 
     chart_routes.setup_chart_routes(
