@@ -3295,13 +3295,30 @@
 
             // Nur äußere Handles - KEINE auf der Entry-Linie
             const slBottom = slTop + slHeight;
-            // SL Box Handles (rot) - nur Bottom (weit unten)
-            drawHandle(ctx, x1, slBottom, '#f23645', 'SL-BL'); // Bottom-Left
-            drawHandle(ctx, x2, slBottom, '#f23645', 'SL-BR'); // Bottom-Right
+            const tpBottom = tpTop + tpHeight;
 
-            // TP Box Handles (grün) - nur Top (weit oben)
-            drawHandle(ctx, x1, tpTop, '#089981', 'TP-TL'); // Top-Left
-            drawHandle(ctx, x2, tpTop, '#089981', 'TP-TR'); // Top-Right
+            // ⭐ FIX: Handle-Position abhängig von Long/Short
+            // Long: SL unten, TP oben → Handles an äußeren Kanten
+            // Short: SL oben, TP unten → Handles an äußeren Kanten (vertauscht!)
+            if (box.isShort) {
+                // SHORT: SL ist OBEN, TP ist UNTEN
+                // SL Box Handles (rot) - an der OBEREN Kante (slTop)
+                drawHandle(ctx, x1, slTop, '#f23645', 'SL-TL'); // Top-Left
+                drawHandle(ctx, x2, slTop, '#f23645', 'SL-TR'); // Top-Right
+
+                // TP Box Handles (grün) - an der UNTEREN Kante (tpBottom)
+                drawHandle(ctx, x1, tpBottom, '#089981', 'TP-BL'); // Bottom-Left
+                drawHandle(ctx, x2, tpBottom, '#089981', 'TP-BR'); // Bottom-Right
+            } else {
+                // LONG: SL ist UNTEN, TP ist OBEN
+                // SL Box Handles (rot) - an der UNTEREN Kante (slBottom)
+                drawHandle(ctx, x1, slBottom, '#f23645', 'SL-BL'); // Bottom-Left
+                drawHandle(ctx, x2, slBottom, '#f23645', 'SL-BR'); // Bottom-Right
+
+                // TP Box Handles (grün) - an der OBEREN Kante (tpTop)
+                drawHandle(ctx, x1, tpTop, '#089981', 'TP-TL'); // Top-Left
+                drawHandle(ctx, x2, tpTop, '#089981', 'TP-TR'); // Top-Right
+            }
 
             // DEAKTIVIERT: Mittlere Handles für Box-Breite
             // const middleY = (slTop + tpBottom) / 2;
@@ -3310,12 +3327,21 @@
 
             // Speichere Handle-Positionen - nur äußere Handles
             // ⭐⭐⭐ NEU: Speichere Handles direkt in der Box (nicht global!) ⭐⭐⭐
-            box.resizeHandles = {
-                'SL-BL': {x: x1, y: slBottom, type: 'sl'},
-                'SL-BR': {x: x2, y: slBottom, type: 'sl'},
-                'TP-TL': {x: x1, y: tpTop, type: 'tp'},
-                'TP-TR': {x: x2, y: tpTop, type: 'tp'}
-            };
+            if (box.isShort) {
+                box.resizeHandles = {
+                    'SL-TL': {x: x1, y: slTop, type: 'sl'},
+                    'SL-TR': {x: x2, y: slTop, type: 'sl'},
+                    'TP-BL': {x: x1, y: tpBottom, type: 'tp'},
+                    'TP-BR': {x: x2, y: tpBottom, type: 'tp'}
+                };
+            } else {
+                box.resizeHandles = {
+                    'SL-BL': {x: x1, y: slBottom, type: 'sl'},
+                    'SL-BR': {x: x2, y: slBottom, type: 'sl'},
+                    'TP-TL': {x: x1, y: tpTop, type: 'tp'},
+                    'TP-TR': {x: x2, y: tpTop, type: 'tp'}
+                };
+            }
 
             // ⭐ Backwards Compatibility: Setze auch globale Variable für aktive Box
             if (box === window.currentPositionBox || window.positionBoxManager?.activeBoxId === box.id) {
@@ -3994,10 +4020,19 @@
 
                 // Update prices based on which handle was dragged
                 if (handleId.includes('SL')) {
-                    // BEGRENZUNG: SL darf nicht über Entry-Preis gezogen werden
-                    if (newPrice >= box.entryPrice) {
-                        console.warn('⚠️ SL darf nicht über Entry-Preis! Entry:', box.entryPrice, 'SL Versuch:', newPrice);
-                        newPrice = box.entryPrice - 1; // 1 Punkt unter Entry
+                    // ⭐ BEGRENZUNG: SL darf Entry-Preis nicht kreuzen (abhängig von Long/Short)
+                    if (box.isShort) {
+                        // SHORT: SL ist OBEN, darf nicht UNTER Entry gezogen werden
+                        if (newPrice <= box.entryPrice) {
+                            console.warn('⚠️ SHORT SL darf nicht unter Entry-Preis! Entry:', box.entryPrice, 'SL Versuch:', newPrice);
+                            newPrice = box.entryPrice + 1; // 1 Punkt über Entry
+                        }
+                    } else {
+                        // LONG: SL ist UNTEN, darf nicht ÜBER Entry gezogen werden
+                        if (newPrice >= box.entryPrice) {
+                            console.warn('⚠️ LONG SL darf nicht über Entry-Preis! Entry:', box.entryPrice, 'SL Versuch:', newPrice);
+                            newPrice = box.entryPrice - 1; // 1 Punkt unter Entry
+                        }
                     }
                     box.stopLoss = newPrice;
 
@@ -4020,10 +4055,19 @@
 
                     console.log('📉 SL aktualisiert:', newPrice);
                 } else if (handleId.includes('TP')) {
-                    // BEGRENZUNG: TP darf nicht unter Entry-Preis gezogen werden
-                    if (newPrice <= box.entryPrice) {
-                        console.warn('⚠️ TP darf nicht unter Entry-Preis! Entry:', box.entryPrice, 'TP Versuch:', newPrice);
-                        newPrice = box.entryPrice + 1; // 1 Punkt über Entry
+                    // ⭐ BEGRENZUNG: TP darf Entry-Preis nicht kreuzen (abhängig von Long/Short)
+                    if (box.isShort) {
+                        // SHORT: TP ist UNTEN, darf nicht ÜBER Entry gezogen werden
+                        if (newPrice >= box.entryPrice) {
+                            console.warn('⚠️ SHORT TP darf nicht über Entry-Preis! Entry:', box.entryPrice, 'TP Versuch:', newPrice);
+                            newPrice = box.entryPrice - 1; // 1 Punkt unter Entry
+                        }
+                    } else {
+                        // LONG: TP ist OBEN, darf nicht UNTER Entry gezogen werden
+                        if (newPrice <= box.entryPrice) {
+                            console.warn('⚠️ LONG TP darf nicht unter Entry-Preis! Entry:', box.entryPrice, 'TP Versuch:', newPrice);
+                            newPrice = box.entryPrice + 1; // 1 Punkt über Entry
+                        }
                     }
                     box.takeProfit = newPrice;
 

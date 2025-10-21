@@ -1,5 +1,153 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Short Position Tool - Fehlende Resize Handles - 21.10.2025 🐛 BUG
+
+### Problem:
+Short Position Tool (📉) hatte keine sichtbaren Resize-Handles an den äußeren Kanten der Position Box, während das Long Position Tool (📈) korrekt funktionierende Resize-Handles anzeigt.
+
+**Symptome:**
+1. Long Position Box: 4 Resize-Handles sichtbar (SL unten rot, TP oben grün) ✅
+2. Short Position Box: Keine Handles an den äußeren Kanten ❌
+3. Handles wurden am Entry-Level gezeichnet (nicht sichtbar/nutzbar)
+
+### Root Cause:
+
+**1. drawResizeHandles() - Keine Long/Short Unterscheidung (Zeile 3287):**
+```javascript
+// BEFORE - Hart codiert für Long
+const slBottom = slTop + slHeight;
+drawHandle(ctx, x1, slBottom, '#f23645', 'SL-BL'); // Long: SL unten
+drawHandle(ctx, x2, slBottom, '#f23645', 'SL-BR');
+drawHandle(ctx, x1, tpTop, '#089981', 'TP-TL');     // Long: TP oben
+drawHandle(ctx, x2, tpTop, '#089981', 'TP-TR');
+```
+
+**Problem:** Bei Short-Boxen ist SL OBEN und TP UNTEN (vertauscht vs Long)
+- Long: SL unten → `slBottom` ist äußere Kante ✅
+- Short: SL oben → `slBottom` ist Entry-Level ❌ (Handles unsichtbar!)
+
+**2. updateBoxFromHandle() - Falsche Preis-Validierung (Zeile 4022):**
+```javascript
+// BEFORE - Nur Long-Logik
+if (handleId.includes('SL')) {
+    if (newPrice >= box.entryPrice) {  // ❌ Short: SL muss ÜBER Entry sein!
+        newPrice = box.entryPrice - 1;
+    }
+}
+```
+
+**Problem:** Short-Positionen konnten SL nicht korrekt nach oben ziehen
+
+### Fix Locations:
+
+**File:** `static/js/chart.js`
+
+**1. drawResizeHandles() - Conditional Logic (Zeile 3300-3344):**
+```javascript
+// ⭐ FIX: Handle-Position abhängig von Long/Short
+if (box.isShort) {
+    // SHORT: SL ist OBEN, TP ist UNTEN
+    // SL Box Handles (rot) - an der OBEREN Kante (slTop)
+    drawHandle(ctx, x1, slTop, '#f23645', 'SL-TL');
+    drawHandle(ctx, x2, slTop, '#f23645', 'SL-TR');
+
+    // TP Box Handles (grün) - an der UNTEREN Kante (tpBottom)
+    drawHandle(ctx, x1, tpBottom, '#089981', 'TP-BL');
+    drawHandle(ctx, x2, tpBottom, '#089981', 'TP-BR');
+} else {
+    // LONG: SL ist UNTEN, TP ist OBEN
+    drawHandle(ctx, x1, slBottom, '#f23645', 'SL-BL');
+    drawHandle(ctx, x2, slBottom, '#f23645', 'SL-BR');
+    drawHandle(ctx, x1, tpTop, '#089981', 'TP-TL');
+    drawHandle(ctx, x2, tpTop, '#089981', 'TP-TR');
+}
+
+// Speichere Handle-Positionen mit korrekten IDs
+if (box.isShort) {
+    box.resizeHandles = {
+        'SL-TL': {x: x1, y: slTop, type: 'sl'},
+        'SL-TR': {x: x2, y: slTop, type: 'sl'},
+        'TP-BL': {x: x1, y: tpBottom, type: 'tp'},
+        'TP-BR': {x: x2, y: tpBottom, type: 'tp'}
+    };
+} else {
+    box.resizeHandles = {
+        'SL-BL': {x: x1, y: slBottom, type: 'sl'},
+        'SL-BR': {x: x2, y: slBottom, type: 'sl'},
+        'TP-TL': {x: x1, y: tpTop, type: 'tp'},
+        'TP-TR': {x: x2, y: tpTop, type: 'tp'}
+    };
+}
+```
+
+**2. updateBoxFromHandle() - SL Preis-Validierung (Zeile 4023-4037):**
+```javascript
+if (handleId.includes('SL')) {
+    // ⭐ BEGRENZUNG: SL darf Entry-Preis nicht kreuzen (abhängig von Long/Short)
+    if (box.isShort) {
+        // SHORT: SL ist OBEN, darf nicht UNTER Entry gezogen werden
+        if (newPrice <= box.entryPrice) {
+            console.warn('⚠️ SHORT SL darf nicht unter Entry-Preis!');
+            newPrice = box.entryPrice + 1; // 1 Punkt über Entry
+        }
+    } else {
+        // LONG: SL ist UNTEN, darf nicht ÜBER Entry gezogen werden
+        if (newPrice >= box.entryPrice) {
+            console.warn('⚠️ LONG SL darf nicht über Entry-Preis!');
+            newPrice = box.entryPrice - 1; // 1 Punkt unter Entry
+        }
+    }
+    box.stopLoss = newPrice;
+}
+```
+
+**3. updateBoxFromHandle() - TP Preis-Validierung (Zeile 4058-4072):**
+```javascript
+else if (handleId.includes('TP')) {
+    // ⭐ BEGRENZUNG: TP darf Entry-Preis nicht kreuzen (abhängig von Long/Short)
+    if (box.isShort) {
+        // SHORT: TP ist UNTEN, darf nicht ÜBER Entry gezogen werden
+        if (newPrice >= box.entryPrice) {
+            console.warn('⚠️ SHORT TP darf nicht über Entry-Preis!');
+            newPrice = box.entryPrice - 1; // 1 Punkt unter Entry
+        }
+    } else {
+        // LONG: TP ist OBEN, darf nicht UNTER Entry gezogen werden
+        if (newPrice <= box.entryPrice) {
+            console.warn('⚠️ LONG TP darf nicht unter Entry-Preis!');
+            newPrice = box.entryPrice + 1; // 1 Punkt über Entry
+        }
+    }
+    box.takeProfit = newPrice;
+}
+```
+
+### Technical Explanation:
+
+**Long Position:**
+- Entry Price in der Mitte
+- Stop Loss UNTER Entry → `slBottom` = äußere Kante (unten)
+- Take Profit ÜBER Entry → `tpTop` = äußere Kante (oben)
+
+**Short Position:**
+- Entry Price in der Mitte
+- Stop Loss ÜBER Entry → `slTop` = äußere Kante (oben) ⭐
+- Take Profit UNTER Entry → `tpBottom` = äußere Kante (unten) ⭐
+
+### Prevention:
+1. **Conditional UI Elements**: Bei Long/Short-spezifischen Features IMMER `box.isShort` Check
+2. **Coordinate Mapping**: Bei vertikalen Koordinaten bedenken dass Short invertiert ist
+3. **Price Validation**: SL/TP Logik muss Long/Short unterscheiden
+4. **Handle Naming**: Eindeutige IDs für Long (`SL-BL`, `TP-TL`) vs Short (`SL-TL`, `TP-BL`)
+
+### Verification:
+- ✅ Long Box: SL-Handles unten (rot), TP-Handles oben (grün)
+- ✅ Short Box: SL-Handles oben (rot), TP-Handles unten (grün)
+- ✅ Drag-Validierung verhindert ungültige SL/TP Positionen
+- ✅ Beide Tools haben gleiche Funktionalität
+
+---
+
 ## Autoscale Persistenz nach Go To Date - 21.10.2025 🐛 BUG
 
 ### Problem:
