@@ -276,6 +276,110 @@
             }
         }
 
+        // ============================================================
+        // UNBEGRENZTE ZEIT-EXTRAPOLATION - "Magische Wand" Fix
+        // ============================================================
+
+        // Konvertiert Timeframe-String zu Sekunden
+        function getTimeframeSeconds(timeframe) {
+            const map = {
+                '1m': 60,
+                '5m': 300,
+                '15m': 900,
+                '1h': 3600,
+                '4h': 14400,
+                '1d': 86400
+            };
+            return map[timeframe] || 300; // Fallback: 5min
+        }
+
+        // Erweitere Daten um "Phantom-Kerzen" in der Zukunft
+        // → X-Achse zeigt Zeitstempel auch ohne echte Kerzen
+        function extendDataWithFuture(data, futureCandles = 100) {
+            if (!data || data.length === 0) {
+                return data;
+            }
+
+            const lastCandle = data[data.length - 1];
+            const timeframeSeconds = getTimeframeSeconds(window.currentTimeframe || '5m');
+            const extendedData = [...data]; // Copy original data
+
+            console.log(`📅 Erweitere Chart um ${futureCandles} Zukunfts-Kerzen (Timeframe: ${window.currentTimeframe})`);
+
+            for (let i = 1; i <= futureCandles; i++) {
+                const futureTime = lastCandle.time + (i * timeframeSeconds);
+                extendedData.push({
+                    time: futureTime,
+                    open: lastCandle.close,
+                    high: lastCandle.close,
+                    low: lastCandle.close,
+                    close: lastCandle.close
+                });
+            }
+
+            console.log(`📅 Chart erweitert: ${data.length} echte + ${futureCandles} Phantom = ${extendedData.length} gesamt`);
+            return extendedData;
+        }
+
+        // Unbegrenzte coordinateToTime - Funktioniert auch AUSSERHALB der Daten
+        // Extrapoliert Zeit basierend auf X-Koordinate, Candle-Spacing und letzter Kerze
+        function coordinateToTimeUnlimited(xCoordinate) {
+            if (!chart || !candlestickSeries) {
+                console.warn('⚠️ coordinateToTimeUnlimited: Chart nicht initialisiert');
+                return null;
+            }
+
+            // 1. Versuche native coordinateToTime() für Koordinaten INNERHALB der Daten
+            const nativeTime = chart.timeScale().coordinateToTime(xCoordinate);
+            if (nativeTime !== null) {
+                return nativeTime;
+            }
+
+            // 2. EXTRAPOLATION: Berechne Zeit für Koordinaten AUSSERHALB der Daten
+            const data = candlestickSeries.data();
+            if (!data || data.length < 2) {
+                console.warn('⚠️ coordinateToTimeUnlimited: Nicht genug Daten für Extrapolation');
+                return null;
+            }
+
+            // Letzte Kerze als Referenz
+            const lastCandle = data[data.length - 1];
+            const lastX = chart.timeScale().timeToCoordinate(lastCandle.time);
+
+            if (lastX === null) {
+                console.warn('⚠️ coordinateToTimeUnlimited: Letzte Kerze nicht auf Chart');
+                return null;
+            }
+
+            // Berechne Pixel pro Candle (durchschnittlich über letzte 10 Kerzen)
+            const sampleSize = Math.min(10, data.length - 1);
+            let totalPixelSpacing = 0;
+            let validSamples = 0;
+
+            for (let i = data.length - 1; i >= data.length - sampleSize; i--) {
+                const x1 = chart.timeScale().timeToCoordinate(data[i].time);
+                const x2 = chart.timeScale().timeToCoordinate(data[i - 1].time);
+                if (x1 !== null && x2 !== null) {
+                    totalPixelSpacing += Math.abs(x1 - x2);
+                    validSamples++;
+                }
+            }
+
+            const pixelsPerCandle = validSamples > 0 ? totalPixelSpacing / validSamples : 10; // Fallback: 10px
+
+            // Berechne Zeit-Delta basierend auf X-Offset
+            const deltaX = xCoordinate - lastX;
+            const deltaCandlesEstimate = deltaX / pixelsPerCandle;
+            const timeframeSeconds = getTimeframeSeconds(window.currentTimeframe || '5m');
+            const deltaTimeSeconds = Math.round(deltaCandlesEstimate * timeframeSeconds);
+
+            const extrapolatedTime = lastCandle.time + deltaTimeSeconds;
+
+            console.log(`🔮 Extrapoliere Zeit: X=${xCoordinate.toFixed(1)}, LastX=${lastX.toFixed(1)}, ΔX=${deltaX.toFixed(1)}, PixPerCandle=${pixelsPerCandle.toFixed(1)}, ΔCandles=${deltaCandlesEstimate.toFixed(2)}, Zeit=${extrapolatedTime}`);
+
+            return extrapolatedTime;
+        }
+
         function initChart() {
             // ⭐ GUARD: Verhindere Doppel-Initialisierung (Race Condition Fix)
             if (isInitialized || chart) {
@@ -309,7 +413,8 @@
                 timeScale: {
                     timeVisible: true,
                     secondsVisible: false,
-                    borderColor: '#485c7b'
+                    borderColor: '#485c7b',
+                    rightOffset: 500  // 🔮 500 Pixel "Zukunft" rechts → unbegrenzte Interaktion
                 },
                 grid: {
                     vertLines: { visible: false },
@@ -661,27 +766,21 @@
                 // ⭐ GUARD: Position Tool muss explizit aktiviert sein
                 if ((window.positionBoxMode || window.shortPositionMode) && param.point) {
                     const price = candlestickSeries.coordinateToPrice(param.point.y);
-
-                    // ⭐ FIX: Verwende Chart-Zeit, NICHT Date.now()
-                    // Wenn param.time fehlt, verwende Mitte des sichtbaren Bereichs
-                    let clickTime = param.time;
-                    if (!clickTime) {
-                        const logicalRange = chart.timeScale().getVisibleLogicalRange();
-                        if (logicalRange) {
-                            // Konvertiere logische Range zu Zeit
-                            const allData = candlestickSeries.data();
-                            const middleIndex = Math.floor((logicalRange.from + logicalRange.to) / 2);
-                            clickTime = allData[middleIndex]?.time || Math.floor(Date.now() / 1000);
-                        } else {
-                            // Fallback: Letzte Kerze
-                            const allData = candlestickSeries.data();
-                            clickTime = allData[allData.length - 1]?.time || Math.floor(Date.now() / 1000);
-                        }
-                    }
-
-                    // Für Y-Koordinate: Verwende Chart-API für exakte Position
                     const clickY = param.point.y;  // Chart-relative Y-Koordinate
                     const clickX = param.point.x;  // Chart-relative X-Koordinate
+
+                    // 🔮 UNBEGRENZTE ZEIT-EXTRAPOLATION FIX
+                    // param.time ist undefined bei Clicks außerhalb Kerzen (rechts von letzter Kerze)
+                    // Nutze coordinateToTimeUnlimited() für ECHTE Click-Position (nicht Mitte des Charts!)
+                    let clickTime = param.time;
+                    if (!clickTime) {
+                        clickTime = coordinateToTimeUnlimited(clickX);
+                        if (!clickTime) {
+                            console.warn('⚠️ Konnte Zeit für Click nicht bestimmen');
+                            return;
+                        }
+                        console.log(`🔮 Zeit extrapoliert: X=${clickX.toFixed(1)} → Zeit=${clickTime}`);
+                    }
 
                     const isShort = window.shortPositionMode;
                     console.log('📦 Erstelle', isShort ? 'Short' : 'Long', 'Position Box bei Preis:', price, 'an Zeit:', clickTime, 'Position:', {x: clickX, y: clickY});
@@ -765,7 +864,9 @@
                             close: parseFloat(item.close) || 0
                         }));
 
-                        candlestickSeries.setData(formattedData);
+                        // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
+                        const extendedData = extendDataWithFuture(formattedData, 100);
+                        candlestickSeries.setData(extendedData);
 
                         // DRASTISCHE SOFORT-LÖSUNG: 20% Freiraum GARANTIERT
                         // console.log('DRASTIC-EXEC: Setze 20% Freiraum SOFORT nach setData()');
@@ -1199,7 +1300,9 @@
                     const data = message.data.data;
                     if (data && data.length > 0) {
                         const validatedData = validateCandleData(data);
-                        candlestickSeries.setData(validatedData);
+                        // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
+                        const extendedData = extendDataWithFuture(validatedData, 100);
+                        candlestickSeries.setData(extendedData);
 
                         // Store last candle close price for market orders
                         if (validatedData.length > 0) {
@@ -1348,7 +1451,9 @@
 
                         // Setze neue validierte Chart-Daten
                         const validatedGoToData = validateCandleData(message.data);
-                        candlestickSeries.setData(validatedGoToData);
+                        // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
+                        const extendedGoToData = extendDataWithFuture(validatedGoToData, 100);
+                        candlestickSeries.setData(extendedGoToData);
 
                         if (validatedGoToData.length !== message.data.length) {
                             console.warn(`⚠️ ${message.data.length - validatedGoToData.length} invalid candles removed from go_to_date`);
@@ -1493,7 +1598,9 @@
                             console.warn(`⚠️ ${removedCount} invalid candles removed from timeframe data`);
                         }
 
-                        candlestickSeries.setData(validatedData);
+                        // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
+                        const extendedTFData = extendDataWithFuture(validatedData, 100);
+                        candlestickSeries.setData(extendedTFData);
 
                         // NEUE LOGIK: Zeige nur letzten 50 Kerzen mit 80/20 Aufteilung bei TF-Wechsel
                         console.log(`[TIMEFRAME] ${message.timeframe}: ${validatedData.length} Kerzen geladen, zeige letzten 50 mit 80/20 Aufteilung`);
@@ -3511,7 +3618,8 @@
                         const startX = chart.timeScale().timeToCoordinate(boxDragStartTime);
                         if (startX !== null && !isNaN(startX)) {
                             const newX = startX + box.dragOffsetX;
-                            const newTime = chart.timeScale().coordinateToTime(newX);
+                            // 🔮 UNBEGRENZTE ZEIT-EXTRAPOLATION FIX - Drag funktioniert auch in Zukunft
+                            const newTime = coordinateToTimeUnlimited(newX);
 
                             if (newTime) {
                                 const newCandle = seriesData.reduce((prev, curr) => {
@@ -4054,28 +4162,25 @@
 
                     // ⭐⭐⭐ WICHTIG: Update Kerzen-Index + Zeit für Canvas-Zeichnung ⭐⭐⭐
                     try {
-                        const timeScale = chart.timeScale();
-                        if (timeScale && typeof timeScale.coordinateToTime === 'function') {
-                            // Konvertiere Mouse X-Koordinate zu Zeit
-                            const newTime = timeScale.coordinateToTime(mouseX);
+                        // 🔮 UNBEGRENZTE ZEIT-EXTRAPOLATION FIX - Resize funktioniert auch in Zukunft
+                        const newTime = coordinateToTimeUnlimited(mouseX);
 
-                            if (newTime !== null && !isNaN(newTime)) {
-                                // ⭐ NEU: Finde Kerzen-Index zur neuen Zeit
-                                const allData = candlestickSeries.data();
-                                const newIndex = findNearestCandleIndex(newTime, allData);
+                        if (newTime !== null && !isNaN(newTime)) {
+                            // ⭐ NEU: Finde Kerzen-Index zur neuen Zeit
+                            const allData = candlestickSeries.data();
+                            const newIndex = findNearestCandleIndex(newTime, allData);
 
-                                if (isLeftHandle) {
-                                    box.timeStart = newTime;
-                                    if (newIndex !== null) {
-                                        box.candleStartIndex = newIndex;
-                                        console.log(`◀️ LINKS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
-                                    }
-                                } else if (isRightHandle) {
-                                    box.timeEnd = newTime;
-                                    if (newIndex !== null) {
-                                        box.candleEndIndex = newIndex;
-                                        console.log(`▶️ RECHTS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
-                                    }
+                            if (isLeftHandle) {
+                                box.timeStart = newTime;
+                                if (newIndex !== null) {
+                                    box.candleStartIndex = newIndex;
+                                    console.log(`◀️ LINKS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
+                                }
+                            } else if (isRightHandle) {
+                                box.timeEnd = newTime;
+                                if (newIndex !== null) {
+                                    box.candleEndIndex = newIndex;
+                                    console.log(`▶️ RECHTS Handle bewegt → Index: ${newIndex}, Zeit: ${newTime}`);
                                 }
                             }
                         }
