@@ -570,20 +570,20 @@
             });
 
             // ⚖️ Autoscale Toggle Button
-            let autoscaleEnabled = true;  // Standard: aktiviert
+            window.autoscaleEnabled = true;  // Standard: aktiviert (global für Go To Date Persistenz)
             const autoscaleBtn = document.getElementById('autoscaleBtn');
 
             if (autoscaleBtn) {
                 autoscaleBtn.addEventListener('click', () => {
-                    autoscaleEnabled = !autoscaleEnabled;
+                    window.autoscaleEnabled = !window.autoscaleEnabled;
 
                     // Update Chart Options
                     chart.priceScale('right').applyOptions({
-                        autoScale: autoscaleEnabled
+                        autoScale: window.autoscaleEnabled
                     });
 
                     // Update Button Styling
-                    if (autoscaleEnabled) {
+                    if (window.autoscaleEnabled) {
                         autoscaleBtn.classList.add('active');
                         autoscaleBtn.title = 'Autoscale: ON';
                     } else {
@@ -591,7 +591,7 @@
                         autoscaleBtn.title = 'Autoscale: OFF';
                     }
 
-                    console.log('⚖️ Autoscale:', autoscaleEnabled ? 'ON' : 'OFF');
+                    console.log('⚖️ Autoscale:', window.autoscaleEnabled ? 'ON' : 'OFF');
                 });
             }
 
@@ -1354,6 +1354,14 @@
                             console.warn(`⚠️ ${message.data.length - validatedGoToData.length} invalid candles removed from go_to_date`);
                         }
 
+                        // ⚖️ AUTOSCALE PERSISTENZ: Stelle Autoscale-Einstellung nach Chart-Reinitialisierung wieder her
+                        if (typeof window.autoscaleEnabled !== 'undefined') {
+                            chart.priceScale('right').applyOptions({
+                                autoScale: window.autoscaleEnabled
+                            });
+                            console.log('⚖️ Autoscale restored after chart_reinitialize:', window.autoscaleEnabled ? 'ON' : 'OFF');
+                        }
+
                         // Positioniere Chart zu gewähltem Datum (zeige 50 Kerzen ab Startdatum)
                         if (message.data.length > 0) {
                             const startIndex = Math.max(0, message.current_index - 5); // 5 Kerzen Kontext vor Startdatum
@@ -1408,6 +1416,14 @@
 
                         if (validatedHistoricalData.length !== message.data.length) {
                             console.warn(`⚠️ ${message.data.length - validatedHistoricalData.length} invalid candles removed from historical data`);
+                        }
+
+                        // ⚖️ AUTOSCALE PERSISTENZ: Stelle Autoscale-Einstellung nach Go To Date wieder her
+                        if (typeof window.autoscaleEnabled !== 'undefined') {
+                            chart.priceScale('right').applyOptions({
+                                autoScale: window.autoscaleEnabled
+                            });
+                            console.log('⚖️ Autoscale restored after go_to_date_complete:', window.autoscaleEnabled ? 'ON' : 'OFF');
                         }
 
                         // HIGH-PERFORMANCE POSITIONING: Verwende Server-calculated Range

@@ -1,5 +1,68 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Autoscale Persistenz nach Go To Date - 21.10.2025 🐛 BUG
+
+### Problem:
+Autoscale-Einstellung (⚖️ Button unten links) wurde nach "Go To Date" zurückgesetzt.
+
+**Symptome:**
+1. User deaktiviert Autoscale (Button grau)
+2. User klickt "Go To Date" → Chart wird neu initialisiert
+3. Autoscale ist wieder aktiviert (Button grün) - User-Einstellung verloren
+
+### Root Cause:
+`autoscaleEnabled` war lokale Variable im `initChart()` Scope. Bei Chart-Reinitialisierung durch WebSocket-Events (`chart_reinitialize`, `go_to_date_complete`) wurden Chart-Daten via `setData()` neu gesetzt, aber Autoscale-Option wurde nicht wiederhergestellt.
+
+**Technisch:**
+- Variable-Scope: Function-scoped → WebSocket-Handler hatte keinen Zugriff
+- Chart-Reinitialisierung: `candlestickSeries.setData()` ohne nachfolgende `priceScale().applyOptions()`
+
+### Fix Locations:
+**File:** `static/js/chart.js`
+
+1. **Zeile 573** - Globale Variable:
+```javascript
+// BEFORE
+let autoscaleEnabled = true;
+
+// AFTER
+window.autoscaleEnabled = true;  // Global für Go To Date Persistenz
+```
+
+2. **Zeile 1357-1363** - Wiederherstellung nach `chart_reinitialize`:
+```javascript
+// ⚖️ AUTOSCALE PERSISTENZ nach setData()
+if (typeof window.autoscaleEnabled !== 'undefined') {
+    chart.priceScale('right').applyOptions({
+        autoScale: window.autoscaleEnabled
+    });
+    console.log('⚖️ Autoscale restored after chart_reinitialize:', ...);
+}
+```
+
+3. **Zeile 1421-1427** - Wiederherstellung nach `go_to_date_complete`:
+```javascript
+// ⚖️ AUTOSCALE PERSISTENZ nach Go To Date
+if (typeof window.autoscaleEnabled !== 'undefined') {
+    chart.priceScale('right').applyOptions({
+        autoScale: window.autoscaleEnabled
+    });
+    console.log('⚖️ Autoscale restored after go_to_date_complete:', ...);
+}
+```
+
+### Prevention:
+1. **State Management**: UI-Settings die Chart-Reinitialisierung überleben müssen → `window` Object
+2. **Chart Lifecycle**: Nach `setData()` IMMER User-Settings wiederherstellen
+3. **WebSocket Events**: Bei allen Events die Chart-State verändern, Settings-Restauration prüfen
+
+### Verification:
+- ✅ Autoscale OFF → Go To Date → Autoscale bleibt OFF
+- ✅ Autoscale ON → Go To Date → Autoscale bleibt ON
+- ✅ Console-Logging bestätigt Wiederherstellung
+
+---
+
 ## Autoscale Toggle Feature + Codebase Cleanup - 21.10.2025 ✨ FEATURE + CLEANUP
 
 ### Feature: Autoscale Toggle Button
