@@ -2623,9 +2623,9 @@
             // ⭐ ÄNDERUNG: Mehrere Boxes erlaubt - alte Box NICHT mehr löschen
             // (Für Backwards Compatibility: Legacy Code-Pfade bleiben)
 
-            // 1:1 Risk:Reward Ratio (0.25% Risk, 0.25% Reward)
-            const riskPercent = 0.0025; // 0.25%
-            const rewardPercent = 0.0025; // 0.25% - GEÄNDERT von 0.5% zu 0.25% für 1:1 Ratio
+            // 1:1 Risk:Reward Ratio (0.125% Risk, 0.125% Reward) - 50% kleiner
+            const riskPercent = 0.00125; // 0.125%
+            const rewardPercent = 0.00125; // 0.125%
 
             // Für Short Positionen sind TP/SL umgekehrt
             let stopLoss, takeProfit;

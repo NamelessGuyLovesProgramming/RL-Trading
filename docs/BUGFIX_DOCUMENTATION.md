@@ -1,5 +1,49 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Position Box Höhe um 50% verkleinert - 21.10.2025 📏
+
+### Änderung:
+**Position Boxes (Long/Short Tools) - Höhe um 50% reduziert**
+
+User-Request: "kannst du die größe der positionboxen etwas verkleinern? um 50%?"
+- ✅ Höhe (Preis-Range: SL ↔ Entry ↔ TP) um 50% verkleinert
+- ❌ Breite (zeitlich) unverändert
+- ❌ Canvas-Elemente (Labels, Buttons) unverändert
+
+### Implementierung:
+
+**Vor der Änderung:**
+```javascript
+// static/js/chart.js:2626-2628
+const riskPercent = 0.0025;   // 0.25%
+const rewardPercent = 0.0025; // 0.25%
+// Gesamthöhe: 0.5% (SL bis TP)
+```
+
+**Nach der Änderung:**
+```javascript
+// static/js/chart.js:2626-2628
+const riskPercent = 0.00125;   // 0.125%
+const rewardPercent = 0.00125; // 0.125%
+// Gesamthöhe: 0.25% (SL bis TP) - 50% kleiner
+```
+
+### Files:
+- `static/js/chart.js:2626-2628` - createPositionBox() Default-Werte
+
+### Auswirkung:
+- **SL ↔ Entry**: 0.25% → 0.125% (50% kleiner)
+- **Entry ↔ TP**: 0.25% → 0.125% (50% kleiner)
+- **Gesamthöhe**: 0.5% → 0.25% (50% kleiner)
+- **1:1 Risk:Reward Ratio** bleibt erhalten
+
+### Verification:
+✅ Neue Boxen nach Browser-Reload (F5) sind 50% flacher
+✅ Resize-Handles funktionieren weiterhin korrekt
+✅ Long/Short Logik unverändert
+
+---
+
 ## "Magische Wand" Bug - Unbegrenzte Chart-Interaktion - 21.10.2025 🔮
 
 ### Problem:
