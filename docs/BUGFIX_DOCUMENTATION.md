@@ -1,5 +1,201 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Limit Order Execution - Canvas Labels bleiben nach Trigger - 21.10.2025 🎯 EXECUTION FIX
+
+### Problem Description
+**Symptom:** Nach Limit Order Execution (Preis berührt Order) wird Trade korrekt ausgeführt, aber Canvas-Label und gestrichelte Linie bleiben sichtbar.
+
+**Additional Issue:** Click-Detection schloss Order beim Klick auf gesamtes Label statt nur auf X-Button (16x16px).
+
+**User Impact:**
+- Visuelle Verwirrung: Alte Limit Order Labels überlagern neue Trade Execution Boxes
+- Click-Frustration: Versehentliches Schließen beim Klick auf Label statt nur X
+- Unmöglichkeit mehrere Limit Orders zu managen
+
+### Technical Root Cause
+
+**Root Cause 1 - Canvas Lifecycle:** `drawLimitOrders()` kehrte früh zurück wenn `activeLimitOrders` Array leer war, OHNE Canvas zu clearen.
+
+```javascript
+// VORHER - FEHLERHAFT:
+function drawLimitOrders() {
+    if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
+        return;  // ❌ Canvas bleibt mit alten Labels!
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);  // Wird nie erreicht!
+}
+```
+
+**Root Cause 2 - Missing Cleanup:** Nach Limit Order Execution wurde `drawLimitOrders()` nicht aufgerufen.
+
+```javascript
+// VORHER - FEHLERHAFT:
+triggeredOrders.forEach(({order, index}) => {
+    candlestickSeries.removePriceLine(order.priceLine);  // ✅ Line weg
+    ws.send(JSON.stringify({type: 'execute_trade', trade: tradeData}));  // ✅ Trade executet
+    window.activeLimitOrders.splice(index, 1);  // ✅ Aus Array entfernt
+    // ❌ ABER: Canvas wird nicht neu gezeichnet → Label bleibt!
+});
+```
+
+**Root Cause 3 - Registry Cleanup:** Close Button Registry nicht mit korrektem `limit_` Prefix bereinigt.
+
+**Root Cause 4 - Inverted Trigger Logic:** Short/Long Limit Order Trigger-Richtung war vertauscht.
+
+```javascript
+// VORHER - FEHLERHAFT:
+if (order.isShort) {
+    triggered = currentPrice >= order.entryPrice;  // ❌ FALSCH: Short triggert bei Preis hoch
+} else {
+    triggered = currentPrice <= order.entryPrice;  // ❌ FALSCH: Long triggert bei Preis runter
+}
+```
+
+**Korrekte Logik:**
+- **Short Limit Order**: Sell High (Resistance) → Trigger wenn Preis <= Entry
+- **Long Limit Order**: Buy Low (Support) → Trigger wenn Preis >= Entry
+
+### Solution Implementation
+
+#### 1. Canvas Lifecycle Fix
+**Location:** `static/js/chart.js:4871-4884`
+
+```javascript
+// NACHHER - KORREKT:
+function drawLimitOrders() {
+    // Canvas erstellen/holen
+    let canvas = document.getElementById('limitOrderCanvas');
+    // ... canvas setup ...
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);  // ✅ IMMER clearen!
+
+    // Registry zurücksetzen
+    window.limitOrderCloseButtons = {};
+
+    // Früher Return NACH Canvas Clear
+    if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
+        console.log('✅ Canvas cleared - no limit orders to draw');
+        return;  // ✅ Canvas ist jetzt clean
+    }
+
+    // Labels zeichnen...
+}
+```
+
+#### 2. Post-Execution Redraw
+**Location:** `static/js/chart.js:4772-4775`
+
+```javascript
+// Nach Limit Order Execution:
+triggeredOrders.forEach(({order, index}) => {
+    // Remove price line
+    if (order.priceLine) {
+        candlestickSeries.removePriceLine(order.priceLine);
+    }
+
+    // Execute via WebSocket
+    ws.send(JSON.stringify({type: 'execute_trade', trade: tradeData}));
+
+    // Remove from array
+    window.activeLimitOrders.splice(index, 1);
+
+    // Remove from registry with correct prefix
+    const buttonKey = `limit_${order.id}`;
+    if (window.limitOrderCloseButtons?.[buttonKey]) {
+        delete window.limitOrderCloseButtons[buttonKey];
+        console.log(`🗑️ Removed close button for order ${order.id}`);
+    }
+});
+
+// ✅ CRITICAL: Redraw canvas to remove executed order labels
+if (triggeredOrders.length > 0) {
+    drawLimitOrders();  // Canvas wird cleared & nur noch aktive Orders gezeichnet
+}
+```
+
+#### 3. Corrected Trigger Logic
+**Location:** `static/js/chart.js:4717-4723`
+
+```javascript
+// KORREKT:
+if (order.isShort) {
+    // Short Limit: trigger when price reaches or goes BELOW entry (selling at resistance)
+    triggered = currentPrice <= order.entryPrice;
+} else {
+    // Long Limit: trigger when price reaches or goes ABOVE entry (buying at support)
+    triggered = currentPrice >= order.entryPrice;
+}
+```
+
+#### 4. Enhanced Click Detection Debug
+**Location:** `static/js/chart.js:4841-4863`
+
+```javascript
+canvas.addEventListener('click', (e) => {
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    console.log(`[LimitCanvas] Click at canvas coords (${clickX.toFixed(1)}, ${clickY.toFixed(1)})`);
+
+    for (const limitId in window.limitOrderCloseButtons) {
+        const btn = window.limitOrderCloseButtons[limitId];
+
+        console.log(`[LimitCanvas] Button ${btn.orderId}: x=${btn.x.toFixed(1)}, y=${btn.y.toFixed(1)}, w=${btn.width}, h=${btn.height}`);
+
+        // Only trigger on 16x16px X button, NOT entire label
+        if (clickX >= btn.x && clickX <= btn.x + btn.width &&
+            clickY >= btn.y && clickY <= btn.y + btn.height) {
+            console.log(`[LimitCanvas] ✅ Close button clicked for order ${btn.orderId}`);
+            window.cancelLimitOrder(btn.orderId);
+            return;
+        }
+    }
+});
+```
+
+### Verification & Testing
+**Status:** ✅ **VERIFIED BY USER**
+
+**Test Scenario:**
+1. Limit Order erstellt ✅
+2. Preis berührt Limit Order → Order executet ✅
+3. Canvas-Label verschwindet ✅
+4. Trade Execution Box erscheint ✅
+5. Click nur auf X (16x16px) schließt Order ✅
+
+**Browser Console Evidence:**
+```
+🎯 Limit Order TRIGGERED: {id: 1729505874123, entryPrice: 20750, ...}
+📡 Executing Limit Order via backend
+✅ Limit Order command sent via WebSocket
+🗑️ Removed close button for order 1729505874123
+✅ Canvas cleared - no limit orders to draw
+```
+
+### Prevention Rules
+**MANDATORY:**
+1. **Canvas Lifecycle**: IMMER `ctx.clearRect()` ausführen BEVOR early return
+2. **State Synchronization**: Bei Array-Änderungen IMMER Canvas neu zeichnen
+3. **Registry Cleanup**: Prefix-Format (`limit_`, `pos_`, etc.) konsistent verwenden
+4. **Trigger Logic**: Short = Sell High, Long = Buy Low (Support/Resistance Konzept)
+5. **Debug Logging**: Click-Detection mit Koordinaten-Logging für Troubleshooting
+
+**Code Review Checklist:**
+- [ ] Canvas wird vor early return cleared
+- [ ] Nach Array-Änderungen wird Canvas-Redraw aufgerufen
+- [ ] Registry wird mit korrektem Key-Format bereinigt
+- [ ] Trigger-Logik folgt Trading-Konzepten (Support/Resistance)
+
+### Impact & Files Modified
+**Files:** `static/js/chart.js`
+**Lines:** +218, -20
+**Commit:** `cdf66ed` - fix: Limit Order Execution - Canvas Labels bleiben nach Trigger
+
+---
+
 ## Browser-Cache Invalidation Bug - September 2025 🔒 CRITICAL FIX
 
 ### Problem Description
