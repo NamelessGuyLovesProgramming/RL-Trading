@@ -1,5 +1,134 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Phantom-Kerzen nach Go To Date + Next - 21.10.2025 🔮
+
+### Problem:
+**"Magische Wand" kehrt nach Go To Date zurück**
+
+Nach Implementierung der Phantom-Kerzen (Fix vom 21.10.2025) trat ein neues Problem auf:
+1. **Nach Go To Date**: Phantom-Kerzen verschwanden wieder → "Magische Wand" kehrte zurück
+2. **Nach "Next" Button**: Phantom-Kerzen wurden NICHT durch echte Kerzen ersetzt
+   - Echte Kerzen wurden hinzugefügt, aber Phantom-Kerzen blieben
+   - Chart akkumulierte immer mehr Kerzen (Real + Phantom)
+
+User-Feedback:
+- "nach go to sind die phantomkerzen nicht da, nach refresh sind sie es"
+- "die phantomkerze wird nicht ersetzt durch die echte"
+
+### Root Cause (2-fach):
+
+**Problem 1: go_to_date_complete überschreibt Phantom-Kerzen**
+```javascript
+// static/js/chart.js:1528 (ALT)
+case 'go_to_date_complete':
+    const validatedHistoricalData = validateCandleData(message.data);
+    candlestickSeries.setData(validatedHistoricalData);  // ❌ OHNE Phantom-Kerzen!
+```
+
+**Was passierte:**
+1. User klickt "Go To Date"
+2. Server sendet `chart_reinitialize` → Phantom-Kerzen hinzugefügt ✅
+3. Server sendet `go_to_date_complete` → Überschreibt mit Daten OHNE Phantom-Kerzen ❌
+4. "Magische Wand" ist zurück
+
+**Problem 2: update() funktioniert nicht mit Phantom-Kerzen**
+```javascript
+// static/js/chart.js:1362, 1370, 1389, 1706, 1742 (ALT)
+candlestickSeries.update(message.candle);  // ❌ Ersetzt Phantom NICHT!
+```
+
+**Warum update() nicht funktioniert:**
+- LightweightCharts `update()` fügt nur AM ENDE hinzu
+- Wenn Phantom-Kerzen existieren (Zeit 1000-1100):
+  - Echte Kerze (Zeit 1000) wird NICHT die Phantom-Kerze ersetzen
+  - Echte Kerze wird VOR Phantom-Kerzen eingefügt
+  - Phantom-Kerzen bleiben → Chart hat Real + Phantom Duplikate
+
+### Fixes:
+
+**Fix 1: go_to_date_complete mit Phantom-Kerzen (Zeile 1529-1534)**
+```javascript
+case 'go_to_date_complete':
+    const validatedHistoricalData = validateCandleData(message.data);
+
+    // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
+    // 🔮 KRITISCH: Verhindert "Magische Wand" nach Go To Date
+    const extendedHistoricalData = extendDataWithFuture(validatedHistoricalData, 100);
+    console.log('🔮 go_to_date_complete: Extended data with',
+                extendedHistoricalData.length - validatedHistoricalData.length, 'phantom candles');
+
+    candlestickSeries.setData(extendedHistoricalData);
+```
+
+**Fix 2: updateCandleWithPhantoms() Helper-Funktion (Zeile 324-367)**
+```javascript
+// 🔮 Helper: Update Candle UND regeneriere Phantom-Kerzen
+function updateCandleWithPhantoms(candle) {
+    // 1. Hole aktuelle Chart-Daten
+    const currentData = candlestickSeries.data();
+
+    // 2. Finde letzte ECHTE Kerze (nicht Phantom)
+    // Phantom-Kerzen: OHLC alle gleich (flache Linie)
+    let realData = [];
+    for (let i = 0; i < currentData.length; i++) {
+        const c = currentData[i];
+        if (c.open !== c.close || c.high !== c.low || i === 0) {
+            realData.push(c);  // Echte Kerze
+        } else {
+            break;  // Phantom gefunden → Rest auch Phantoms
+        }
+    }
+
+    // 3. Füge neue echte Kerze hinzu
+    const lastRealTime = realData.length > 0 ? realData[realData.length - 1].time : 0;
+    if (candle.time > lastRealTime) {
+        realData.push(candle);  // Neue Kerze am Ende
+    } else if (candle.time === lastRealTime) {
+        realData[realData.length - 1] = candle;  // Update letzte Kerze
+    } else {
+        realData.push(candle);
+        realData.sort((a, b) => a.time - b.time);  // Sortiere falls Kerze in Mitte
+    }
+
+    // 4. Regeneriere 100 Phantom-Kerzen
+    const extendedData = extendDataWithFuture(realData, 100);
+
+    // 5. Setze Chart-Daten neu (ersetzt alte Phantoms mit neuen)
+    candlestickSeries.setData(extendedData);
+
+    console.log('🔮 updateCandleWithPhantoms:', realData.length, 'real +', 100, 'phantom');
+}
+```
+
+**Fix 3: Alle update() Calls durch updateCandleWithPhantoms() ersetzt**
+- `add_candle` Event (Zeile 1407)
+- `debug_skip` Event (Zeile 1415)
+- `debug_skip_sync` Event (Zeile 1434)
+- `revolutionary_skip_event` Event (Zeile 1706)
+- `unified_skip_event` Event (Zeile 1742)
+
+### Files Changed:
+- `static/js/chart.js` (alle Fixes)
+  - Zeile 324-367: updateCandleWithPhantoms() Funktion
+  - Zeile 1407, 1415, 1434, 1706, 1742: update() → updateCandleWithPhantoms()
+  - Zeile 1454-1460: Debug-Logging für chart_reinitialize
+  - Zeile 1529-1534: go_to_date_complete mit Phantom-Kerzen
+
+### Verification:
+✅ Go To Date → Phantom-Kerzen SOFORT da (kein Refresh nötig)
+✅ "Next" Button → Phantom-Kerzen werden durch echte Kerzen ersetzt
+✅ Console-Logging zeigt: `🔮 updateCandleWithPhantoms: X real + 100 phantom`
+✅ Keine "Magische Wand" mehr nach Go To Date
+✅ Chart bleibt bei Real + 100 Phantom (keine Akkumulation)
+
+### Prevention:
+- **setData() vs update()**: Bei Phantom-Kerzen IMMER `setData()` verwenden, nie `update()`
+- **Event-Handler-Duplikate**: Alle Events die Chart-Daten setzen prüfen (z.B. chart_reinitialize + go_to_date_complete)
+- **Phantom-Detection**: Flache Kerzen (OHLC gleich) als Phantom identifizieren
+- **Helper-Functions**: Komplexe Logik (Real/Phantom Trennung) in dedizierte Funktionen auslagern
+
+---
+
 ## Position Box Höhe um 50% verkleinert - 21.10.2025 📏
 
 ### Änderung:
