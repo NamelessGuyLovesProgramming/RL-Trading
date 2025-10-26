@@ -1080,20 +1080,16 @@
 
         function updateAccountDisplay(accountType, accountData) {
             // Aktualisiert die Account-Anzeige in der UI
-            console.log(`🔧 updateAccountDisplay called: ${accountType}`, accountData);
             const prefix = accountType === 'ai' ? 'ai' : 'user';
 
             // Update Balance
             const balanceEl = document.getElementById(`${prefix}-balance`);
-            console.log(`🔍 Element ${prefix}-balance:`, balanceEl);
             if (balanceEl) {
                 const balance = typeof accountData.balance === 'number'
                     ? accountData.balance
                     : parseFloat(accountData.balance);
-                console.log(`💰 Setting balance to: ${formatEUR(balance)}`);
                 balanceEl.textContent = formatEUR(balance);
                 balanceEl.className = 'account-value-amount neutral';
-                console.log(`✅ Balance updated in DOM`);
             } else {
                 console.error(`❌ Element ${prefix}-balance NOT FOUND`);
             }
@@ -2962,13 +2958,18 @@
                 }
 
                 // Update Größe falls Container-Größe sich geändert hat
-                const targetWidth = tvCanvas ? tvCanvas.width : chartContainer.clientWidth;
-                const targetHeight = tvCanvas ? tvCanvas.height : chartContainer.clientHeight;
+                // ⭐ FIX: Verwende Container-Größe (KEIN DPR-Scaling)
+                const targetWidth = chartContainer.clientWidth;
+                const targetHeight = chartContainer.clientHeight;
 
                 if (existingCanvas.width !== targetWidth || existingCanvas.height !== targetHeight) {
                     existingCanvas.width = targetWidth;
                     existingCanvas.height = targetHeight;
-                    console.log('📏 Canvas-Größe aktualisiert:', existingCanvas.width, 'x', existingCanvas.height);
+                    // ⭐ FIX: CSS-Größe auch aktualisieren
+                    existingCanvas.style.width = `${chartContainer.clientWidth}px`;
+                    existingCanvas.style.height = `${chartContainer.clientHeight}px`;
+
+                    console.log('📏 Canvas-Größe aktualisiert:', existingCanvas.width, 'x', existingCanvas.height, '(CSS:', existingCanvas.style.width, 'x', existingCanvas.style.height, ')');
                 }
 
                 // ⭐ Update Manager References
@@ -3018,14 +3019,25 @@
             canvas.style.position = 'absolute';
             canvas.style.top = `${canvasTop}px`;  // ⭐ Aligned mit TradingView Canvas
             canvas.style.left = `${canvasLeft}px`; // ⭐ Aligned mit TradingView Canvas
-            canvas.style.width = tvCanvas ? `${tvCanvas.width}px` : '100%';
-            canvas.style.height = tvCanvas ? `${tvCanvas.height}px` : '100%';
+            // ⭐ FIX: CSS-Größe = Container-Größe (NICHT Canvas-Pixel-Größe!)
+            canvas.style.width = `${chartContainer.clientWidth}px`;
+            canvas.style.height = `${chartContainer.clientHeight}px`;
             canvas.style.maxWidth = '100%';  // ⭐ Verhindere Overflow
             canvas.style.maxHeight = '100%'; // ⭐ Verhindere Overflow
             canvas.style.pointerEvents = 'none';  // ⭐ STANDARD: 'none' → Events gehen zum Chart durch
             canvas.style.zIndex = '1000';
-            canvas.width = tvCanvas ? tvCanvas.width : chartContainer.clientWidth;
-            canvas.height = tvCanvas ? tvCanvas.height : chartContainer.clientHeight;
+
+            // ⭐ FIX: Canvas intern = CSS-Größe (KEIN DPR-Scaling)
+            // Grund: Vermeidet Koordinaten-Skalierungs-Probleme mit Hit-Testing
+            canvas.width = chartContainer.clientWidth;
+            canvas.height = chartContainer.clientHeight;
+
+            // ⭐ DEBUG: Canvas-Größen
+            console.log('🎨 Position Canvas erstellt (DPR-neutral):', {
+                cssSize: `${canvas.style.width} x ${canvas.style.height}`,
+                internalSize: `${canvas.width}px x ${canvas.height}px`,
+                containerSize: `${chartContainer.clientWidth}px x ${chartContainer.clientHeight}px`
+            });
 
             // ⭐⭐⭐ BUG FIX: Verhindere Canvas-Overflow ⭐⭐⭐
             chartContainer.style.position = 'relative';
@@ -3346,6 +3358,10 @@
                 // console.log(`   X-Achse: x1=${x1?.toFixed(1)}px (Start), x2=${x2?.toFixed(1)}px (Ende), Breite=${(x2-x1).toFixed(1)}px`);
                 // console.log(`   Y-Achse: Entry=${entryY.toFixed(1)}px, SL=${slY.toFixed(1)}px, TP=${tpY.toFixed(1)}px`);
                 // console.log(`   Timestamps: Start=${box.timeStart}, Ende=${box.timeEnd}`);
+                // if (box.clickX !== null && box.clickX !== undefined) {
+                //     console.log(`   🎯 CLICK vs BOX: clickX=${box.clickX.toFixed(1)}px → boxX1=${x1?.toFixed(1)}px (Delta: ${(x1 - box.clickX).toFixed(1)}px)`);
+                //     console.log(`   🎯 CLICK vs BOX: clickY=${box.clickY.toFixed(1)}px → entryY=${entryY.toFixed(1)}px (Delta: ${(entryY - box.clickY).toFixed(1)}px)`);
+                // }
 
                 // 🔄 REVERSE-CHECK (auskommentiert - zu verbose)
                 // const entryPriceCheck = candlestickSeries.coordinateToPrice(entryY);
