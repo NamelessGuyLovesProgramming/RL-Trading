@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(git commit -m \"$(cat <<''EOF''\ndocs: Claude Preferences erweitert - Process Management\n\nÄnderungen:\n1. META-REGEL hinzugefügt - Preferences müssen strikt befolgt werden\n\n2. Chart Server Process Management (Zeile 51-58)\n   - KRITISCH: Alte Shell IMMER killen vor Neustart\n   - 3-Schritt Restart-Workflow definiert\n   - Max. 1 aktive Chart-Server-Shell\n   - Verhindert Shell-Akkumulation (14 Shells → 1 Shell)\n\n3. Background Tasks & Shells (Zeile 60-63)\n   - Automatisches Cleanup OHNE Nachfrage\n   - Proaktiv handeln statt fragen\n   - KillShell für verwaiste Prozesse\n\nProblem behoben:\n- 14 Background-Shells durch fehlende Cleanup-Logik\n- Ursache: Neue Shell gestartet ohne alte zu killen\n\nPrevention:\n- Klarer Restart-Workflow mit Shell-Cleanup\n- Proaktive Session-Start Bereinigung\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(py:*)"
     ],
     "deny": [],
     "ask": []
