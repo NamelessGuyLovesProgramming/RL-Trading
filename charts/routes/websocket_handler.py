@@ -244,9 +244,12 @@ async def handle_websocket_commands(
                     )
 
                     if not position_result['success']:
+                        error_msg = f"Position creation failed: {position_result.get('error', 'Unknown error')}"
+                        logger.error(f"[WS] {error_msg}")
+                        logger.error(f"[WS] Trade data: Entry={entry_price}, SL={stop_loss}, TP={take_profit}, Direction={direction}")
                         await websocket.send_json({
                             'type': 'error',
-                            'message': f"Position creation failed: {position_result.get('error', 'Unknown error')}"
+                            'message': error_msg
                         })
                         continue
 

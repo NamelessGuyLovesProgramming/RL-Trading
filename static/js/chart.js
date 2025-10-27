@@ -2139,6 +2139,12 @@
                     }
                     break;
 
+                case 'error':
+                    // ❌ Error from backend
+                    console.error('❌ Backend Error:', message.message);
+                    alert(`Backend Error: ${message.message}`);
+                    break;
+
                 default:
                     console.log('[UNKNOWN] Unknown message type:', message.type);
             }
@@ -2872,6 +2878,7 @@
                 isResizing: false,
                 resizeHandle: null,
                 isShort: isShort,
+                direction: isShort ? 'short' : 'long',  // ⭐ FIX: Direction explizit setzen
 
                 // NEUE X-Koordinaten basierend auf Zeit und Click-Position
                 clickX: clickX || null,  // Echte Click-X-Koordinate
@@ -4938,12 +4945,15 @@
             window.activeLimitOrders.forEach((order, index) => {
                 let triggered = false;
 
+                // ⭐ FIX: Korrekte Limit Order Logik
+                // Buy Limit: Kaufe wenn Preis FÄLLT auf oder unter Limit (kaufe billig)
+                // Sell Limit: Verkaufe wenn Preis STEIGT auf oder über Limit (verkaufe teuer)
                 if (order.isShort) {
-                    // Short Limit: trigger when price reaches or goes BELOW entry (selling at resistance)
-                    triggered = currentPrice <= order.entryPrice;
-                } else {
-                    // Long Limit: trigger when price reaches or goes ABOVE entry (buying at support)
+                    // Sell Limit (Short): trigger when price RISES to or above entry
                     triggered = currentPrice >= order.entryPrice;
+                } else {
+                    // Buy Limit (Long): trigger when price FALLS to or below entry
+                    triggered = currentPrice <= order.entryPrice;
                 }
 
                 if (triggered) {
@@ -5106,7 +5116,16 @@
             // If no orders, canvas is now clear - we're done
             if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
                 console.log('✅ Canvas cleared - no limit orders to draw');
+                // ⭐ FIX: Deaktiviere Canvas pointer events wenn keine Orders vorhanden
+                if (canvas) {
+                    canvas.style.pointerEvents = 'none';
+                }
                 return;
+            }
+
+            // ⭐ FIX: Aktiviere Canvas pointer events wenn Orders vorhanden
+            if (canvas) {
+                canvas.style.pointerEvents = 'auto';
             }
 
             window.activeLimitOrders.forEach((order) => {

@@ -73,6 +73,7 @@ class PositionService:
             'sl_price': sl_price,
             'tp_price': tp_price,
             'direction': direction,
+            'type': direction.upper(),  # Frontend erwartet 'LONG'/'SHORT'
             'size': size,
             'symbol': symbol,
             'status': 'open',
