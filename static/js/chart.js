@@ -1701,8 +1701,9 @@
                         };
                         updateCandleWithPhantoms(validatedCandle);
 
-                        // Store last candle close price for market orders
+                        // Store last candle data for market orders and limit order triggers
                         window.lastCandleClose = validatedCandle.close;
+                        window.lastCandle = validatedCandle;  // ⭐ Store full candle for high/low checks
 
                         console.log('🚀 Revolutionary Skip:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('📊 Candle Type:', message.candle_type);
@@ -1737,8 +1738,9 @@
                         };
                         updateCandleWithPhantoms(validatedCandle);
 
-                        // Store last candle close price for market orders
+                        // Store last candle data for market orders and limit order triggers
                         window.lastCandleClose = validatedCandle.close;
+                        window.lastCandle = validatedCandle;  // ⭐ Store full candle for high/low checks
 
                         console.log('[UNIFIED] Skip Event:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('[UNIFIED] Candle Type:', message.candle_type);
@@ -4801,19 +4803,24 @@
         let currentTradeSetup = null;
         window.activeLimitOrders = [];  // Active limit orders array
         window.lastCandleClose = null;  // Store last candle close price
+        window.lastCandle = null;  // ⭐ Store full candle data (open, high, low, close)
 
         // Start limit order monitoring interval
         setInterval(() => {
-            const currentPrice = getCurrentMarketPrice();
-            if (currentPrice && typeof checkLimitOrders === 'function') {
-                checkLimitOrders(currentPrice);
+            const currentCandle = getCurrentMarketPrice();
+            if (currentCandle && typeof checkLimitOrders === 'function') {
+                checkLimitOrders(currentCandle);  // ⭐ Pass full candle for high/low checks
             }
         }, 1000);  // Check every second
 
         function getCurrentMarketPrice() {
-            // Get current market price from last candle close
+            // ⭐ Return full candle object for high/low checking in limit orders
+            if (window.lastCandle !== null && window.lastCandle !== undefined) {
+                return window.lastCandle;
+            }
+            // Fallback: return just close as candle if only close is available
             if (window.lastCandleClose !== null && window.lastCandleClose !== undefined) {
-                return window.lastCandleClose;
+                return { close: window.lastCandleClose, high: window.lastCandleClose, low: window.lastCandleClose };
             }
             return null;
         }
@@ -4935,10 +4942,15 @@
             }
         }
 
-        function checkLimitOrders(currentPrice) {
+        function checkLimitOrders(candle) {
             if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
                 return;
             }
+
+            // ⭐ Extract candle data (support both full candle and fallback to just close)
+            const currentPrice = candle.close || candle;
+            const high = candle.high || currentPrice;
+            const low = candle.low || currentPrice;
 
             const triggeredOrders = [];
 
@@ -4957,23 +4969,27 @@
                     // SELL Orders (Short)
                     if (entryAbovePlacement) {
                         // Entry > Placement → SELL LIMIT (warte bis Preis STEIGT)
-                        triggered = currentPrice >= order.entryPrice;
-                        // console.log('[SELL LIMIT] Wait for price to RISE to', order.entryPrice);
+                        // ⭐ Check HIGH: Trigger wenn Docht Entry-Preis berührt oder überschreitet
+                        triggered = high >= order.entryPrice;
+                        // console.log('[SELL LIMIT] Wait for HIGH to RISE to', order.entryPrice, '- High:', high);
                     } else {
                         // Entry <= Placement → SELL STOP (warte bis Preis FÄLLT)
-                        triggered = currentPrice <= order.entryPrice;
-                        // console.log('[SELL STOP] Wait for price to FALL to', order.entryPrice);
+                        // ⭐ Check LOW: Trigger wenn Docht Entry-Preis berührt oder unterschreitet
+                        triggered = low <= order.entryPrice;
+                        // console.log('[SELL STOP] Wait for LOW to FALL to', order.entryPrice, '- Low:', low);
                     }
                 } else {
                     // BUY Orders (Long)
                     if (entryAbovePlacement) {
                         // Entry > Placement → BUY STOP (warte bis Preis STEIGT)
-                        triggered = currentPrice >= order.entryPrice;
-                        // console.log('[BUY STOP] Wait for price to RISE to', order.entryPrice);
+                        // ⭐ Check HIGH: Trigger wenn Docht Entry-Preis berührt oder überschreitet
+                        triggered = high >= order.entryPrice;
+                        // console.log('[BUY STOP] Wait for HIGH to RISE to', order.entryPrice, '- High:', high);
                     } else {
                         // Entry <= Placement → BUY LIMIT (warte bis Preis FÄLLT)
-                        triggered = currentPrice <= order.entryPrice;
-                        // console.log('[BUY LIMIT] Wait for price to FALL to', order.entryPrice);
+                        // ⭐ Check LOW: Trigger wenn Docht Entry-Preis berührt oder unterschreitet
+                        triggered = low <= order.entryPrice;
+                        // console.log('[BUY LIMIT] Wait for LOW to FALL to', order.entryPrice, '- Low:', low);
                     }
                 }
 
@@ -4981,7 +4997,7 @@
                     const orderType = order.isShort
                         ? (entryAbovePlacement ? 'SELL LIMIT' : 'SELL STOP')
                         : (entryAbovePlacement ? 'BUY STOP' : 'BUY LIMIT');
-                    console.log(`🎯 ${orderType} TRIGGERED:`, order);
+                    console.log(`🎯 ${orderType} TRIGGERED at High=${high}, Low=${low}:`, order);
                     triggeredOrders.push({order, index});
                 }
             });
@@ -5100,39 +5116,9 @@
             if (!canvas) {
                 canvas = document.createElement('canvas');
                 canvas.id = 'limitOrderCanvas';
-                canvas.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 11;';
+                // ⭐ FIX: Canvas IMMER transparent - nur X-Button-Elements sind klickbar
+                canvas.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: none; z-index: 11;';
                 document.getElementById('chart_container').appendChild(canvas);
-
-                // Add click handler for canvas
-                canvas.addEventListener('click', (e) => {
-                    const rect = canvas.getBoundingClientRect();
-                    const clickX = e.clientX - rect.left;
-                    const clickY = e.clientY - rect.top;
-
-                    console.log(`[LimitCanvas] Click at canvas coords (${clickX.toFixed(1)}, ${clickY.toFixed(1)})`);
-
-                    // Check if click is on any close button
-                    if (window.limitOrderCloseButtons) {
-                        for (const limitId in window.limitOrderCloseButtons) {
-                            const btn = window.limitOrderCloseButtons[limitId];
-
-                            console.log(`[LimitCanvas] Button ${btn.orderId}: x=${btn.x.toFixed(1)}, y=${btn.y.toFixed(1)}, w=${btn.width}, h=${btn.height}`);
-                            console.log(`[LimitCanvas] Check: X in [${btn.x.toFixed(1)}, ${(btn.x + btn.width).toFixed(1)}], Y in [${btn.y.toFixed(1)}, ${(btn.y + btn.height).toFixed(1)}]`);
-
-                            if (clickX >= btn.x && clickX <= btn.x + btn.width &&
-                                clickY >= btn.y && clickY <= btn.y + btn.height) {
-                                console.log(`[LimitCanvas] ✅ Close button clicked for order ${btn.orderId}`);
-                                window.cancelLimitOrder(btn.orderId);
-                                e.stopPropagation();
-                                return;
-                            } else {
-                                console.log(`[LimitCanvas] ❌ Click outside button ${btn.orderId}`);
-                            }
-                        }
-                    }
-
-                    console.log(`[LimitCanvas] No button clicked - enabling drag mode (TODO)`);
-                });
             }
 
             const container = document.getElementById('chart_container');
@@ -5141,6 +5127,10 @@
 
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // ⭐ FIX: Entferne alle alten DOM-Button-Elemente
+            const oldButtons = document.querySelectorAll('.limit-order-close-btn');
+            oldButtons.forEach(btn => btn.remove());
 
             // Initialize closeButtonPositions for limit orders
             if (!window.limitOrderCloseButtons) {
@@ -5151,16 +5141,7 @@
             // If no orders, canvas is now clear - we're done
             if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
                 console.log('✅ Canvas cleared - no limit orders to draw');
-                // ⭐ FIX: Deaktiviere Canvas pointer events wenn keine Orders vorhanden
-                if (canvas) {
-                    canvas.style.pointerEvents = 'none';
-                }
                 return;
-            }
-
-            // ⭐ FIX: Aktiviere Canvas pointer events wenn Orders vorhanden
-            if (canvas) {
-                canvas.style.pointerEvents = 'auto';
             }
 
             window.activeLimitOrders.forEach((order) => {
@@ -5211,17 +5192,40 @@
                 ctx.lineTo(btnX + 4, btnY + btnSize - 4);
                 ctx.stroke();
 
-                // Store button position for click detection (using "limit_" prefix)
+                // ⭐ FIX: Erstelle echtes DOM-Button-Element (nicht nur Canvas-Grafik)
+                const closeButton = document.createElement('button');
+                closeButton.className = 'limit-order-close-btn';
+                closeButton.style.cssText = `
+                    position: absolute;
+                    left: ${btnX}px;
+                    top: ${btnY}px;
+                    width: ${btnSize}px;
+                    height: ${btnSize}px;
+                    background: transparent;
+                    border: none;
+                    cursor: pointer;
+                    z-index: 12;
+                    padding: 0;
+                `;
+                closeButton.onclick = (e) => {
+                    e.stopPropagation();
+                    console.log(`[DOM Button] ✅ Close button clicked for order ${order.id}`);
+                    window.cancelLimitOrder(order.id);
+                };
+                container.appendChild(closeButton);
+
+                // Store button position for reference (using "limit_" prefix)
                 window.limitOrderCloseButtons[`limit_${order.id}`] = {
                     x: btnX,
                     y: btnY,
                     width: btnSize,
                     height: btnSize,
-                    orderId: order.id
+                    orderId: order.id,
+                    element: closeButton  // Store DOM reference
                 };
             });
 
-            console.log(`✅ Drew ${window.activeLimitOrders.length} limit orders on canvas`);
+            console.log(`✅ Drew ${window.activeLimitOrders.length} limit orders on canvas with DOM buttons`);
         }
 
         window.cancelLimitOrder = function(orderId) {
