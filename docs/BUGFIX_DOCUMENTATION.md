@@ -1,5 +1,41 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Asset Label & Indicators Modal - 27.10.2025 📊
+
+### Feature-Beschreibung:
+Asset-Name Anzeige und Indicators Modal in der unteren Toolbar für zukünftige Indicator-Verwaltung
+
+**Implementierung:**
+- 🔍 Asset-Label VOR Timeframes (dynamisch, nicht klickbar)
+- Indicators Button NACH Timeframes (mit Trennstrich)
+- Leeres Indicators Modal mit Header + Liste (Platzhalter)
+- Drei Placeholder-Items: RSI, MACD, Session Indicator
+
+**Dateien:**
+```
+GEÄNDERT:
+- templates/chart.html             (Asset-Label + Indicators Button + Modal)
+- static/css/chart.css             (Asset-Label + Indicators Modal Styles)
+- static/js/chart.js               (openIndicatorsModal, closeIndicatorsModal, updateAssetName)
+```
+
+**UI-Struktur:**
+```
+[🗑️] | 🔍 NQ=F | [1m] [2m] [3m] [5m] [15m] [30m] [1h] [4h] | [Indicators]
+```
+
+**Bugfix:**
+- **Problem**: Indicators-Button hatte `timeframe-btn` Klasse → Timeframe-Wechsel wurde ausgelöst
+- **Lösung**: Klasse zu `nav-btn` geändert → Kein Event-Listener mehr aktiv
+- **Location**: templates/chart.html:243
+
+**Zukünftige Erweiterung:**
+- Indicator-Items als klickbar implementieren
+- Indicators zum Chart hinzufügen
+- Indicator-Management oben links im Chart
+
+---
+
 ## Account Balance Settings Feature - 27.10.2025 ⚙️
 
 ### Feature-Beschreibung:

@@ -156,6 +156,24 @@
         </div>
     </div>
 
+    <!-- Indicators Modal -->
+    <div id="indicatorsModal" class="date-modal" style="display: none;">
+        <div class="date-modal-content" style="max-width: 400px;">
+            <div class="date-modal-header">
+                <span class="date-modal-title">Indicators</span>
+                <button class="close-modal" onclick="closeIndicatorsModal()">&times;</button>
+            </div>
+            <div class="indicators-content">
+                <div class="indicators-list">
+                    <!-- Placeholder für zukünftige Indicators -->
+                    <div class="indicator-item">RSI (Coming Soon)</div>
+                    <div class="indicator-item">MACD (Coming Soon)</div>
+                    <div class="indicator-item">Session Indicator (Coming Soon)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Erste Chart-Toolbar (Debug-Controls) -->
     <div class="chart-toolbar-1">
         <!-- Debug-Controls (Links) -->
@@ -206,6 +224,9 @@
     <div class="chart-toolbar-2">
         <button id="clearAll" class="tool-btn">🗑️</button>
 
+        <!-- Asset Label -->
+        <span class="asset-label">🔍 <span id="assetName">NQ=F</span></span>
+
         <!-- Timeframe Buttons -->
         <div class="timeframe-group">
             <button id="tf-1m" class="timeframe-btn" data-timeframe="1m">1m</button>
@@ -217,6 +238,9 @@
             <button id="tf-1h" class="timeframe-btn" data-timeframe="1h">1h</button>
             <button id="tf-4h" class="timeframe-btn" data-timeframe="4h">4h</button>
         </div>
+
+        <!-- Indicators Button -->
+        <button id="indicatorsBtn" class="nav-btn" onclick="openIndicatorsModal()" style="margin-left: 20px; border-left: 1px solid #444; padding-left: 20px;">Indicators</button>
     </div>
 
     <!-- Left Chart-Sidebar (links) -->

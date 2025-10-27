@@ -5826,3 +5826,31 @@ function getPnLClass(value) {
     if (value < 0) return 'account-value-amount loss';
     return 'account-value-amount neutral';
 }
+
+// ========================================
+// Indicators Modal Functions
+// ========================================
+
+function openIndicatorsModal() {
+    const modal = document.getElementById('indicatorsModal');
+    modal.style.display = 'flex';
+    console.log('📊 Indicators Modal geöffnet');
+}
+
+function closeIndicatorsModal() {
+    const modal = document.getElementById('indicatorsModal');
+    modal.style.display = 'none';
+    console.log('📊 Indicators Modal geschlossen');
+}
+
+// ========================================
+// Asset Name Update Function
+// ========================================
+
+function updateAssetName(assetSymbol) {
+    const assetNameElem = document.getElementById('assetName');
+    if (assetNameElem) {
+        assetNameElem.textContent = assetSymbol;
+        console.log(`🔍 Asset-Name aktualisiert: ${assetSymbol}`);
+    }
+}
