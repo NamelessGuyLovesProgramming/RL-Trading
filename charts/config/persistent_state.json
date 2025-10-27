@@ -1,0 +1,11 @@
+{
+  "accounts": {
+    "ai_balance": 100000.0,
+    "user_balance": 100000.0
+  },
+  "time": {
+    "current_debug_time": null,
+    "initial_go_to_date": null
+  },
+  "version": "1.0"
+}

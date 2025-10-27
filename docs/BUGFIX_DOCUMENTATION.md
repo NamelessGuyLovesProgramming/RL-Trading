@@ -1,5 +1,60 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Account Balance Settings Feature - 27.10.2025 ⚙️
+
+### Feature-Beschreibung:
+Persistente Account-Balance Einstellungen für RL-KI und Nutzer mit Settings-Modal
+
+**Implementierung:**
+- Settings-Button in Toolbar (⚙️ Settings neben 📅 Go To)
+- Modal mit zwei getrennten Balance-Inputs (RL-KI + Nutzer)
+- Preset-Buttons: 10k, 50k, 100k, 200k
+- Persistente Speicherung in `charts/config/persistent_state.json`
+- Validierung: Keine Balance-Änderung bei offenen Positionen
+
+**Dateien:**
+```
+NEU:
+- charts/services/config_service.py         (Config Management)
+- charts/config/persistent_state.json       (Persistente Speicherung)
+
+GEÄNDERT:
+- charts/services/account_service.py        (+3 Methoden: set_balance, has_active_positions, __init__ mit Parametern)
+- charts/routes/account.py                  (+1 Route: POST /api/account/update-balance)
+- templates/chart.html                      (+Settings Modal +Button)
+- static/js/chart.js                        (+Modal-Logik ~180 LOC)
+- static/css/chart.css                      (+Settings Styles ~90 LOC)
+- charts/chart_server.py                    (+ConfigService Integration)
+- charts/services/__init__.py               (+ConfigService Import)
+```
+
+**Architektur:**
+```
+Frontend (chart.html + chart.js + chart.css)
+    ↓ POST /api/account/update-balance
+Backend (account.py Route)
+    ↓ set_balance()
+AccountService
+    ↓ update_account_balances()
+ConfigService
+    ↓ JSON Write
+persistent_state.json
+```
+
+**Testing:**
+✅ Balance-Änderung ohne offene Positionen
+✅ Balance-Änderung MIT offenen Positionen → Fehler
+✅ Server-Restart → Balance persistent
+✅ Preset-Buttons funktionieren
+✅ UI-Update nach Speichern
+
+**Prevention:**
+- Clean Architecture: Services → Routes → Frontend
+- Validierung auf mehreren Ebenen (Frontend + Backend)
+- Persistent Config mit Auto-Create bei erstem Start
+
+---
+
 ## Limit Order P&L & Timing - 27.10.2025 (Phase 2) 💰
 
 ### Problem (2-fach):

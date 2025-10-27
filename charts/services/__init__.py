@@ -9,6 +9,7 @@ from .navigation_service import NavigationService
 from .debug_service import DebugService
 from .position_service import PositionService
 from .account_service import AccountService
+from .config_service import ConfigService
 
 __all__ = [
     'ChartService',
@@ -16,5 +17,6 @@ __all__ = [
     'NavigationService',
     'DebugService',
     'PositionService',
-    'AccountService'
+    'AccountService',
+    'ConfigService'
 ]

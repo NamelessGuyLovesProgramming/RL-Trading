@@ -5650,3 +5650,179 @@
             connectWebSocket();
             loadAccountData();
         });
+
+// ========================================
+// Settings Modal Functions
+// ========================================
+
+function openSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    const aiInput = document.getElementById('aiBalanceInput');
+    const userInput = document.getElementById('userBalanceInput');
+    const warning = document.getElementById('settingsWarning');
+
+    // Hole aktuelle Balances aus der UI
+    const aiBalanceElem = document.getElementById('ai-balance');
+    const userBalanceElem = document.getElementById('user-balance');
+
+    if (aiBalanceElem && userBalanceElem) {
+        // Parse Balance aus "500.000€" Format
+        const aiBalance = parseFloat(aiBalanceElem.textContent.replace(/[.€\s]/g, ''));
+        const userBalance = parseFloat(userBalanceElem.textContent.replace(/[.€\s]/g, ''));
+
+        aiInput.value = aiBalance || 500000;
+        userInput.value = userBalance || 500000;
+    }
+
+    // Verstecke Warnung
+    warning.style.display = 'none';
+
+    // Zeige Modal
+    modal.style.display = 'flex';
+    console.log('⚙️ Settings Modal geöffnet');
+}
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    modal.style.display = 'none';
+    console.log('⚙️ Settings Modal geschlossen');
+}
+
+function setBalancePreset(accountType, amount) {
+    const inputId = accountType === 'ai' ? 'aiBalanceInput' : 'userBalanceInput';
+    const input = document.getElementById(inputId);
+
+    if (input) {
+        input.value = amount;
+        console.log(`⚙️ ${accountType} Balance Preset: ${amount}€`);
+    }
+
+    // Update active state für Preset-Buttons
+    updatePresetButtonStates(accountType, amount);
+}
+
+function updatePresetButtonStates(accountType, selectedAmount) {
+    // Finde die richtige Balance-Section
+    const sections = document.querySelectorAll('.balance-section');
+    const targetSection = accountType === 'ai' ? sections[0] : sections[1];
+
+    if (!targetSection) return;
+
+    // Entferne active state von allen Buttons in dieser Section
+    const buttons = targetSection.querySelectorAll('.balance-preset-btn');
+    buttons.forEach(btn => {
+        btn.classList.remove('active');
+
+        // Prüfe ob dieser Button der ausgewählte ist
+        const btnAmount = parseInt(btn.textContent.replace(/[k€]/g, '')) * 1000;
+        if (btnAmount === selectedAmount) {
+            btn.classList.add('active');
+        }
+    });
+}
+
+async function applySettings() {
+    const aiInput = document.getElementById('aiBalanceInput');
+    const userInput = document.getElementById('userBalanceInput');
+    const warning = document.getElementById('settingsWarning');
+    const warningText = document.getElementById('settingsWarningText');
+
+    const aiBalance = parseFloat(aiInput.value);
+    const userBalance = parseFloat(userInput.value);
+
+    console.log('💾 Applying Settings:', { aiBalance, userBalance });
+
+    try {
+        // API-Call zum Update der Balance
+        const response = await fetch('/api/account/update-balance', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                ai_balance: aiBalance,
+                user_balance: userBalance
+            })
+        });
+
+        const data = await response.json();
+        console.log('📡 Balance Update Response:', data);
+
+        if (data.status === 'success') {
+            // Update UI mit neuen Balances
+            updateAccountBalanceDisplay(data.ai_account, data.user_account);
+
+            // Schließe Modal
+            closeSettingsModal();
+
+            console.log('✅ Balances erfolgreich aktualisiert');
+        } else {
+            // Zeige Fehler-Warnung
+            warningText.textContent = data.message || 'Fehler beim Aktualisieren der Balance';
+            warning.style.display = 'block';
+            console.error('❌ Balance Update Fehler:', data.message);
+        }
+    } catch (error) {
+        console.error('❌ Fehler beim Balance Update:', error);
+        warningText.textContent = 'Netzwerk-Fehler beim Aktualisieren der Balance';
+        warning.style.display = 'block';
+    }
+}
+
+function updateAccountBalanceDisplay(aiAccount, userAccount) {
+    // RL-KI Account Update
+    const aiBalanceElem = document.getElementById('ai-balance');
+    const aiRealizedElem = document.getElementById('ai-realized');
+    const aiUnrealizedElem = document.getElementById('ai-unrealized');
+
+    if (aiBalanceElem) {
+        aiBalanceElem.textContent = formatCurrency(aiAccount.balance);
+        aiBalanceElem.className = 'account-value-amount neutral';
+    }
+    if (aiRealizedElem) {
+        aiRealizedElem.textContent = formatCurrency(aiAccount.realized_pnl, true);
+        aiRealizedElem.className = getPnLClass(aiAccount.realized_pnl);
+    }
+    if (aiUnrealizedElem) {
+        aiUnrealizedElem.textContent = formatCurrency(aiAccount.unrealized_pnl, true);
+        aiUnrealizedElem.className = getPnLClass(aiAccount.unrealized_pnl);
+    }
+
+    // Nutzer Account Update
+    const userBalanceElem = document.getElementById('user-balance');
+    const userRealizedElem = document.getElementById('user-realized');
+    const userUnrealizedElem = document.getElementById('user-unrealized');
+
+    if (userBalanceElem) {
+        userBalanceElem.textContent = formatCurrency(userAccount.balance);
+        userBalanceElem.className = 'account-value-amount neutral';
+    }
+    if (userRealizedElem) {
+        userRealizedElem.textContent = formatCurrency(userAccount.realized_pnl, true);
+        userRealizedElem.className = getPnLClass(userAccount.realized_pnl);
+    }
+    if (userUnrealizedElem) {
+        userUnrealizedElem.textContent = formatCurrency(userAccount.unrealized_pnl, true);
+        userUnrealizedElem.className = getPnLClass(userAccount.unrealized_pnl);
+    }
+
+    console.log('✅ Account Balance Display aktualisiert');
+}
+
+function formatCurrency(value, showSign = false) {
+    const formatted = Math.abs(value).toLocaleString('de-DE', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    });
+
+    if (showSign && value !== 0) {
+        return `${value > 0 ? '+' : '-'}${formatted}€`;
+    }
+    return `${formatted}€`;
+}
+
+function getPnLClass(value) {
+    if (value > 0) return 'account-value-amount profit';
+    if (value < 0) return 'account-value-amount loss';
+    return 'account-value-amount neutral';
+}

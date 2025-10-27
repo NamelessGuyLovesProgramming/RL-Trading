@@ -19,12 +19,18 @@ class AccountService:
     - user_account: Für manuell Nutzer Trades (wenn RL offline)
     """
 
-    def __init__(self):
-        """Initialisiert AccountService mit Standard-Startkapital"""
+    def __init__(self, ai_balance: float = 500000.0, user_balance: float = 500000.0):
+        """
+        Initialisiert AccountService mit Startkapital
+
+        Args:
+            ai_balance: Start-Balance für RL-KI Account (default: 500k)
+            user_balance: Start-Balance für Nutzer Account (default: 500k)
+        """
 
         # RL-KI Account
         self.ai_account = {
-            'balance': 500000.0,           # Startkapital in EUR
+            'balance': float(ai_balance),  # Startkapital in EUR
             'realized_pnl': 0.0,           # Realisierte Gewinne/Verluste
             'unrealized_pnl': 0.0,         # Unrealisierte Gewinne/Verluste
             'active_positions': {},        # {position_id: position_data}
@@ -36,7 +42,7 @@ class AccountService:
 
         # Nutzer Account
         self.user_account = {
-            'balance': 500000.0,           # Startkapital in EUR
+            'balance': float(user_balance), # Startkapital in EUR
             'realized_pnl': 0.0,           # Realisierte Gewinne/Verluste
             'unrealized_pnl': 0.0,         # Unrealisierte Gewinne/Verluste
             'active_positions': {},        # {position_id: position_data}
@@ -46,7 +52,7 @@ class AccountService:
             'losing_trades': 0             # Anzahl Verlust-Trades
         }
 
-        logger.info("[AccountService] Initialized with 500.000€ start capital per account")
+        logger.info(f"[AccountService] Initialized - AI: {ai_balance:,.0f}€, User: {user_balance:,.0f}€")
 
     def execute_trade(self,
                      position_data: Dict[str, Any],
@@ -342,4 +348,59 @@ class AccountService:
             'success': True,
             'account_type': account_type,
             'account_summary': self.get_account_summary(account_type)
+        }
+
+    def set_balance(self, account_type: str, new_balance: float) -> Dict[str, Any]:
+        """
+        Setzt Balance für einen Account (nur wenn keine offenen Positionen)
+
+        Args:
+            account_type: 'ai' oder 'user'
+            new_balance: Neue Balance in EUR
+
+        Returns:
+            Dict mit success, error (falls vorhanden), account_summary
+        """
+        account = self.ai_account if account_type == 'ai' else self.user_account
+
+        # Validierung: Keine Balance-Änderung bei offenen Positionen
+        if len(account['active_positions']) > 0:
+            error_msg = f"Balance kann nicht geändert werden: {len(account['active_positions'])} offene Position(en) vorhanden"
+            logger.warning(f"[AccountService] {error_msg} ({account_type})")
+            return {
+                'success': False,
+                'error': error_msg,
+                'active_positions_count': len(account['active_positions'])
+            }
+
+        # Balance setzen
+        old_balance = account['balance']
+        account['balance'] = float(new_balance)
+
+        logger.info(f"[AccountService] {account_type} balance updated: {old_balance:,.0f}€ → {new_balance:,.0f}€")
+
+        return {
+            'success': True,
+            'account_type': account_type,
+            'old_balance': old_balance,
+            'new_balance': new_balance,
+            'account_summary': self.get_account_summary(account_type)
+        }
+
+    def has_active_positions(self) -> Dict[str, Any]:
+        """
+        Prüft ob irgendein Account offene Positionen hat
+
+        Returns:
+            Dict mit has_positions, ai_count, user_count
+        """
+        ai_count = len(self.ai_account['active_positions'])
+        user_count = len(self.user_account['active_positions'])
+        total = ai_count + user_count
+
+        return {
+            'has_positions': total > 0,
+            'total_count': total,
+            'ai_count': ai_count,
+            'user_count': user_count
         }

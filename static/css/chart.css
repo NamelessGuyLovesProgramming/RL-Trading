@@ -480,3 +480,92 @@
             border-color: #089981;
             color: #000;
         }
+
+        /* ========================================
+         * Settings Modal Styles
+         * ======================================== */
+
+        .settings-content {
+            padding: 20px 0;
+        }
+
+        .balance-section {
+            margin-bottom: 25px;
+        }
+
+        .balance-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #ddd;
+            margin-bottom: 10px;
+        }
+
+        .balance-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .balance-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: #1a1a1a;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 14px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            transition: border-color 0.2s;
+        }
+
+        .balance-input:focus {
+            outline: none;
+            border-color: #60a5fa;
+        }
+
+        .balance-input::-webkit-inner-spin-button,
+        .balance-input::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .balance-presets {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+
+        .balance-preset-btn {
+            padding: 8px 12px;
+            background: #2a2a2a;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .balance-preset-btn:hover {
+            background: #3a3a3a;
+            color: #fff;
+            border-color: #555;
+        }
+
+        .balance-preset-btn.active {
+            background: #60a5fa;
+            color: #000;
+            border-color: #60a5fa;
+            font-weight: 600;
+        }
+
+        .settings-warning {
+            padding: 12px 15px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 4px;
+            color: #ef4444;
+            font-size: 12px;
+            margin-top: 15px;
+        }

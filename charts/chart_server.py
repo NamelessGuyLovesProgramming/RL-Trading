@@ -50,7 +50,8 @@ from charts.services import (
     NavigationService,
     DebugService,
     PositionService,
-    AccountService
+    AccountService,
+    ConfigService
 )
 
 # Router imports
@@ -93,6 +94,7 @@ navigation_service: NavigationService = None
 debug_service: DebugService = None
 position_service: PositionService = None
 account_service: AccountService = None
+config_service: ConfigService = None
 
 # Global Data
 initial_chart_data = []
@@ -178,7 +180,7 @@ def initialize_components():
     global manager, unified_state, unified_time_manager, debug_controller
     global chart_lifecycle_manager, data_validator, price_repository
     global timeframe_data_repository, universal_renderer
-    global chart_service, timeframe_service, navigation_service, debug_service, position_service, account_service
+    global chart_service, timeframe_service, navigation_service, debug_service, position_service, account_service, config_service
     global initial_chart_data, global_skip_events, debug_control_timeframe
 
     logger.info("=" * 60)
@@ -304,7 +306,14 @@ def initialize_components():
         price_repo=price_repository
     )
 
-    account_service = AccountService()
+    # Config Service & Account Service mit persistenten Balances
+    config_service = ConfigService()
+    balances = config_service.get_account_balances()
+    account_service = AccountService(
+        ai_balance=balances['ai_balance'],
+        user_balance=balances['user_balance']
+    )
+    logger.info(f"[INIT] AccountService initialized with config balances: AI={balances['ai_balance']:,.0f}€, User={balances['user_balance']:,.0f}€")
 
     logger.info("[INIT] ✅ All components initialized successfully")
 
@@ -363,7 +372,8 @@ async def startup_event():
 
     account_routes.setup_account_routes(
         app=app,
-        account_service=account_service
+        account_service=account_service,
+        config_service=config_service
     )
 
     chart_routes.setup_chart_routes(

@@ -8,7 +8,9 @@
       "Bash(wmic process where \"CommandLine like ''%chart_server%''\" delete)",
       "Bash(./run_tests_and_start.bat)",
       "Read(//c/Users/vgude/Desktop/**)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

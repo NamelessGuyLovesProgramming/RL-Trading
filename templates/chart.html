@@ -25,6 +25,56 @@
         </div>
     </div>
 
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="date-modal" style="display: none;">
+        <div class="date-modal-content" style="max-width: 500px;">
+            <div class="date-modal-header">
+                <span class="date-modal-title">⚙️ Account Settings</span>
+                <button class="close-modal" onclick="closeSettingsModal()">&times;</button>
+            </div>
+
+            <div class="settings-content">
+                <!-- RL-KI Balance Section -->
+                <div class="balance-section">
+                    <label class="balance-label">🤖 RL-KI Balance (EUR):</label>
+                    <div class="balance-input-group">
+                        <input type="number" id="aiBalanceInput" class="balance-input" value="500000" min="0" step="1000">
+                        <div class="balance-presets">
+                            <button class="balance-preset-btn" onclick="setBalancePreset('ai', 10000)">10k</button>
+                            <button class="balance-preset-btn" onclick="setBalancePreset('ai', 50000)">50k</button>
+                            <button class="balance-preset-btn" onclick="setBalancePreset('ai', 100000)">100k</button>
+                            <button class="balance-preset-btn active" onclick="setBalancePreset('ai', 200000)">200k</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Nutzer Balance Section -->
+                <div class="balance-section">
+                    <label class="balance-label">👤 Nutzer Balance (EUR):</label>
+                    <div class="balance-input-group">
+                        <input type="number" id="userBalanceInput" class="balance-input" value="500000" min="0" step="1000">
+                        <div class="balance-presets">
+                            <button class="balance-preset-btn" onclick="setBalancePreset('user', 10000)">10k</button>
+                            <button class="balance-preset-btn" onclick="setBalancePreset('user', 50000)">50k</button>
+                            <button class="balance-preset-btn" onclick="setBalancePreset('user', 100000)">100k</button>
+                            <button class="balance-preset-btn active" onclick="setBalancePreset('user', 200000)">200k</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Warning Display -->
+                <div id="settingsWarning" class="settings-warning" style="display: none;">
+                    ⚠️ <span id="settingsWarningText"></span>
+                </div>
+            </div>
+
+            <div class="date-modal-buttons">
+                <button class="modal-btn" onclick="closeSettingsModal()">Abbrechen</button>
+                <button class="modal-btn primary" onclick="applySettings()">💾 Speichern</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Trade Dialog Modal -->
     <div id="tradeModal" class="date-modal" style="display: none;">
         <div class="date-modal-content" style="max-width: 450px;">
@@ -126,6 +176,7 @@
         <!-- Navigation Controls (Rechts) -->
         <div class="navigation-controls">
             <button id="goToDateBtn" class="nav-btn" title="Go To Date">📅 Go To</button>
+            <button id="settingsBtn" class="nav-btn" title="Settings" onclick="openSettingsModal()">⚙️ Settings</button>
 
             <!-- RL Trading Panel (Minimal) -->
             <div class="rl-panel" style="
