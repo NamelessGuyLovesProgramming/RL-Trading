@@ -275,6 +275,30 @@ async def handle_websocket_commands(
                     account_type = account_result['account_type']
                     account_summary = account_result['account_summary']
 
+                    # ⭐ BUGFIX: Limit Order PnL Sofortberechnung
+                    # Bei Limit Orders: Position wird INNERHALB Kerze getriggert
+                    # → Sofort P&L mit aktuellem Close-Preis berechnen statt auf nächsten Skip zu warten
+                    order_type = trade_data.get('orderType', 'market')
+                    if order_type == 'limit':
+                        # Hole aktuellen Candle Close
+                        current_candle = manager.chart_state.get('data', [])[-1] if manager.chart_state.get('data') else None
+                        if current_candle:
+                            current_price = current_candle['close']
+
+                            # Berechne P&L sofort nach Trade Execution
+                            pnl_update = account_service.update_position_pnl(position_id, current_price, account_type)
+
+                            if pnl_update['success']:
+                                unrealized_pnl = pnl_update['unrealized_pnl']
+                                logger.info(f"[WS] 🎯 Limit Order P&L calculated immediately: {unrealized_pnl:+.2f}€")
+
+                                # Update account_summary UND position_data mit neuen P&L Werten
+                                account_summary = pnl_update['account_summary']
+                                position_data['pnl'] = unrealized_pnl
+                                position_data['unrealized_pnl'] = unrealized_pnl
+                            else:
+                                logger.warning(f"[WS] Could not calculate initial P&L for limit order: {pnl_update.get('error')}")
+
                     logger.info(f"[WS] Preparing broadcasts for trade {position_id}...")
 
                     # Broadcast Trade Execution zu allen Clients

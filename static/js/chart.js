@@ -1705,6 +1705,11 @@
                         window.lastCandleClose = validatedCandle.close;
                         window.lastCandle = validatedCandle;  // ⭐ Store full candle for high/low checks
 
+                        // ⭐ Check limit orders on new candle (Skip Event)
+                        if (typeof checkLimitOrders === 'function') {
+                            checkLimitOrders(validatedCandle);
+                        }
+
                         console.log('🚀 Revolutionary Skip:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('📊 Candle Type:', message.candle_type);
                         console.log('⏰ Debug Time:', message.debug_time);
@@ -1741,6 +1746,11 @@
                         // Store last candle data for market orders and limit order triggers
                         window.lastCandleClose = validatedCandle.close;
                         window.lastCandle = validatedCandle;  // ⭐ Store full candle for high/low checks
+
+                        // ⭐ Check limit orders on new candle (Skip Event)
+                        if (typeof checkLimitOrders === 'function') {
+                            checkLimitOrders(validatedCandle);
+                        }
 
                         console.log('[UNIFIED] Skip Event:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('[UNIFIED] Candle Type:', message.candle_type);
@@ -2082,6 +2092,12 @@
                     console.log('✅ Trade executed:', message.position_id);
                     console.log('📊 Account:', message.account_type);
                     console.log('💰 Position:', message.position);
+                    console.log('🔍 DEBUG P&L Fields:', {
+                        pnl: message.position?.pnl,
+                        unrealized_pnl: message.position?.unrealized_pnl,
+                        entry_price: message.position?.entry_price,
+                        direction: message.position?.direction
+                    });
 
                     // Zeige Position im Chart an
                     if (message.position) {
@@ -2178,8 +2194,15 @@
 
             // Calculate PnL for title
             const currentPrice = position.entry_price; // Will be updated dynamically
-            const unrealizedPnL = position.unrealizedPnL || 0;
+            // ⭐ BUGFIX: Backend sendet unrealized_pnl (snake_case), nicht unrealizedPnL (camelCase)
+            const unrealizedPnL = position.unrealized_pnl || position.pnl || position.unrealizedPnL || 0;
             const pnlText = `${unrealizedPnL >= 0 ? '+' : ''}${unrealizedPnL.toFixed(0)}€`;
+            console.log('🔍 addPositionOverlay P&L:', {
+                unrealized_pnl: position.unrealized_pnl,
+                pnl: position.pnl,
+                unrealizedPnL: position.unrealizedPnL,
+                final: unrealizedPnL
+            });
 
             const entryPriceLine = candlestickSeries.createPriceLine({
                 price: position.entry_price,
@@ -2239,7 +2262,7 @@
                 slPriceLine: slPriceLine,
                 tpPriceLine: tpPriceLine,
                 position: position,
-                unrealizedPnL: 0 // Initial PnL
+                unrealizedPnL: unrealizedPnL // ⭐ BUGFIX: Verwende P&L vom Backend, nicht hardcoded 0
             };
 
             console.log(`✅ Position overlay added: ${positionId} ${position.type}`, window.positionLines[positionId]);
@@ -4805,13 +4828,9 @@
         window.lastCandleClose = null;  // Store last candle close price
         window.lastCandle = null;  // ⭐ Store full candle data (open, high, low, close)
 
-        // Start limit order monitoring interval
-        setInterval(() => {
-            const currentCandle = getCurrentMarketPrice();
-            if (currentCandle && typeof checkLimitOrders === 'function') {
-                checkLimitOrders(currentCandle);  // ⭐ Pass full candle for high/low checks
-            }
-        }, 1000);  // Check every second
+        // ⭐ BUGFIX: 1-Sekunden-Interval entfernt
+        // Limit Orders werden NUR bei Skip Events (neue Kerzen) gecheckt
+        // Verhindert sofortiges Triggern bei Platzierung wenn aktuelle Kerze bereits Entry-Line kreuzt
 
         function getCurrentMarketPrice() {
             // ⭐ Return full candle object for high/low checking in limit orders
@@ -5320,7 +5339,8 @@
                 isShort: currentTradeSetup.direction === 'short',
                 riskEUR: riskEUR,
                 positionSize: positionSize,
-                isRLOnline: isRLOnline
+                isRLOnline: isRLOnline,
+                orderType: 'market'  // Mark as market order execution
             };
 
             console.log('📡 Sending trade to backend:', tradeData);

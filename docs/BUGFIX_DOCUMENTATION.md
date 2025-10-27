@@ -1,5 +1,191 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Limit Order P&L & Timing - 27.10.2025 (Phase 2) 💰
+
+### Problem (2-fach):
+
+**1. Limit Order P&L zeigt 0€ trotz Differenz zwischen Entry und Close**
+
+User-Feedback:
+- "bei limit orders überschreitet die kerze bereits die entryline doch der preis wird noch als 0 € angezeigt"
+- "erst mit der nächsten kerze wird die differenz von kerzenschluss zu entry preis hinzuaddiert"
+
+**Erwartetes Verhalten:**
+```
+Limit Order triggert bei: Entry = 100€ (Low der Kerze)
+Kerze schließt bei: Close = 102€
+→ P&L sollte SOFORT +2€ anzeigen ✅
+```
+
+**Aktuelles Verhalten:**
+```
+Limit Order triggert bei: Entry = 100€
+Kerze schließt bei: Close = 102€
+→ P&L zeigt 0€ ❌
+Nächster Skip: Plötzlich +2€ ✅
+```
+
+**2. Limit Orders triggern sofort bei Platzierung statt bei neuen Kerzen**
+
+User-Feedback:
+- "wenn ich eine limitorder sell setze unter den jetztigen preis z.b 100 ist der jetztige kurs, ich mache eine sell limitorder bei 98, dann wird die limit order nicht getriggert, wenn der aktuelle kurs von 100 auf 98 fällt, sondern direkt bei 100"
+
+**Erwartetes Verhalten:**
+```
+Aktueller Preis: 100€
+SELL LIMIT bei: 98€
+→ Order bleibt pending
+→ Skip zu neuer Kerze mit Low=97€
+→ Order triggert JETZT ✅
+```
+
+**Aktuelles Verhalten:**
+```
+Aktueller Preis: 100€, aktuelle Kerze Low=97€
+SELL LIMIT bei: 98€
+→ Order triggert SOFORT ❌ (weil Low=97 < 98)
+```
+
+---
+
+### Root Cause (2-fach):
+
+#### **Problem 1: Backend berechnet P&L korrekt, aber Frontend ignoriert Wert**
+
+**Backend** (`websocket_handler.py:278-300`):
+```python
+order_type = trade_data.get('orderType', 'market')
+if order_type == 'limit':
+    current_price = current_candle['close']
+    pnl_update = account_service.update_position_pnl(position_id, current_price, account_type)
+
+    # Update position_data
+    position_data['pnl'] = unrealized_pnl           # ✅ Backend sendet korrekt
+    position_data['unrealized_pnl'] = unrealized_pnl
+```
+
+**Frontend** (`chart.js:2197` - ALT):
+```javascript
+const unrealizedPnL = position.unrealizedPnL || 0;  // ❌ Field Name Mismatch!
+// Backend sendet: unrealized_pnl (snake_case)
+// Frontend sucht: unrealizedPnL (camelCase)
+// → Result: undefined → P&L = 0
+```
+
+**Frontend** (`chart.js:2265` - ALT):
+```javascript
+window.positionLines[positionId] = {
+    unrealizedPnL: 0  // ❌ Hardcoded 0, ignoriert Backend-Wert
+};
+```
+
+#### **Problem 2: 1-Sekunden Interval prüft alte Kerzen**
+
+**1-Sekunden Interval** (`chart.js:4809-4814` - ALT):
+```javascript
+setInterval(() => {
+    checkLimitOrders(currentCandle);  // ❌ Prüft AKTUELLE Kerze jede Sekunde
+}, 1000);
+```
+
+**Szenario:**
+```
+Aktuelle Kerze: High=100, Low=97, Close=100
+User platziert SELL LIMIT bei 98
+→ 1-Sekunden Interval feuert
+→ checkLimitOrders(currentCandle)
+→ Check: low <= 98? → 97 <= 98? → TRUE ✅
+→ Order triggert SOFORT ❌
+```
+
+**Sollte sein:** Nur NEUE Kerzen (Skip Events) prüfen, nicht alte/aktuelle!
+
+---
+
+### Fix Locations:
+
+#### **Fix 1a: Backend - Position Data Update**
+`charts/routes/websocket_handler.py:297-298`
+
+```python
+# Update account_summary UND position_data mit neuen P&L Werten
+account_summary = pnl_update['account_summary']
+position_data['pnl'] = unrealized_pnl              # ← NEU
+position_data['unrealized_pnl'] = unrealized_pnl   # ← NEU
+```
+
+#### **Fix 1b: Frontend - Field Name Kompatibilität**
+`static/js/chart.js:2198`
+
+```javascript
+// ⭐ BUGFIX: Backend sendet unrealized_pnl (snake_case), nicht unrealizedPnL (camelCase)
+const unrealizedPnL = position.unrealized_pnl || position.pnl || position.unrealizedPnL || 0;
+```
+
+#### **Fix 1c: Frontend - Position Storage**
+`static/js/chart.js:2265`
+
+```javascript
+unrealizedPnL: unrealizedPnL // ⭐ Verwende P&L vom Backend, nicht hardcoded 0
+```
+
+#### **Fix 2a: Frontend - 1-Sekunden Interval entfernt**
+`static/js/chart.js:4808-4810`
+
+```javascript
+// ⭐ BUGFIX: 1-Sekunden-Interval entfernt
+// Limit Orders werden NUR bei Skip Events (neue Kerzen) gecheckt
+// Verhindert sofortiges Triggern bei Platzierung
+```
+
+#### **Fix 2b: Frontend - checkLimitOrders bei Skip Events**
+`static/js/chart.js:1708-1711, 1750-1753`
+
+```javascript
+// ⭐ Check limit orders on new candle (Skip Event)
+if (typeof checkLimitOrders === 'function') {
+    checkLimitOrders(validatedCandle);
+}
+```
+
+---
+
+### Testing & Verification:
+
+**Test 1 - P&L Sofortanzeige:**
+```
+✅ Limit Order bei 100€ platziert
+✅ Order triggert wenn Kerze Low=100 erreicht
+✅ Kerze schließt bei Close=102€
+✅ P&L zeigt SOFORT +2€ (nicht erst beim nächsten Skip)
+```
+
+**Test 2 - Kein sofortiges Triggern:**
+```
+✅ Preis aktuell: 100€, Kerze Low=97€
+✅ SELL LIMIT bei 98€ platziert
+✅ Order bleibt PENDING (triggert NICHT sofort)
+✅ Skip zu neuer Kerze mit Low=97€
+✅ Order triggert JETZT korrekt
+```
+
+**Console Logs:**
+```javascript
+🔍 DEBUG P&L Fields: {pnl: 18.17, unrealized_pnl: 18.17, ...}
+🔍 addPositionOverlay P&L: {unrealized_pnl: 18.17, final: 18.17}
+✅ Position overlay added: pos_xxx SHORT {unrealizedPnL: 18.17}
+```
+
+---
+
+### Prevention:
+
+1. **Field Naming Convention:** Backend & Frontend konsistent (beide snake_case ODER beide camelCase)
+2. **Skip Events Only:** Limit Orders nur bei neuen Kerzen prüfen, nicht kontinuierlich
+3. **Debug Logs:** P&L-Werte bei Trade Execution loggen für Troubleshooting
+
+---
+
 ## Limit Order Canvas & Wick-Triggering - 27.10.2025 🎯
 
 ### Problem (3-fach):
