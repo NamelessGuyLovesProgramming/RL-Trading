@@ -222,8 +222,6 @@
 
     <!-- Zweite Chart-Toolbar (Timeframes) -->
     <div class="chart-toolbar-2">
-        <button id="clearAll" class="tool-btn">🗑️</button>
-
         <!-- Asset Label -->
         <span class="asset-label">🔍 <span id="assetName">NQ=F</span></span>
 
@@ -247,26 +245,7 @@
     <div class="chart-sidebar-left">
         <button id="positionBoxTool" class="tool-btn" title="Long Position">📈</button>
         <button id="shortPositionTool" class="tool-btn" title="Short Position">📉</button>
-
-        <!-- Debug Controls Sektion -->
-        <div style="width: 100%; border-top: 1px solid #333; margin: 8px 0; padding-top: 8px;">
-            <div style="color: #888; font-size: 10px; text-align: center; margin-bottom: 8px;">DEBUG</div>
-
-            <!-- Debug Timeframe Selector -->
-            <select id="debugTimeframSelector" style="width: 28px; height: 22px; font-size: 10px; background: #333; color: #fff; border: 1px solid #555; margin-bottom: 4px;" title="Debug Timeframe">
-                <option value="1m">1m</option>
-                <option value="5m" selected>5m</option>
-                <option value="15m">15m</option>
-                <option value="30m">30m</option>
-                <option value="1h">1h</option>
-            </select>
-
-            <!-- Skip Button -->
-            <button id="debugSkipBtn" class="tool-btn" onclick="handleDebugSkip()" title="Skip Next Candle" style="background: #2a2a2a;">⏭️</button>
-
-            <!-- Play/Pause Button -->
-            <button id="debugPlayBtn" class="tool-btn" onclick="handleDebugPlayPause()" title="Play/Pause Debug" style="background: #2a2a2a;">▶️</button>
-        </div>
+        <button id="clearAll" class="tool-btn" title="Clear All">🗑️</button>
     </div>
 
     <!-- Bottom Chart-Toolbar (unten) - Split Account Display -->
