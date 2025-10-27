@@ -1,5 +1,442 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Limit Order Canvas & Wick-Triggering - 27.10.2025 🎯
+
+### Problem (3-fach):
+
+**1. Limit Orders triggern nur bei Candle-Close, nicht bei Wick-Berührung**
+
+User-Feedback:
+- "klappt nur, wenn die kerze auch drüber schließt, aber nicht wenn die dochte es berührt"
+- "das sollte aber so sein, denn der preis war kurzzeitig über der limit order"
+
+**Erwartetes Verhalten:**
+- Limit Order soll triggern wenn Preis **berührt** wird (auch Docht/Wick)
+- Nicht erst wenn Kerze auf dem Preis **schließt**
+
+**Aktuelles Verhalten:**
+```
+Entry Price: 20.950
+Kerze: Open=21.000, High=21.020, Low=20.945, Close=21.010
+       👆 Low berührt 20.950, aber Order triggert NICHT ❌
+```
+
+**2. Chart Panning/Dragging blockiert nach Limit Order**
+
+User-Feedback:
+- "ich kann nicht den chart dragen, nach erstellen einer limit order"
+
+**Symptom:**
+- Chart ist "eingefroren"
+- Maus-Drag funktioniert nicht
+- Zoom/Pan komplett blockiert
+
+**3. Keine neue Position Box nach Limit Order erstellbar**
+
+User-Feedback:
+- "ich konnte keine weitere positionbox erzuegen, nach schließen der position"
+
+**Symptom:**
+- Position Tool lässt sich nicht mehr nutzen
+- Neue Boxes können nicht gezogen werden
+- Chart-Interaktionen blockiert
+
+---
+
+### Root Cause (2-fach):
+
+#### **Problem 1: checkLimitOrders() prüft nur Close-Preis**
+
+```javascript
+// static/js/chart.js:4938 (ALT)
+function checkLimitOrders(currentPrice) {  // ❌ Nur Close!
+    window.activeLimitOrders.forEach((order) => {
+        if (order.isShort) {
+            triggered = currentPrice >= order.entryPrice;  // ❌ Ignoriert High/Low
+        }
+    });
+}
+```
+
+**Was fehlte:**
+- System hatte nur Zugriff auf `window.lastCandleClose` (nur Close-Preis)
+- `getCurrentMarketPrice()` gab nur Close zurück
+- High/Low Werte wurden nicht gespeichert
+- Docht-Berührung wurde nie geprüft
+
+**Warum problematisch:**
+```
+Beispiel: BUY LIMIT bei 20.950
+Kerze 1: Low=20.945 (berührt!), Close=21.010
+         → triggered = 21.010 >= 20.950? NEIN ❌
+
+Kerze 2: Low=21.000, Close=20.950
+         → triggered = 20.950 >= 20.950? JA ✅
+
+❌ Order wird erst 1 Kerze SPÄTER ausgeführt!
+```
+
+---
+
+#### **Problem 2: Limit Canvas blockiert alle Interaktionen**
+
+```javascript
+// static/js/chart.js:5119 (ALT)
+if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 11;';
+    //                                                              ^^^^^^^^^^^^^ ❌ BLOCKIERT ALLES!
+}
+
+// Zeile 5147-5150 (ALT)
+if (canvas) {
+    canvas.style.pointerEvents = 'auto';  // ❌ Bei aktiven Orders
+}
+```
+
+**Was passierte:**
+1. Canvas liegt über gesamtem Chart (position: absolute, top: 0, left: 0)
+2. `pointer-events: auto` → Canvas fängt ALLE Mouse-Events ab
+3. Chart darunter erhält keine Events mehr
+4. Chart wird "eingefroren"
+
+**Zusätzliches Problem:**
+```javascript
+// Zeile 5123-5151 (ALT) - 39 Zeilen Canvas-Click-Handler
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Komplizierte Koordinaten-Mathematik für X-Button Detection
+    if (clickX >= btn.x && clickX <= btn.x + btn.width && ...) {
+        window.cancelLimitOrder(btn.orderId);
+    }
+});
+```
+
+**Problem:**
+- Canvas muss `pointer-events: auto` haben für X-Button-Clicks
+- Aber dann blockiert Canvas den ganzen Chart
+- Catch-22 Situation: Entweder X-Buttons funktionieren ODER Chart-Pan
+
+---
+
+### Fixes:
+
+#### **Fix 1: Vollständige Kerzen-Daten speichern (Zeile 1706, 1742, 4806)**
+
+```javascript
+// NEU: Speichere komplette Kerze
+window.lastCandle = validatedCandle;  // {time, open, high, low, close}
+```
+
+**Warum wichtig:**
+- Ermöglicht Zugriff auf High/Low für Docht-Prüfung
+- Keine Änderung der Datenstruktur, nur zusätzliche Referenz
+
+**Code-Locations:**
+```javascript
+// Zeile 1706 - Revolutionary Skip Event
+window.lastCandleClose = validatedCandle.close;
+window.lastCandle = validatedCandle;  // ⭐ NEU
+
+// Zeile 1742 - Unified Skip Event
+window.lastCandleClose = validatedCandle.close;
+window.lastCandle = validatedCandle;  // ⭐ NEU
+
+// Zeile 4806 - Initialisierung
+window.lastCandleClose = null;
+window.lastCandle = null;  // ⭐ NEU
+```
+
+---
+
+#### **Fix 2: getCurrentMarketPrice() gibt Kerzen-Objekt zurück (Zeile 4816-4826)**
+
+```javascript
+// VORHER (ALT):
+function getCurrentMarketPrice() {
+    return window.lastCandleClose;  // ❌ Nur Number (Close)
+}
+
+// NACHHER (NEU):
+function getCurrentMarketPrice() {
+    // ⭐ Return full candle object
+    if (window.lastCandle !== null) {
+        return window.lastCandle;  // ✅ {time, open, high, low, close}
+    }
+    // Fallback: Simuliere Kerze wenn nur Close verfügbar
+    if (window.lastCandleClose !== null) {
+        return {
+            close: window.lastCandleClose,
+            high: window.lastCandleClose,
+            low: window.lastCandleClose
+        };
+    }
+    return null;
+}
+```
+
+**Warum Fallback wichtig:**
+- Backwards-kompatibel falls nur `lastCandleClose` gesetzt ist
+- Vermeidet Crashes in Edge-Cases
+
+---
+
+#### **Fix 3: checkLimitOrders() prüft High/Low (Zeile 4945-5003)**
+
+```javascript
+// VORHER (ALT):
+function checkLimitOrders(currentPrice) {  // ❌ Nur Close
+    if (order.isShort) {
+        if (entryAbovePlacement) {
+            triggered = currentPrice >= order.entryPrice;  // ❌ Close-Check
+        }
+    }
+}
+
+// NACHHER (NEU):
+function checkLimitOrders(candle) {  // ✅ Ganzes Kerzen-Objekt
+    // Extrahiere High/Low
+    const currentPrice = candle.close || candle;
+    const high = candle.high || currentPrice;
+    const low = candle.low || currentPrice;
+
+    window.activeLimitOrders.forEach((order) => {
+        if (order.isShort) {
+            // SELL Orders
+            if (entryAbovePlacement) {
+                // SELL LIMIT: Warte bis Preis STEIGT
+                triggered = high >= order.entryPrice;  // ✅ HIGH-Check (oberer Docht)
+            } else {
+                // SELL STOP: Warte bis Preis FÄLLT
+                triggered = low <= order.entryPrice;   // ✅ LOW-Check (unterer Docht)
+            }
+        } else {
+            // BUY Orders
+            if (entryAbovePlacement) {
+                // BUY STOP: Warte bis Preis STEIGT
+                triggered = high >= order.entryPrice;  // ✅ HIGH-Check
+            } else {
+                // BUY LIMIT: Warte bis Preis FÄLLT
+                triggered = low <= order.entryPrice;   // ✅ LOW-Check
+            }
+        }
+    });
+}
+```
+
+**Logik:**
+- **BUY Orders**: Check `low` (Preis fällt von oben durch Entry)
+- **SELL Orders**: Check `high` (Preis steigt von unten durch Entry)
+- **Automatische Order-Type Erkennung** bleibt unverändert (Limit vs Stop)
+
+**Jetzt funktioniert:**
+```
+BUY LIMIT bei 20.950
+Kerze: Low=20.945, Close=21.010
+       → triggered = 20.945 <= 20.950? JA ✅
+       → Order triggert sofort bei Docht-Berührung!
+```
+
+---
+
+#### **Fix 4: Canvas transparent - nur X-Button-Elemente klickbar (Zeile 5120, 5195-5228)**
+
+**Strategie:**
+1. Canvas permanent transparent (`pointer-events: none`)
+2. Echte DOM-`<button>`-Elemente über Canvas positionieren
+3. Buttons haben `pointer-events: auto` (klickbar)
+4. Chart-Events gehen durch Canvas hindurch
+
+```javascript
+// VORHER (ALT) - Zeile 5119:
+canvas.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 11;';
+//                                                              ^^^^^^^^^^^^^ ❌
+
+// NACHHER (NEU) - Zeile 5120:
+canvas.style.cssText = 'position: absolute; top: 0; left: 0; pointer-events: none; z-index: 11;';
+//                                                              ^^^^^^^^^^^^^ ✅ IMMER transparent
+```
+
+**Canvas-Click-Handler entfernt (39 Zeilen gelöscht):**
+```javascript
+// VORHER (ALT) - Zeile 5123-5151 (GELÖSCHT):
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // 39 Zeilen Koordinaten-Mathematik
+    if (window.limitOrderCloseButtons) {
+        for (const limitId in window.limitOrderCloseButtons) {
+            const btn = window.limitOrderCloseButtons[limitId];
+            if (clickX >= btn.x && clickX <= btn.x + btn.width && ...) {
+                window.cancelLimitOrder(btn.orderId);
+            }
+        }
+    }
+});
+
+// NACHHER (NEU): KEIN Canvas-Click-Handler mehr nötig!
+```
+
+**Alte Pointer-Events-Toggle-Logik entfernt (8 Zeilen gelöscht):**
+```javascript
+// VORHER (ALT) - Zeile 5141-5150 (GELÖSCHT):
+if (!window.activeLimitOrders || window.activeLimitOrders.length === 0) {
+    canvas.style.pointerEvents = 'none';   // ❌ Kompliziert
+} else {
+    canvas.style.pointerEvents = 'auto';   // ❌ Blockiert Chart
+}
+
+// NACHHER (NEU): Canvas IMMER transparent, keine Toggle-Logik!
+```
+
+**Alte Buttons aufräumen (Zeile 5132-5133):**
+```javascript
+// NEU: Cleanup vor Redraw
+const oldButtons = document.querySelectorAll('.limit-order-close-btn');
+oldButtons.forEach(btn => btn.remove());
+```
+
+**DOM-Button-Elemente erstellen (Zeile 5195-5228):**
+```javascript
+// NEU: Echte <button> Elemente
+window.activeLimitOrders.forEach((order) => {
+    const y = candlestickSeries.priceToCoordinate(order.entryPrice);
+
+    // ... Canvas-Grafik zeichnen (wie vorher) ...
+
+    // ⭐ Erstelle echtes DOM-Button-Element
+    const closeButton = document.createElement('button');
+    closeButton.className = 'limit-order-close-btn';
+    closeButton.style.cssText = `
+        position: absolute;
+        left: ${btnX}px;           // Exakt über Canvas-X positioniert
+        top: ${btnY}px;
+        width: ${btnSize}px;       // 16x16 Pixel
+        height: ${btnSize}px;
+        background: transparent;    // Unsichtbar (Canvas-Grafik bleibt sichtbar)
+        border: none;
+        cursor: pointer;           // ⭐ Hand-Cursor
+        z-index: 12;              // ⭐ Über Canvas (z-index: 11)
+        padding: 0;
+    `;
+    closeButton.onclick = (e) => {
+        e.stopPropagation();       // Verhindert Bubbling
+        console.log(`[DOM Button] ✅ Close button clicked for order ${order.id}`);
+        window.cancelLimitOrder(order.id);
+    };
+    container.appendChild(closeButton);  // Füge zum DOM hinzu
+
+    // Store reference (optional)
+    window.limitOrderCloseButtons[`limit_${order.id}`] = {
+        x: btnX,
+        y: btnY,
+        width: btnSize,
+        height: btnSize,
+        orderId: order.id,
+        element: closeButton  // ⭐ DOM-Referenz
+    };
+});
+```
+
+**Warum das funktioniert:**
+```
+Layer-Struktur (von oben nach unten):
+z-index: 12 → <button> Elemente (transparent, klickbar)
+z-index: 11 → Canvas (Grafik sichtbar, pointer-events: none)
+z-index: 5  → Chart (interaktiv, empfängt Events durch Canvas)
+```
+
+**Vorteile:**
+- ✅ Canvas ist transparent → Chart bleibt interaktiv
+- ✅ Buttons liegen über Canvas → X-Clicks funktionieren
+- ✅ Browser native Click-Handling → Kein Koordinaten-Math nötig
+- ✅ Cursor-Handling automatisch (`cursor: pointer`)
+
+---
+
+### Testing:
+
+**Test 1: Wick-Triggering**
+```
+1. Entry setzen: 20.950
+2. Next bis Kerze mit Low=20.945, Close=21.010
+3. ✅ Order triggert sofort (nicht erst bei Close)
+Console: "🎯 BUY LIMIT TRIGGERED at High=..., Low=20.945"
+```
+
+**Test 2: Chart Panning**
+```
+1. Limit Order platzieren
+2. Chart mit Maus draggen
+3. ✅ Chart lässt sich normal bewegen
+4. ✅ Limit Order Label bleibt sichtbar
+```
+
+**Test 3: Position Box Creation**
+```
+1. Limit Order platzieren
+2. Position Tool aktivieren (P)
+3. Neue Box ziehen
+4. ✅ Neue Box lässt sich erstellen
+5. ✅ Beide Boxes gleichzeitig sichtbar
+```
+
+**Test 4: X-Button Klickbarkeit**
+```
+1. 2-3 Limit Orders platzieren
+2. X-Button klicken
+3. ✅ Order wird gelöscht
+4. NEBEN X klicken (auf Label)
+5. ✅ Nichts passiert (Chart bleibt interaktiv)
+6. ✅ Hand-Cursor nur über X
+```
+
+---
+
+### Commit:
+
+**Commit Hash:** `601af7a`
+**Branch:** `refactor/modular-architecture`
+**Commit Message:**
+```
+fix: Limit Order Wick-Triggering + Canvas Transparency
+
+Änderungen:
+1. Limit Orders triggern jetzt bei Docht-Berührung (High/Low)
+   - window.lastCandle speichert vollständige OHLC-Daten
+   - checkLimitOrders() prüft candle.high/low statt nur close
+   - BUY: Trigger bei low <= entryPrice
+   - SELL: Trigger bei high >= entryPrice
+
+2. Limit Canvas transparent - nur X-Buttons klickbar
+   - Canvas: pointer-events: none (immer)
+   - DOM-Button-Elemente über Canvas positioniert
+   - Buttons: pointer-events: auto, z-index: 12
+   - Chart Pan + Position Box Creation wieder möglich
+
+Fixes:
+- Limit Orders nur bei Candle-Close statt Wick
+- Canvas blockierte Chart-Interaktionen
+- Keine neue Position Box nach Limit Order
+```
+
+**Dateien geändert:**
+- `static/js/chart.js` (+65, -61)
+
+**Code-Locations:**
+- Candle storage: 1706, 1742, 4806
+- Price retrieval: 4816-4826
+- Limit checking: 4945-5003
+- Canvas management: 5120, 5132-5145
+- DOM buttons: 5195-5228
+
+---
+
 ## Phantom-Kerzen nach Go To Date + Next - 21.10.2025 🔮
 
 ### Problem:

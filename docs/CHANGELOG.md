@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.1] - 2025-10-27
+
+### 🎯 FEATURE - Limit Order Wick-Triggering & Canvas Transparency
+
+Advanced limit order triggering system with candle wick detection and improved chart interactivity.
+
+#### Fixed
+
+**Critical Bugs**:
+- ✅ Limit orders now trigger on candle **wicks** (high/low), not just close price
+  - Root cause: `checkLimitOrders()` only checked `currentPrice` (close)
+  - Fix: Store full candle data (OHLC) in `window.lastCandle`, check `candle.high/low`
+  - BUY orders: Trigger when `low <= entryPrice` (price touched from above)
+  - SELL orders: Trigger when `high >= entryPrice` (price touched from below)
+
+- ✅ Chart panning/dragging blocked after placing limit order
+  - Root cause: Limit canvas had `pointer-events: auto`, blocking all interactions
+  - Fix: Canvas set to `pointer-events: none` (always transparent)
+
+- ✅ Cannot create new position box after limit order placed
+  - Root cause: Canvas overlay captured all click events
+  - Fix: Real DOM button elements positioned over canvas (z-index: 12)
+
+- ✅ X-button click detection improved
+  - Old: Complex canvas coordinate calculation with click handler
+  - New: Transparent `<button>` elements over canvas-drawn X graphics
+
+#### Changed
+
+**Limit Order Triggering Logic** (`static/js/chart.js:4945-5003`):
+```javascript
+// Before: Only checked close price
+triggered = currentPrice >= order.entryPrice;  // ❌ Ignores wicks
+
+// After: Checks high/low for wick detection
+const high = candle.high || currentPrice;
+const low = candle.low || currentPrice;
+
+// BUY LIMIT: Wait for price to FALL
+triggered = low <= order.entryPrice;  // ✅ Triggers on lower wick
+
+// SELL LIMIT: Wait for price to RISE
+triggered = high >= order.entryPrice;  // ✅ Triggers on upper wick
+```
+
+**Canvas Pointer Events** (`static/js/chart.js:5120, 5195-5228`):
+```javascript
+// Before: Canvas blocked interactions
+canvas.style.pointerEvents = 'auto';  // ❌ Blocks chart pan
+
+// After: Canvas always transparent
+canvas.style.pointerEvents = 'none';  // ✅ Chart pan works
+
+// Before: Canvas click handler (39 lines of coordinate math)
+canvas.addEventListener('click', (e) => { /* complex detection */ });
+
+// After: Real DOM buttons (transparent, positioned exactly)
+const closeButton = document.createElement('button');
+closeButton.style.cssText = `
+    position: absolute;
+    left: ${btnX}px;
+    top: ${btnY}px;
+    background: transparent;
+    cursor: pointer;
+    z-index: 12;
+`;
+```
+
+**Data Storage** (`static/js/chart.js:1706, 1742, 4806, 4816-4826`):
+- Store full candle: `window.lastCandle = validatedCandle` (time, open, high, low, close)
+- `getCurrentMarketPrice()` returns full candle object instead of just close price
+- Fallback support if only close price available
+
+#### Technical Details
+
+**Files Modified**:
+- `static/js/chart.js` (+65 lines, -61 lines)
+
+**Code Locations**:
+- Candle storage: Lines 1706, 1742, 4806
+- Price retrieval: Lines 4816-4826
+- Limit order checking: Lines 4945-5003 (refactored)
+- Canvas management: Lines 5120, 5132-5145 (simplified)
+- DOM button creation: Lines 5195-5228 (new approach)
+
+**Performance**:
+- ⚡ Removed 39 lines of canvas click detection logic
+- ⚡ DOM buttons provide native browser click handling
+- ⚡ No performance impact on chart rendering
+
+**User Experience**:
+- ✅ Orders trigger at realistic market prices (including wicks)
+- ✅ Chart remains fully interactive with limit orders active
+- ✅ Can create multiple position boxes simultaneously
+- ✅ Hand cursor (👆) only shows over X-buttons
+
+---
+
 ## [2.1.0] - 2025-10-19
 
 ### 🎯 FEATURE - Trade Execution & Live Position Visualization
