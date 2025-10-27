@@ -4945,19 +4945,43 @@
             window.activeLimitOrders.forEach((order, index) => {
                 let triggered = false;
 
-                // ⭐ FIX: Korrekte Limit Order Logik
-                // Buy Limit: Kaufe wenn Preis FÄLLT auf oder unter Limit (kaufe billig)
-                // Sell Limit: Verkaufe wenn Preis STEIGT auf oder über Limit (verkaufe teuer)
+                // ⭐⭐⭐ AUTOMATISCHE ORDER-TYPE ERKENNUNG ⭐⭐⭐
+                // System erkennt automatisch ob Limit oder Stop gemeint ist
+                // basierend auf Entry Price vs. Order Placement Price
+
+                // Bestimme ob Order ÜBER oder UNTER dem Platzierungs-Preis liegt
+                const currentPriceAtPlacement = order.currentPriceAtPlacement || currentPrice;
+                const entryAbovePlacement = order.entryPrice > currentPriceAtPlacement;
+
                 if (order.isShort) {
-                    // Sell Limit (Short): trigger when price RISES to or above entry
-                    triggered = currentPrice >= order.entryPrice;
+                    // SELL Orders (Short)
+                    if (entryAbovePlacement) {
+                        // Entry > Placement → SELL LIMIT (warte bis Preis STEIGT)
+                        triggered = currentPrice >= order.entryPrice;
+                        // console.log('[SELL LIMIT] Wait for price to RISE to', order.entryPrice);
+                    } else {
+                        // Entry <= Placement → SELL STOP (warte bis Preis FÄLLT)
+                        triggered = currentPrice <= order.entryPrice;
+                        // console.log('[SELL STOP] Wait for price to FALL to', order.entryPrice);
+                    }
                 } else {
-                    // Buy Limit (Long): trigger when price FALLS to or below entry
-                    triggered = currentPrice <= order.entryPrice;
+                    // BUY Orders (Long)
+                    if (entryAbovePlacement) {
+                        // Entry > Placement → BUY STOP (warte bis Preis STEIGT)
+                        triggered = currentPrice >= order.entryPrice;
+                        // console.log('[BUY STOP] Wait for price to RISE to', order.entryPrice);
+                    } else {
+                        // Entry <= Placement → BUY LIMIT (warte bis Preis FÄLLT)
+                        triggered = currentPrice <= order.entryPrice;
+                        // console.log('[BUY LIMIT] Wait for price to FALL to', order.entryPrice);
+                    }
                 }
 
                 if (triggered) {
-                    console.log('🎯 Limit Order TRIGGERED:', order);
+                    const orderType = order.isShort
+                        ? (entryAbovePlacement ? 'SELL LIMIT' : 'SELL STOP')
+                        : (entryAbovePlacement ? 'BUY STOP' : 'BUY LIMIT');
+                    console.log(`🎯 ${orderType} TRIGGERED:`, order);
                     triggeredOrders.push({order, index});
                 }
             });
@@ -5020,6 +5044,9 @@
             const positionSizeText = document.getElementById('positionSize').textContent;
             const positionSize = parseFloat(positionSizeText.replace(' NQ', ''));
 
+            // Get current market price for order type detection
+            const currentMarketPrice = candlestickSeries.data().slice(-1)[0]?.close || currentTradeSetup.entryPrice;
+
             // Create limit order object
             const limitOrder = {
                 id: Date.now(),
@@ -5031,6 +5058,7 @@
                 riskEUR: riskEUR,
                 positionSize: positionSize,
                 isRLOnline: window.RLSystem && window.RLSystem.mode === 'demo',
+                currentPriceAtPlacement: currentMarketPrice,  // ⭐ Für automatische Order-Type Erkennung
                 priceLine: null  // Will be created below
             };
 
@@ -5046,10 +5074,17 @@
 
             limitOrder.priceLine = priceLine;
 
+            // Determine order type for logging
+            const entryAboveCurrent = limitOrder.entryPrice > currentMarketPrice;
+            const autoOrderType = limitOrder.isShort
+                ? (entryAboveCurrent ? 'SELL LIMIT' : 'SELL STOP')
+                : (entryAboveCurrent ? 'BUY STOP' : 'BUY LIMIT');
+
             // Add to active limit orders
             window.activeLimitOrders.push(limitOrder);
-            console.log('✅ Limit Order placed:', limitOrder);
-            console.log('📊 Active Limit Orders:', window.activeLimitOrders.length);
+            console.log(`✅ ${autoOrderType} placed:`, limitOrder);
+            console.log(`   Entry: ${limitOrder.entryPrice}, Current: ${currentMarketPrice}`);
+            console.log('📊 Active Orders:', window.activeLimitOrders.length);
 
             // Draw limit order labels on canvas
             drawLimitOrders();
