@@ -67,6 +67,7 @@
             console.log('MARGIN: Chart von', firstTime, 'bis', lastTime + marginTime);
 
             // Setze sichtbaren Bereich
+            window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Chart Init)
             chart.timeScale().setVisibleRange({
                 from: firstTime,
                 to: lastTime + marginTime
@@ -132,6 +133,7 @@
                 console.log(`📍 Chart-Bereich: ${chartStartTime} bis ${chartEndTime} (20% Freiraum: ${rightMarginTime})`);
 
                 // Setze sichtbaren Bereich: Daten links 80%, Freiraum rechts 20%
+                window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Chart Init)
                 this.chart.timeScale().setVisibleRange({
                     from: chartStartTime,
                     to: chartEndTime
@@ -592,6 +594,22 @@
 
             // X-Achse Observer (Zeit/Zoom/Pan)
             chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+                // 🎯 USER-DRAG DETECTION: Deaktiviere Autoscale bei manuellem Zoom/Pan
+                if (!window.isProgrammaticRangeChange && window.autoscaleEnabled) {
+                    // User hat manuell gezoomt/gepannt → Autoscale OFF
+                    window.autoscaleEnabled = false;
+
+                    const autoscaleBtn = document.getElementById('autoscaleBtn');
+                    if (autoscaleBtn) {
+                        autoscaleBtn.classList.remove('active');
+                        autoscaleBtn.title = 'Autoscale: OFF';
+                        console.log('⚖️ Autoscale deaktiviert (User-Drag erkannt)');
+                    }
+                } else if (window.isProgrammaticRangeChange) {
+                    // Programmatische Änderung (Go To Date, Init) → Flag zurücksetzen
+                    window.isProgrammaticRangeChange = false;
+                }
+
                 // ⭐ MULTI-BOX: Prüfe Manager statt Singleton
                 if (window.positionBoxManager && window.positionBoxManager.count() > 0 && !redrawScheduled) {
                     redrawScheduled = true;
@@ -721,6 +739,7 @@
 
             // ⚖️ Autoscale Toggle Button
             window.autoscaleEnabled = true;  // Standard: aktiviert (global für Go To Date Persistenz)
+            window.isProgrammaticRangeChange = false;  // Flag: Unterscheidet User-Drag vs. System-Navigation
             const autoscaleBtn = document.getElementById('autoscaleBtn');
 
             if (autoscaleBtn) {
@@ -924,6 +943,7 @@
                         const span = maxTime - minTime;
                         const margin = span * 0.25;
 
+                        window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Initial Load)
                         chart.timeScale().setVisibleRange({
                             from: minTime,
                             to: maxTime + margin
@@ -947,6 +967,7 @@
                             // console.log('FINAL: Von', minTime, 'bis', maxTime + margin);
 
                             // Stelle sicher, dass from < to ist
+                            window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Initial Load)
                             chart.timeScale().setVisibleRange({
                                 from: minTime,
                                 to: maxTime + margin
@@ -970,6 +991,7 @@
                                 const dataSpan = maxTime - minTime;
                                 const margin = dataSpan * 0.25;
 
+                                window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Initial Load Delayed)
                                 chart.timeScale().setVisibleRange({
                                     from: minTime,
                                     to: maxTime + margin
@@ -1371,6 +1393,7 @@
                         // 20% Freiraum rechts hinzufügen: 50 Kerzen sind 80%, also 20% zusätzlich
                         const margin = visibleSpan / 4; // visibleSpan / 4 = 20% von den 80%
 
+                        window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Initial Data)
                         chart.timeScale().setVisibleRange({
                             from: firstVisibleTime,
                             to: lastVisibleTime + margin
@@ -1525,6 +1548,7 @@
                             const margin = timeSpan * 0.25; // 20% Freiraum rechts
 
                             // 🔮 setVisibleRange() schränkt Panning NICHT ein - Phantom-Kerzen erlauben weiteres Panning
+                            window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Go To Date)
                             chart.timeScale().setVisibleRange({
                                 from: firstTime,
                                 to: visibleEndTime + margin
@@ -1610,6 +1634,7 @@
                             const timeSpan = endTime - startTime;
                             const margin = timeSpan * 0.05; // 5% Margin für gefüllten Chart
 
+                            window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Go To Date)
                             chart.timeScale().setVisibleRange({
                                 from: startTime - margin,
                                 to: endTime + margin
@@ -1673,6 +1698,7 @@
                         // 20% Freiraum rechts hinzufügen: 50 Kerzen sind 80%, also 20% zusätzlich
                         const margin = visibleSpan / 4; // visibleSpan / 4 = 20% von den 80%
 
+                        window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Timeframe Change)
                         chart.timeScale().setVisibleRange({
                             from: firstVisibleTime,
                             to: lastVisibleTime + margin
