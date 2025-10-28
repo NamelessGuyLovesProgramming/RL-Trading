@@ -165,7 +165,7 @@
             </div>
             <div class="indicators-content">
                 <div class="indicators-list">
-                    <!-- Placeholder für zukünftige Indicators -->
+                    <div class="indicator-item clickable" onclick="openAddEMADialog()">📈 EMA (Exponential Moving Average)</div>
                     <div class="indicator-item">RSI (Coming Soon)</div>
                     <div class="indicator-item">MACD (Coming Soon)</div>
                     <div class="indicator-item">Session Indicator (Coming Soon)</div>
@@ -173,6 +173,59 @@
             </div>
         </div>
     </div>
+
+    <!-- Add EMA Dialog Modal -->
+    <div id="addEMAModal" class="date-modal" style="display: none;">
+        <div class="date-modal-content" style="max-width: 400px;">
+            <div class="date-modal-header">
+                <span class="date-modal-title">📈 EMA hinzufügen</span>
+                <button class="close-modal" onclick="closeAddEMADialog()">&times;</button>
+            </div>
+            <div class="settings-content">
+                <div class="balance-section">
+                    <label class="balance-label">Period (Anzahl Kerzen):</label>
+                    <input type="number" id="emaPeriodInput" class="balance-input" value="9" min="2" max="200" step="1">
+                    <div class="balance-presets">
+                        <button class="balance-preset-btn" onclick="setEMAPeriod(9)">9</button>
+                        <button class="balance-preset-btn" onclick="setEMAPeriod(21)">21</button>
+                        <button class="balance-preset-btn" onclick="setEMAPeriod(50)">50</button>
+                        <button class="balance-preset-btn" onclick="setEMAPeriod(200)">200</button>
+                    </div>
+                </div>
+            </div>
+            <div class="date-modal-buttons">
+                <button class="modal-btn" onclick="closeAddEMADialog()">Abbrechen</button>
+                <button class="modal-btn primary" onclick="addEMAIndicator()">➕ Hinzufügen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Indicator Settings Modal -->
+    <div id="indicatorSettingsModal" class="date-modal" style="display: none;">
+        <div class="date-modal-content" style="max-width: 450px;">
+            <div class="date-modal-header">
+                <span class="date-modal-title">⚙️ Indikator Einstellungen</span>
+                <button class="close-modal" onclick="window.IndicatorManager.closeSettingsModal()">&times;</button>
+            </div>
+            <div class="settings-content">
+                <div class="balance-section">
+                    <label class="balance-label">Period (Anzahl Kerzen):</label>
+                    <input type="number" id="indicatorPeriodInput" class="balance-input" value="9" min="2" max="200" step="1">
+                </div>
+                <div class="balance-section" style="margin-top: 15px;">
+                    <label class="balance-label">Farbe:</label>
+                    <input type="color" id="indicatorColorInput" class="color-input" value="#000000">
+                </div>
+            </div>
+            <div class="date-modal-buttons">
+                <button class="modal-btn" onclick="window.IndicatorManager.closeSettingsModal()">Abbrechen</button>
+                <button class="modal-btn primary" onclick="window.IndicatorManager.applySettings()">💾 Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Indicator Labels Container -->
+    <div id="indicatorLabels" class="indicator-labels-container"></div>
 
     <!-- Erste Chart-Toolbar (Debug-Controls) -->
     <div class="chart-toolbar-1">
@@ -297,6 +350,7 @@
     <!-- Autoscale Toggle Button -->
     <button id="autoscaleBtn" class="active" title="Autoscale: ON">⚖️</button>
 
+    <script src="/static/js/indicators.js"></script>
     <script src="/static/js/chart.js"></script>
 </body>
 </html>

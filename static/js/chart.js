@@ -365,6 +365,11 @@
 
             console.log('🔮 updateCandleWithPhantoms:', realData.length, 'real +', 100, 'phantom =', extendedData.length, 'total');
 
+            // 📊 INDICATOR SYSTEM: Update all indicators with new candle
+            if (window.IndicatorManager) {
+                window.IndicatorManager.updateAllIndicators(candle);
+            }
+
             return realData.length; // Return number of real candles
         }
 
@@ -767,10 +772,11 @@
             // LADE ECHTE NQ-DATEN über WebSocket
             console.log('🔄 Lade echte NQ-Daten...');
 
-            // Initialer Request für Chart-Daten
-            setTimeout(() => {
-                loadInitialData();
-            }, 1000);
+            // REMOVED: Redundanter setTimeout-Call (loadInitialData wird bereits bei Zeile 498 sofort aufgerufen)
+            // Dieser doppelte Call verursachte den "Value is null" Crash
+            // setTimeout(() => {
+            //     loadInitialData();
+            // }, 1000);
 
             // Chart Click Handler für Position Box Tool
             chart.subscribeClick((param) => {
@@ -892,7 +898,15 @@
         }
 
         // Lade initiale Chart-Daten vom Server
+        let initialDataLoaded = false; // CRITICAL: Prevent double-loading
         function loadInitialData() {
+            // CRITICAL: Prevent double-loading which causes "Value is null" crash
+            if (initialDataLoaded) {
+                console.warn('⚠️ loadInitialData() bereits ausgeführt - Skip Duplikat-Call');
+                return;
+            }
+            initialDataLoaded = true;
+
             // console.log('📊 Lade initiale NQ-Daten...');
 
             // Prüfe ob Chart und Series verfügbar sind
@@ -900,6 +914,7 @@
                 console.error('❌ Chart oder CandlestickSeries nicht initialisiert!');
                 console.log('Chart:', chart);
                 console.log('CandlestickSeries:', candlestickSeries);
+                initialDataLoaded = false; // Reset bei Fehler
                 return;
             }
 
@@ -933,9 +948,27 @@
                         candlestickSeries.setData(extendedData);
 
                         // DRASTISCHE SOFORT-LÖSUNG: 20% Freiraum GARANTIERT
-                        // console.log('DRASTIC-EXEC: Setze 20% Freiraum SOFORT nach setData()');
-                        const firstTime = formattedData[0].time;
-                        const lastTime = formattedData[formattedData.length - 1].time;
+                        // CRITICAL FIX: Validiere Daten BEVOR setVisibleRange
+                        if (!formattedData || formattedData.length < 2) {
+                            console.error('❌ Nicht genug Daten für setVisibleRange:', formattedData?.length || 0);
+                            return;
+                        }
+
+                        const firstTime = formattedData[0]?.time;
+                        const lastTime = formattedData[formattedData.length - 1]?.time;
+
+                        console.log('🔍 DEBUG setVisibleRange:', {
+                            firstTime,
+                            lastTime,
+                            firstTimeType: typeof firstTime,
+                            lastTimeType: typeof lastTime,
+                            dataLength: formattedData.length
+                        });
+
+                        if (!firstTime || !lastTime || isNaN(firstTime) || isNaN(lastTime)) {
+                            console.error('❌ Ungültige Zeit-Werte:', { firstTime, lastTime });
+                            return;
+                        }
 
                         // Fix: Stelle sicher, dass wir Min/Max korrekt ermitteln
                         const minTime = Math.min(firstTime, lastTime);
@@ -950,56 +983,12 @@
                         });
                         // console.log('DRASTIC-EXEC: Freiraum gesetzt von', minTime, 'bis', maxTime + margin);
 
-                        // FINALE DIREKTE LÖSUNG: 20% Freiraum OHNE Bedingungen
-                        // console.log('FINAL: Setze GARANTIERT 20% Freiraum für', formattedData.length, 'Kerzen');
+                        // FINALE DIREKTE LÖSUNG: 20% Freiraum OHNE Bedingungen (DEAKTIVIERT wegen Redundanz)
+                        // Dieser Block wurde entfernt da bereits oben setVisibleRange aufgerufen wird
+                        // console.log('✅ setVisibleRange bereits ausgeführt - Skip redundanter zweiter Call');
 
-                        if (formattedData.length >= 2) {
-                            const firstTime = formattedData[0].time;
-                            const lastTime = formattedData[formattedData.length - 1].time;
-
-                            // Fix: Stelle sicher, dass wir Min/Max korrekt ermitteln (Daten können in beliebiger Reihenfolge sein)
-                            const minTime = Math.min(firstTime, lastTime);
-                            const maxTime = Math.max(firstTime, lastTime);
-                            const dataSpan = maxTime - minTime;
-                            const margin = dataSpan * 0.25; // 25% = 20% der Gesamt-Chart
-
-                            // console.log('FINAL: Zeitspanne:', dataSpan, 'Margin:', margin);
-                            // console.log('FINAL: Von', minTime, 'bis', maxTime + margin);
-
-                            // Stelle sicher, dass from < to ist
-                            window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Initial Load)
-                            chart.timeScale().setVisibleRange({
-                                from: minTime,
-                                to: maxTime + margin
-                            });
-
-                            // console.log('FINAL: Chart-Position GESETZT');
-                        } else {
-                            // console.log('FINAL: Zu wenig Daten - verwende fitContent');
-                            chart.timeScale().fitContent();
-                        }
-
-                        // ZUSÄTZLICHER SCHUTZ: Nochmal nach 100ms setzen
-                        setTimeout(() => {
-                            if (formattedData.length >= 2) {
-                                const firstTime = formattedData[0].time;
-                                const lastTime = formattedData[formattedData.length - 1].time;
-
-                                // Fix: Stelle sicher, dass wir Min/Max korrekt ermitteln
-                                const minTime = Math.min(firstTime, lastTime);
-                                const maxTime = Math.max(firstTime, lastTime);
-                                const dataSpan = maxTime - minTime;
-                                const margin = dataSpan * 0.25;
-
-                                window.isProgrammaticRangeChange = true;  // Flag: Programmatische Navigation (Initial Load Delayed)
-                                chart.timeScale().setVisibleRange({
-                                    from: minTime,
-                                    to: maxTime + margin
-                                });
-
-                                // console.log('DELAYED: 20% Freiraum nochmal gesetzt nach 100ms');
-                            }
-                        }, 100);
+                        // ZUSÄTZLICHER SCHUTZ: Entfernt - Redundant zu obigem setVisibleRange
+                        // console.log('✅ Chart-Position gesetzt - kein redundanter setTimeout mehr');
 
                         // console.log('✅ NQ-Daten geladen:', formattedData.length, 'Kerzen, Smart Positioning angewandt');
 
@@ -1400,6 +1389,14 @@
                         });
 
                         console.log(`✅ Standard-Zoom: Kerzen ${startIndex}-${totalCandles-1} sichtbar (${visibleCandles} Kerzen mit 20% Freiraum)`);
+
+                        // 📊 INDICATOR SYSTEM: Load saved indicators AFTER setVisibleRange completes
+                        // Fix: setTimeout prevents "Value is null" error from setVisibleRange race condition
+                        if (window.IndicatorManager) {
+                            setTimeout(() => {
+                                window.IndicatorManager.loadState();
+                            }, 100);
+                        }
                     }
                     break;
 
@@ -4685,6 +4682,11 @@
                         window.smartPositioning.resetToStandardPosition(formattedData);
                     }
 
+                    // 📊 INDICATOR SYSTEM: Sync indicators with new timeframe data
+                    if (window.IndicatorManager) {
+                        window.IndicatorManager.syncWithTimeframe(formattedData);
+                    }
+
                     window.currentTimeframe = timeframe;
                 } else {
                     console.error('Timeframe-Wechsel fehlgeschlagen:', result.message);
@@ -5841,6 +5843,61 @@ function closeIndicatorsModal() {
     const modal = document.getElementById('indicatorsModal');
     modal.style.display = 'none';
     console.log('📊 Indicators Modal geschlossen');
+}
+
+// ========================================
+// Add EMA Dialog Functions
+// ========================================
+
+function openAddEMADialog() {
+    closeIndicatorsModal(); // Close Indicators Modal first
+    const modal = document.getElementById('addEMAModal');
+    modal.style.display = 'flex';
+
+    // Reset to default period
+    const periodInput = document.getElementById('emaPeriodInput');
+    if (periodInput) periodInput.value = 9;
+
+    console.log('📈 Add EMA Dialog geöffnet');
+}
+
+function closeAddEMADialog() {
+    const modal = document.getElementById('addEMAModal');
+    modal.style.display = 'none';
+    console.log('📈 Add EMA Dialog geschlossen');
+}
+
+function setEMAPeriod(period) {
+    const periodInput = document.getElementById('emaPeriodInput');
+    if (periodInput) {
+        periodInput.value = period;
+    }
+}
+
+function addEMAIndicator() {
+    const periodInput = document.getElementById('emaPeriodInput');
+    const period = parseInt(periodInput.value) || 9;
+
+    // Validation
+    if (period < 2 || period > 200) {
+        alert('Period muss zwischen 2 und 200 liegen');
+        return;
+    }
+
+    // Add via IndicatorManager
+    if (window.IndicatorManager) {
+        window.IndicatorManager.addIndicator('EMA', {
+            period: period,
+            color: '#000000' // Default black
+        });
+
+        console.log(`✅ EMA(${period}) hinzugefügt`);
+    } else {
+        console.error('❌ IndicatorManager nicht verfügbar');
+    }
+
+    // Close dialog
+    closeAddEMADialog();
 }
 
 // ========================================
