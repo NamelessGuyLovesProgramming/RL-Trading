@@ -192,6 +192,59 @@ class TimeframeDataRepository:
         print(f"[TimeframeDataRepository] [DATA] {len(candles)} Kerzen geladen für {timeframe} ({start_date} bis {end_date or 'Ende'})")
         return candles
 
+    def get_candles_before_time(self, timeframe: str, before_time, count: int = 250) -> List[Dict[str, Any]]:
+        """
+        Lädt historische Kerzen VOR einer bestimmten Zeit - für Lazy Loading
+
+        Args:
+            timeframe: Timeframe (z.B. '5m')
+            before_time: Timestamp oder datetime - lade Kerzen VOR dieser Zeit
+            count: Anzahl Kerzen die geladen werden sollen
+
+        Returns:
+            Liste von Candle-Dicts, sortiert chronologisch (älteste zuerst)
+        """
+        # Normalisiere before_time zu datetime
+        if isinstance(before_time, (int, float)):
+            before_time = datetime.fromtimestamp(before_time)
+
+        print(f"[TimeframeDataRepository] [LAZY-LOAD] Loading {count} candles BEFORE {before_time} for {timeframe}")
+
+        df = self._load_and_validate_timeframe_data(timeframe)
+        if df is None or df.empty:
+            print(f"[TimeframeDataRepository] [LAZY-LOAD] ERROR: No data for {timeframe}")
+            return []
+
+        # Filtere alle Kerzen VOR before_time
+        time_column = 'datetime' if 'datetime' in df.columns else 'time'
+
+        if time_column == 'time' and df[time_column].dtype == 'int64':
+            # Timestamp format
+            before_timestamp = before_time.timestamp()
+            filtered_df = df[df[time_column] < before_timestamp]
+        else:
+            # Datetime format
+            if df[time_column].dtype == 'object':
+                df[time_column] = pd.to_datetime(df[time_column])
+
+            before_pd = pd.Timestamp(before_time)
+            filtered_df = df[df[time_column] < before_pd]
+
+        # Nimm die LETZTEN count Kerzen aus den gefilterten (= die neuesten VOR before_time)
+        if len(filtered_df) > count:
+            result_df = filtered_df.tail(count)
+        else:
+            result_df = filtered_df
+
+        # Konvertiere zu Candle-Dicts
+        candles = []
+        for _, row in result_df.iterrows():
+            candle_data = self._format_candle_data(row, timeframe)
+            candles.append(candle_data)
+
+        print(f"[TimeframeDataRepository] [LAZY-LOAD] ✅ {len(candles)} candles loaded (requested {count}, available before {before_time}: {len(filtered_df)})")
+        return candles
+
     def _load_and_validate_timeframe_data(self, timeframe: str):
         """Lädt und validiert Timeframe-Daten mit Caching"""
         # Cache Check mit Zeit-Validierung

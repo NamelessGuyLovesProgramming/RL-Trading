@@ -93,6 +93,41 @@ class TimeframeService:
             'candles_count': len(validated_data)
         }
 
+    def load_historical_candles(self, timeframe: str, before_time, count: int = 250) -> Dict[str, Any]:
+        """
+        Lädt historische Kerzen für Lazy Loading - OHNE Zeit-Synchronisation
+
+        Args:
+            timeframe: Aktueller Timeframe
+            before_time: Timestamp oder datetime - lade Kerzen VOR dieser Zeit
+            count: Anzahl zu ladender Kerzen
+
+        Returns:
+            Dict mit chart_data, from_time, to_time, candles_count
+        """
+        print(f"[TimeframeService] Loading {count} historical candles BEFORE {before_time} for {timeframe}")
+
+        # Lade historische Daten aus Repository
+        chart_data = self.timeframe_repo.get_candles_before_time(
+            timeframe, before_time, count
+        )
+
+        # Validierung
+        validated_data = self.validator.sanitize_chart_data(chart_data, source="lazy_load")
+
+        # Berechne Zeit-Range der geladenen Daten
+        from_time = validated_data[0]['time'] if validated_data else None
+        to_time = validated_data[-1]['time'] if validated_data else None
+
+        return {
+            'chart_data': validated_data,
+            'timeframe': timeframe,
+            'from_time': from_time,
+            'to_time': to_time,
+            'candles_count': len(validated_data),
+            'is_lazy_load': True
+        }
+
     def aggregate_candles(self, candles: List[Dict[str, Any]], source_tf: str,
                          target_tf: str) -> List[Dict[str, Any]]:
         """

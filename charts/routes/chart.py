@@ -228,6 +228,58 @@ def setup_chart_routes(app, timeframe_service, manager, chart_lifecycle_manager,
         return {"status": "success", "message": "Position overlay added"}
 
 
+    @router.post("/load-more")
+    async def load_more_candles(request: Request):
+        """
+        Lazy Loading Endpoint - lädt historische Kerzen VOR einem bestimmten Zeitpunkt
+        Wird vom Frontend IntelligentZoomSystem aufgerufen
+        """
+        try:
+            data = await request.json()
+            timeframe = data.get('timeframe', '5m')
+            before_time = data.get('before_time')  # Unix timestamp der ältesten Kerze
+            count = data.get('count', 250)
+
+            if not before_time:
+                return {
+                    "status": "error",
+                    "message": "before_time parameter required"
+                }
+
+            print(f"[LAZY-LOAD] Request: {count} candles BEFORE {before_time} for {timeframe}")
+
+            # Lade historische Daten via TimeframeService
+            result = timeframe_service.load_historical_candles(
+                timeframe=timeframe,
+                before_time=before_time,
+                count=count
+            )
+
+            # Validierung mit DataIntegrityGuard
+            validated_data = DataIntegrityGuard.sanitize_chart_data(
+                result['chart_data'],
+                source="lazy_load"
+            )
+
+            return {
+                "status": "success",
+                "chart_data": validated_data,
+                "from_time": result.get('from_time'),
+                "to_time": result.get('to_time'),
+                "candles_count": len(validated_data),
+                "timeframe": timeframe
+            }
+
+        except Exception as e:
+            print(f"[LAZY-LOAD] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
+
     @router.post("/remove_position")
     async def remove_position(position_data: dict):
         """Position Overlay entfernen"""

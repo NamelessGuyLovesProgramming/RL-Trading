@@ -147,19 +147,47 @@
             }
         }
 
-        // Intelligent Zoom System Class
+        // Position-Based Lazy Loading System
         class IntelligentZoomSystem {
             constructor(chart, candlestickSeries, currentTimeframe = '5m') {
                 this.chart = chart;
                 this.candlestickSeries = candlestickSeries;
                 this.currentTimeframe = currentTimeframe;
-                this.currentCandles = 200; // Aktuelle Anzahl geladener Kerzen
-                this.minVisibleCandles = 50; // Minimum sichtbare Kerzen
-                this.maxVisibleCandles = 2000; // Maximum für Performance
                 this.isLoading = false;
                 this.lastVisibleRange = null;
+                this.oldestLoadedTime = null; // Timestamp der ältesten geladenen Kerze
+
+                // Timeframe-spezifische Konfiguration
+                this.config = this.getConfig(currentTimeframe);
+                this.currentCandles = 300; // Backend lädt initial 300
+
+                console.log(`📊 Lazy Load Config: Initial=${this.config.initial}, Chunk=${this.config.chunk}, Max=${this.config.max}, Trigger@${this.config.trigger}`);
 
                 this.setupZoomMonitoring();
+
+                // Initial Load auf gewünschte Menge wenn nötig
+                this.ensureInitialLoad();
+            }
+
+            getConfig(timeframe) {
+                const LAZY_LOAD_CONFIG = {
+                    // trigger = Anzahl verbleibender Kerzen LINKS (barsBefore < trigger)
+                    '1m':  { initial: 1000, chunk: 500,  max: 5000,  trigger: 100 },
+                    '5m':  { initial: 500,  chunk: 250,  max: 5000,  trigger: 50 },
+                    '15m': { initial: 400,  chunk: 200,  max: 4000,  trigger: 50 },
+                    '30m': { initial: 300,  chunk: 150,  max: 3500,  trigger: 50 },
+                    '1h':  { initial: 300,  chunk: 150,  max: 3000,  trigger: 50 },
+                    '4h':  { initial: 200,  chunk: 100,  max: 1500,  trigger: 30 }
+                };
+                return LAZY_LOAD_CONFIG[timeframe] || LAZY_LOAD_CONFIG['5m'];
+            }
+
+            async ensureInitialLoad() {
+                // Backend lädt 300, wir brauchen aber evtl. mehr (z.B. 500 für 5m)
+                if (this.currentCandles < this.config.initial) {
+                    console.log(`🔄 Initial Load: Erhöhe von ${this.currentCandles} auf ${this.config.initial} Kerzen`);
+                    await this.loadMoreCandles(0); // Force initial load
+                }
             }
 
             setupZoomMonitoring() {
@@ -169,77 +197,141 @@
                     this.handleVisibleRangeChange(newVisibleLogicalRange);
                 });
 
-                console.log('🔍 Intelligent Zoom System aktiviert');
+                console.log('🔍 Position-Based Lazy Load aktiviert');
             }
 
             handleVisibleRangeChange(visibleLogicalRange) {
                 const { from, to } = visibleLogicalRange;
                 const visibleCandleCount = Math.ceil(to - from);
 
-                console.log(`📊 Sichtbare Kerzen: ${visibleCandleCount}, Geladen: ${this.currentCandles}`);
+                // Nutze barsInLogicalRange() für robustere Trigger-Logik
+                const barsInfo = this.candlestickSeries.barsInLogicalRange(visibleLogicalRange);
 
-                // Check if we need more candles (user zoomed out)
-                if (this.shouldLoadMoreCandles(visibleCandleCount)) {
+                if (barsInfo) {
+                    console.log(`📊 Sichtbar: Kerzen ${Math.floor(from)}-${Math.floor(to)} (${visibleCandleCount} sichtbar, ${barsInfo.barsBefore} links, ${barsInfo.barsAfter} rechts)`);
+                } else {
+                    console.log(`📊 Sichtbar: Kerzen ${Math.floor(from)}-${Math.floor(to)} (${visibleCandleCount} von ${this.currentCandles})`);
+                }
+
+                // Trigger Lazy Loading wenn nah am linken Rand
+                if (this.shouldLoadMoreCandles(barsInfo)) {
                     this.loadMoreCandles(visibleCandleCount);
                 }
 
                 this.lastVisibleRange = visibleLogicalRange;
             }
 
-            shouldLoadMoreCandles(visibleCandleCount) {
-                // TEMPORÄR DEAKTIVIERT - Testing Timeframe Fix
-                console.log('🚫 Zoom System temporär deaktiviert für Timeframe-Fix');
-                return false;
+            shouldLoadMoreCandles(barsInfo) {
+                // Wenn barsInfo nicht verfügbar, kein Loading
+                if (!barsInfo) return false;
 
-                // Original code (auskommentiert):
-                // const visibilityRatio = visibleCandleCount / this.currentCandles;
-                // return visibilityRatio > 0.7 &&
-                //        this.currentCandles < this.maxVisibleCandles &&
-                //        !this.isLoading;
+                // Trigger: Weniger als X Kerzen ÜBRIG am linken Rand
+                // (X kommt aus config.trigger, z.B. 50 für robusteres Verhalten)
+                const nearLeftEdge = barsInfo.barsBefore < this.config.trigger;
+
+                // Noch nicht am Maximum?
+                const belowMaxLimit = this.currentCandles < this.config.max;
+
+                // Nicht bereits am Laden?
+                const notLoading = !this.isLoading;
+
+                // Logging für Debugging
+                if (nearLeftEdge && !belowMaxLimit) {
+                    console.log(`⚠️ Lazy Load Limit erreicht: ${this.currentCandles} / ${this.config.max}`);
+                }
+
+                if (nearLeftEdge && barsInfo.barsBefore === 0) {
+                    console.log(`⚠️ Chart-Anfang erreicht: Keine älteren Daten verfügbar`);
+                }
+
+                return nearLeftEdge && belowMaxLimit && notLoading;
             }
 
             async loadMoreCandles(visibleCandleCount) {
                 if (this.isLoading) return;
 
+                // Prüfe ob oldestLoadedTime bekannt ist
+                if (!this.oldestLoadedTime) {
+                    // Initial: Hole älteste Kerze aus aktuellen Chart-Daten
+                    const currentData = this.candlestickSeries.data();
+                    if (currentData && currentData.length > 0) {
+                        this.oldestLoadedTime = currentData[0].time;
+                        console.log(`📌 Älteste Kerze: ${this.oldestLoadedTime} (${new Date(this.oldestLoadedTime * 1000).toLocaleString()})`);
+                    } else {
+                        console.warn('⚠️ Keine Chart-Daten verfügbar für Lazy Load');
+                        return;
+                    }
+                }
+
                 this.isLoading = true;
-                console.log('📈 Lade mehr Kerzen für bessere Zoom-Erfahrung...');
+
+                const chunkSize = this.config.chunk;
+                console.log(`📈 Lade ${chunkSize} historische Kerzen VOR ${new Date(this.oldestLoadedTime * 1000).toLocaleString()}`);
 
                 try {
-                    // Berechne wie viele Kerzen wir brauchen
-                    const targetCandles = Math.min(
-                        Math.max(visibleCandleCount * 2.5, this.currentCandles * 1.5),
-                        this.maxVisibleCandles
-                    );
-
-                    // API-Call für mehr Daten
-                    const response = await fetch('/api/chart/change_timeframe', {
+                    // Neuer API-Call: /load-more
+                    const response = await fetch('/api/chart/load-more', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             timeframe: this.currentTimeframe,
-                            visible_candles: Math.ceil(targetCandles)
+                            before_time: this.oldestLoadedTime,
+                            count: chunkSize
                         })
                     });
 
                     const result = await response.json();
 
-                    if (result.status === 'success') {
-                        // Update Chart mit validierten Daten
-                        const validatedData = validateCandleData(result.data);
-                        this.candlestickSeries.setData(validatedData);
-                        this.currentCandles = validatedData.length;
+                    if (result.status === 'success' && result.chart_data && result.chart_data.length > 0) {
+                        const newHistoricalData = validateCandleData(result.chart_data);
+                        const currentData = this.candlestickSeries.data();
 
-                        if (validatedData.length !== result.data.length) {
-                            console.warn(`⚠️ ${result.data.length - validatedData.length} invalid candles removed from lazy load`);
+                        // Kombiniere: neue historische Daten + bestehende Daten
+                        // WICHTIG: Deduplizierung nach Zeit um Überschneidungen zu vermeiden
+                        const timeSet = new Set();
+                        const combinedData = [];
+
+                        // Zuerst neue historische Daten (ältere)
+                        for (const candle of newHistoricalData) {
+                            if (!timeSet.has(candle.time)) {
+                                timeSet.add(candle.time);
+                                combinedData.push(candle);
+                            }
                         }
 
-                        console.log(`✅ Mehr Kerzen geladen: ${this.currentCandles}`);
+                        // Dann bestehende Daten (neuere)
+                        for (const candle of currentData) {
+                            if (!timeSet.has(candle.time)) {
+                                timeSet.add(candle.time);
+                                combinedData.push(candle);
+                            }
+                        }
+
+                        console.log(`🔄 Deduplication: ${newHistoricalData.length + currentData.length} → ${combinedData.length} candles (removed ${newHistoricalData.length + currentData.length - combinedData.length} duplicates)`);
+
+                        // Update Chart
+                        this.candlestickSeries.setData(combinedData);
+                        this.currentCandles = combinedData.length;
+
+                        // Update oldestLoadedTime
+                        if (newHistoricalData.length > 0) {
+                            this.oldestLoadedTime = newHistoricalData[0].time;
+                        }
+
+                        console.log(`✅ +${newHistoricalData.length} Kerzen geladen: Total ${this.currentCandles} (${this.currentCandles}/${this.config.max})`);
 
                         // Toast-Benachrichtigung
-                        this.showZoomNotification(`🔍 Zoom erweitert: ${this.currentCandles} Kerzen verfügbar`);
+                        if (this.currentCandles >= this.config.max * 0.9) {
+                            this.showZoomNotification(
+                                `⚠️ ${this.currentCandles} / ${this.config.max} Kerzen geladen`
+                            );
+                        }
+                    } else {
+                        console.log(`⚠️ Keine älteren Daten verfügbar - CSV-Anfang erreicht`);
+                        this.config.max = this.currentCandles; // Setze Max auf aktuelle Anzahl
                     }
                 } catch (error) {
-                    console.error('❌ Fehler beim Laden zusätzlicher Kerzen:', error);
+                    console.error('❌ Lazy Load Fehler:', error);
                 } finally {
                     this.isLoading = false;
                 }
@@ -247,8 +339,15 @@
 
             updateTimeframe(newTimeframe, newCandleCount) {
                 this.currentTimeframe = newTimeframe;
+                this.config = this.getConfig(newTimeframe);
                 this.currentCandles = newCandleCount || this.currentCandles;
-                console.log(`🔄 Timeframe geändert zu: ${newTimeframe} (${this.currentCandles} Kerzen)`);
+
+                // WICHTIG: Reset History-State bei Timeframe-Wechsel!
+                // Historische Kerzen sollen NICHT über TF-Wechsel hinweg gespeichert bleiben
+                this.oldestLoadedTime = null;
+
+                console.log(`🔄 Timeframe: ${newTimeframe}, Config: ${this.config.initial}/${this.config.max}, Geladen: ${this.currentCandles}`);
+                console.log(`🔄 History-State RESET: oldestLoadedTime=null`);
             }
 
             showZoomNotification(message) {
@@ -471,6 +570,10 @@
             try {
                 window.smartPositioning = new SmartChartPositioning(chart, candlestickSeries);
                 console.log('INIT: Smart Positioning System initialisiert');
+
+                // Lazy Loading System initialisieren
+                window.lazyLoadSystem = new IntelligentZoomSystem(chart, candlestickSeries, '5m');
+                console.log('INIT: Lazy Load System initialisiert');
 
                 // Chart-Daten sofort laden
                 loadInitialData();
