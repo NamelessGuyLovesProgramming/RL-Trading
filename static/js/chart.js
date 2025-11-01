@@ -1575,7 +1575,7 @@
 
                         // 📊 BUGFIX: Update Indikatoren nach Go To Date
                         if (window.IndicatorManager) {
-                            window.IndicatorManager.syncWithChart(extendedHistoricalData);
+                            window.IndicatorManager.syncWithTimeframe(extendedHistoricalData);
                             console.log('📊 Indikatoren nach Go To Date aktualisiert');
                         }
 
