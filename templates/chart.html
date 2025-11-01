@@ -166,9 +166,9 @@
             <div class="indicators-content">
                 <div class="indicators-list">
                     <div class="indicator-item clickable" onclick="openAddEMADialog()">📈 EMA (Exponential Moving Average)</div>
+                    <div class="indicator-item clickable" onclick="addSessionIndicator()">🌍 Session Indicator (Asian/European/US)</div>
                     <div class="indicator-item">RSI (Coming Soon)</div>
                     <div class="indicator-item">MACD (Coming Soon)</div>
-                    <div class="indicator-item">Session Indicator (Coming Soon)</div>
                 </div>
             </div>
         </div>
@@ -200,7 +200,7 @@
         </div>
     </div>
 
-    <!-- Indicator Settings Modal -->
+    <!-- Indicator Settings Modal (EMA) -->
     <div id="indicatorSettingsModal" class="date-modal" style="display: none;">
         <div class="date-modal-content" style="max-width: 450px;">
             <div class="date-modal-header">
@@ -226,6 +226,121 @@
             <div class="date-modal-buttons">
                 <button class="modal-btn" onclick="window.IndicatorManager.closeSettingsModal()">Abbrechen</button>
                 <button class="modal-btn primary" onclick="window.IndicatorManager.applySettings()">💾 Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Session Indicator Settings Modal -->
+    <div id="sessionSettingsModal" class="date-modal" style="display: none;">
+        <div class="date-modal-content" style="max-width: 550px; max-height: 80vh; overflow-y: auto;">
+            <div class="date-modal-header">
+                <span class="date-modal-title">🌍 Session Indikator Einstellungen</span>
+                <button class="close-modal" onclick="window.IndicatorManager.closeSessionSettingsModal()">&times;</button>
+            </div>
+            <div class="settings-content">
+                <!-- UTC Offset -->
+                <div class="balance-section">
+                    <label class="balance-label">🌐 UTC Offset</label>
+                    <div style="margin-top: 10px;">
+                        <label style="font-size: 10px; color: #888;">Zeitverschiebung (z.B. +2 für Europa/Berlin):</label>
+                        <input type="number" id="sessionUtcOffsetInput" class="balance-input" value="2" min="-12" max="14" step="1" style="padding: 8px; margin-top: 5px;">
+                        <small style="color: #888; font-size: 10px; display: block; margin-top: 5px;">Session-Zeiten werden entsprechend angepasst</small>
+                    </div>
+                </div>
+
+                <!-- Transparenz Slider -->
+                <div class="balance-section" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
+                    <label class="balance-label">Transparenz: <span id="sessionTransparencyValue">10</span>%</label>
+                    <input type="range" id="sessionTransparencyInput" class="balance-input" value="10" min="0" max="50" step="1"
+                           oninput="document.getElementById('sessionTransparencyValue').textContent = this.value" style="width: 100%;">
+                    <small style="color: #888; font-size: 10px;">0% = unsichtbar, 50% = stark sichtbar</small>
+                </div>
+
+                <!-- Asian Session -->
+                <div class="balance-section" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
+                    <label class="balance-label">🌏 Asian Session</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px;">
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Start (UTC+2):</label>
+                            <input type="time" id="sessionAsianStart" class="balance-input" value="00:00" style="padding: 5px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Ende (UTC+2):</label>
+                            <input type="time" id="sessionAsianEnd" class="balance-input" value="08:00" style="padding: 5px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Farbe:</label>
+                            <input type="color" id="sessionAsianColor" class="color-input" value="#FFD700">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- European Session -->
+                <div class="balance-section" style="margin-top: 15px;">
+                    <label class="balance-label">🌍 European Session</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px;">
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Start (UTC+2):</label>
+                            <input type="time" id="sessionEuropeanStart" class="balance-input" value="08:00" style="padding: 5px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Ende (UTC+2):</label>
+                            <input type="time" id="sessionEuropeanEnd" class="balance-input" value="14:30" style="padding: 5px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Farbe:</label>
+                            <input type="color" id="sessionEuropeanColor" class="color-input" value="#00FF00">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- American Session -->
+                <div class="balance-section" style="margin-top: 15px;">
+                    <label class="balance-label">🌎 American Session</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px;">
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Start (UTC+2):</label>
+                            <input type="time" id="sessionAmericanStart" class="balance-input" value="14:30" style="padding: 5px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Ende (UTC+2):</label>
+                            <input type="time" id="sessionAmericanEnd" class="balance-input" value="22:00" style="padding: 5px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Farbe:</label>
+                            <input type="color" id="sessionAmericanColor" class="color-input" value="#1E90FF">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- High/Low Lines -->
+                <div class="balance-section" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
+                    <label class="balance-label">High/Low Linien</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Farbe:</label>
+                            <input type="color" id="sessionHighLowColor" class="color-input" value="#FFFFFF">
+                        </div>
+                        <div>
+                            <label style="font-size: 10px; color: #888;">Linienstärke:</label>
+                            <input type="number" id="sessionHighLowWidth" class="balance-input" value="1" min="1" max="5" style="padding: 5px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Handelstage-Rückblick -->
+                <div class="balance-section" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
+                    <label class="balance-label">📅 Handelstage-Rückblick</label>
+                    <div style="margin-top: 10px;">
+                        <label style="font-size: 10px; color: #888;">Anzahl Handelstage (Mo-Fr):</label>
+                        <input type="number" id="sessionTradingDaysInput" class="balance-input" value="5" min="1" max="30" style="padding: 8px; margin-top: 5px;">
+                        <small style="color: #888; font-size: 10px; display: block; margin-top: 5px;">Rückwirkend ab letzter Kerze, ohne Wochenenden/Feiertage</small>
+                    </div>
+                </div>
+            </div>
+            <div class="date-modal-buttons">
+                <button class="modal-btn" onclick="window.IndicatorManager.closeSessionSettingsModal()">Abbrechen</button>
+                <button class="modal-btn primary" onclick="window.IndicatorManager.applySessionSettings()">💾 Speichern</button>
             </div>
         </div>
     </div>

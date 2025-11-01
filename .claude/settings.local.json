@@ -10,7 +10,22 @@
       "Read(//c/Users/vgude/Desktop/**)",
       "Bash(git add:*)",
       "Bash(tasklist:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(git branch:*)",
+      "Bash(npm run build:*)",
+      "Bash(git log:*)",
+      "Bash(powershell -Command \"Get-Content ''src\\data\\aggregated\\5m\\nq-2024.csv'' | Measure-Object -Line\")",
+      "Bash(powershell -Command \"Get-Content ''src\\data\\aggregated\\5m\\nq-2024.csv'' | Select-Object -First 5\")",
+      "Bash(powershell -Command \"Get-Content ''src\\data\\aggregated\\5m\\nq-2024.csv'' | Select-Object -Last 5\")",
+      "Bash(powershell -Command \"Get-Content ''C:\\Users\\vgude\\VsStudio\\RL-Trading\\charts\\core\\timeframe_repository.py'' | Measure-Object -Line\")",
+      "Bash(git restore:*)",
+      "Bash(powershell:*)",
+      "WebSearch",
+      "Bash(/bashes)",
+      "WebFetch(domain:tradingview.github.io)",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": [],
     "ask": []

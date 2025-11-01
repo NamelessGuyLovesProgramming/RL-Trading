@@ -207,11 +207,12 @@
                 // Nutze barsInLogicalRange() für robustere Trigger-Logik
                 const barsInfo = this.candlestickSeries.barsInLogicalRange(visibleLogicalRange);
 
-                if (barsInfo) {
-                    console.log(`📊 Sichtbar: Kerzen ${Math.floor(from)}-${Math.floor(to)} (${visibleCandleCount} sichtbar, ${barsInfo.barsBefore} links, ${barsInfo.barsAfter} rechts)`);
-                } else {
-                    console.log(`📊 Sichtbar: Kerzen ${Math.floor(from)}-${Math.floor(to)} (${visibleCandleCount} von ${this.currentCandles})`);
-                }
+                // Debug-Logs deaktiviert
+                // if (barsInfo) {
+                //     console.log(`📊 Sichtbar: Kerzen ${Math.floor(from)}-${Math.floor(to)} (${visibleCandleCount} sichtbar, ${barsInfo.barsBefore} links, ${barsInfo.barsAfter} rechts)`);
+                // } else {
+                //     console.log(`📊 Sichtbar: Kerzen ${Math.floor(from)}-${Math.floor(to)} (${visibleCandleCount} von ${this.currentCandles})`);
+                // }
 
                 // Trigger Lazy Loading wenn nah am linken Rand
                 if (this.shouldLoadMoreCandles(barsInfo)) {
@@ -6023,6 +6024,28 @@ function addEMAIndicator() {
         });
 
         console.log(`✅ EMA(${period}) hinzugefügt`);
+    } else {
+        console.error('❌ IndicatorManager nicht verfügbar');
+    }
+
+    // Close Dialog
+    closeAddEMADialog();
+}
+
+// ========================================
+// Add Session Indicator Function
+// ========================================
+
+function addSessionIndicator() {
+    closeIndicatorsModal(); // Close Indicators Modal
+
+    // Add via IndicatorManager mit Default-Config
+    if (window.IndicatorManager) {
+        window.IndicatorManager.addIndicator('SESSION', {
+            // Default Config wird in SessionIndicator Konstruktor gesetzt
+        });
+
+        console.log('✅ Session Indikator hinzugefügt');
     } else {
         console.error('❌ IndicatorManager nicht verfügbar');
     }

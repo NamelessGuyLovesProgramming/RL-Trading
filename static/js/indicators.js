@@ -257,6 +257,606 @@ class EMAIndicator extends BaseIndicator {
 }
 
 // ============================================================
+// CUSTOM RECTANGLE PRIMITIVE - Für durchgehende Session-Boxen
+// ============================================================
+
+class RectanglePrimitive {
+    constructor(p1, p2, fillColor) {
+        this._p1 = p1; // { time, price }
+        this._p2 = p2; // { time, price }
+        this._fillColor = fillColor;
+    }
+
+    draw(target) {
+        target.useBitmapCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const crosshairPos = this._crosshairPosition(scope);
+            if (!crosshairPos) return;
+
+            // Konvertiere Zeit/Preis zu Pixel-Koordinaten
+            const x1 = crosshairPos.x1;
+            const y1 = crosshairPos.y1;
+            const x2 = crosshairPos.x2;
+            const y2 = crosshairPos.y2;
+
+            // Zeichne gefülltes Rechteck
+            ctx.fillStyle = this._fillColor;
+            ctx.fillRect(
+                Math.min(x1, x2),
+                Math.min(y1, y2),
+                Math.abs(x2 - x1),
+                Math.abs(y2 - y1)
+            );
+        });
+    }
+
+    _crosshairPosition(scope) {
+        const series = scope.series;
+        const timeScale = scope.timeScale;
+
+        // Konvertiere Zeit zu Pixel
+        const x1 = timeScale.timeToCoordinate(this._p1.time);
+        const x2 = timeScale.timeToCoordinate(this._p2.time);
+
+        // Konvertiere Preis zu Pixel
+        const y1 = series.priceToCoordinate(this._p1.price);
+        const y2 = series.priceToCoordinate(this._p2.price);
+
+        if (x1 === null || x2 === null || y1 === null || y2 === null) {
+            return null;
+        }
+
+        return {
+            x1: x1 * scope.horizontalPixelRatio,
+            y1: y1 * scope.verticalPixelRatio,
+            x2: x2 * scope.horizontalPixelRatio,
+            y2: y2 * scope.verticalPixelRatio
+        };
+    }
+}
+
+// ============================================================
+// SESSION RECTANGLE PRIMITIVE - Custom Drawing
+// ============================================================
+
+/**
+ * Helper: Berechnet Position und Länge für Rectangle Drawing
+ */
+function positionsBox(p1, p2, pixelRatio) {
+    const minCoordinate = Math.min(p1, p2) * pixelRatio;
+    const maxCoordinate = Math.max(p1, p2) * pixelRatio;
+    return {
+        position: minCoordinate,
+        length: maxCoordinate - minCoordinate
+    };
+}
+
+/**
+ * Rectangle Pane Renderer - Zeichnet Rectangle auf Canvas
+ */
+class RectanglePaneRenderer {
+    constructor(p1, p2, fillColor, label, labelColor) {
+        this._p1 = p1; // {x, y}
+        this._p2 = p2; // {x, y}
+        this._fillColor = fillColor;
+        this._label = label; // Label-Text (z.B. "ASIAN", "EUROPEAN")
+        this._labelColor = labelColor; // Label-Farbe
+    }
+
+    draw(target) {
+        target.useBitmapCoordinateSpace(scope => {
+            if (!this._p1 || !this._p2 || this._p1.x === null || this._p2.x === null) {
+                return;
+            }
+
+            const ctx = scope.context;
+            const horizontalPositions = positionsBox(
+                this._p1.x,
+                this._p2.x,
+                scope.horizontalPixelRatio
+            );
+            const verticalPositions = positionsBox(
+                this._p1.y,
+                this._p2.y,
+                scope.verticalPixelRatio
+            );
+
+            // Zeichne Rectangle
+            ctx.fillStyle = this._fillColor;
+            ctx.fillRect(
+                horizontalPositions.position,
+                verticalPositions.position,
+                horizontalPositions.length,
+                verticalPositions.length
+            );
+
+            // Zeichne Label (ÜBER der Box, mittig)
+            if (this._label) {
+                const labelX = horizontalPositions.position + (horizontalPositions.length / 2); // Mitte der Box
+                const labelY = verticalPositions.position - 5 * scope.verticalPixelRatio; // Oberhalb
+
+                ctx.font = `${12 * scope.verticalPixelRatio}px Arial`;
+                ctx.fillStyle = this._labelColor;
+                ctx.textAlign = 'center'; // Zentriert
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(this._label, labelX, labelY);
+            }
+        });
+    }
+}
+
+/**
+ * Rectangle Pane View - Konvertiert Preis/Zeit zu Koordinaten
+ */
+class RectanglePaneView {
+    constructor(source) {
+        this._source = source;
+        this._p1 = null;
+        this._p2 = null;
+    }
+
+    update() {
+        const series = this._source.series;
+        const chart = this._source.chart;
+
+        if (!series || !chart) {
+            return;
+        }
+
+        // Konvertiere Preis zu Y-Koordinate
+        const y1 = series.priceToCoordinate(this._source._p1.price);
+        const y2 = series.priceToCoordinate(this._source._p2.price);
+
+        // Konvertiere Zeit zu X-Koordinate
+        const timeScale = chart.timeScale();
+        const x1 = timeScale.timeToCoordinate(this._source._p1.time);
+        const x2 = timeScale.timeToCoordinate(this._source._p2.time);
+
+        this._p1 = { x: x1, y: y1 };
+        this._p2 = { x: x2, y: y2 };
+    }
+
+    renderer() {
+        return new RectanglePaneRenderer(
+            this._p1,
+            this._p2,
+            this._source._fillColor,
+            this._source._label,
+            this._source._labelColor
+        );
+    }
+
+    zOrder() {
+        return 'bottom'; // Hinter Candles rendern
+    }
+}
+
+/**
+ * Session Rectangle Primitive - ISeriesPrimitive Implementation
+ */
+class SessionRectangle {
+    constructor(p1, p2, fillColor, chart, series, label, labelColor) {
+        this._p1 = p1; // {time, price}
+        this._p2 = p2; // {time, price}
+        this._fillColor = fillColor;
+        this._label = label; // Label-Text (z.B. "ASIAN")
+        this._labelColor = labelColor; // Label-Farbe
+        this.chart = chart;
+        this.series = series;
+        this._paneViews = [new RectanglePaneView(this)];
+        this._requestUpdate = null;
+    }
+
+    updateAllViews() {
+        this._paneViews.forEach(view => view.update());
+    }
+
+    paneViews() {
+        return this._paneViews;
+    }
+
+    attached(param) {
+        this.chart = param.chart;
+        this.series = param.series;
+        this._requestUpdate = param.requestUpdate;
+        this.updateAllViews();
+    }
+
+    detached() {
+        this.chart = null;
+        this.series = null;
+        this._requestUpdate = null;
+    }
+}
+
+// SESSION INDICATOR - Trading Sessions mit High/Low
+// ============================================================
+
+class SessionIndicator extends BaseIndicator {
+    constructor(id, config = {}) {
+        // Default Config mit allen anpassbaren Werten
+        const defaults = {
+            // Timezone Settings
+            utcOffset: 2,               // UTC+2 für Europa/Berlin (NQ Futures)
+
+            // Session Zeiten (in lokaler Zeit mit UTC-Offset)
+            asianStart: '00:00',
+            asianEnd: '08:00',
+            europeanStart: '08:00',
+            europeanEnd: '14:30',
+            americanStart: '14:30',
+            americanEnd: '22:00',
+
+            // Farben & Transparenz (0-50%)
+            asianColor: '#FFD700',      // Gold
+            europeanColor: '#00FF00',   // Green
+            americanColor: '#1E90FF',   // DodgerBlue
+            transparency: 10,           // 10% Transparenz (0-50%)
+
+            // High/Low Lines
+            showHighLow: true,
+            highLowColor: '#FFFFFF',
+            highLowStyle: 2,            // 2 = dashed
+            highLowWidth: 1,
+
+            // Labels
+            showLabels: true,
+
+            // Handelstage-Rückblick (echte Handelstage Mo-Fr)
+            tradingDaysLookback: 5      // Anzahl Handelstage rückwirkend ab letzter Kerze
+        };
+
+        super(id, 'SESSION', { ...defaults, ...config });
+
+        // Session-Boxen Storage
+        this.sessionBoxes = [];
+        this.highLowLines = [];
+
+        console.log('🌍 Session Indikator erstellt:', this.config);
+    }
+
+    // Hilfsfunktion: Zeit-String zu Minuten seit Mitternacht
+    timeToMinutes(timeStr) {
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        return hours * 60 + minutes;
+    }
+
+    // Hilfsfunktion: RGB zu RGBA mit Transparenz
+    colorWithTransparency(hexColor, transparency) {
+        // Konvertiere HEX zu RGB
+        const r = parseInt(hexColor.slice(1, 3), 16);
+        const g = parseInt(hexColor.slice(3, 5), 16);
+        const b = parseInt(hexColor.slice(5, 7), 16);
+
+        // Transparenz: 0-50% → Alpha: 0.00-0.50
+        const alpha = transparency / 100;
+
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    // Hilfsfunktion: Prüfe ob Datum ein Handelstag ist (Mo-Fr)
+    isTradingDay(date) {
+        const dayOfWeek = date.getUTCDay(); // 0=Sonntag, 6=Samstag
+        return dayOfWeek >= 1 && dayOfWeek <= 5; // Mo-Fr
+    }
+
+    // Hilfsfunktion: Hole letzte N Handelstage ab Enddatum
+    getLastNTradingDays(endDate, n) {
+        const tradingDays = [];
+        const currentDate = new Date(endDate);
+
+        // Rückwärts zählen bis N Handelstage gefunden
+        while (tradingDays.length < n) {
+            if (this.isTradingDay(currentDate)) {
+                // Speichere Datum als YYYY-MM-DD String
+                const dateStr = currentDate.toISOString().split('T')[0];
+                tradingDays.push(dateStr);
+            }
+            // Gehe 1 Tag zurück
+            currentDate.setUTCDate(currentDate.getUTCDate() - 1);
+        }
+
+        return tradingDays;
+    }
+
+    // Hilfsfunktion: Prüfe ob Kerze in Handelstagen-Liste liegt
+    isInTradingDaysList(candleTime, tradingDaysList) {
+        const date = new Date(candleTime * 1000);
+        const dateStr = date.toISOString().split('T')[0];
+        return tradingDaysList.includes(dateStr);
+    }
+
+    // Berechne Session-Daten und High/Low
+    calculate(data) {
+        if (!data || data.length === 0) {
+            console.warn('⚠️ Session: Keine Daten verfügbar');
+            return { sessions: [], highLows: [] };
+        }
+
+        const sessions = [];
+        const highLows = [];
+
+        // Gruppiere Kerzen nach Session
+        const sessionRanges = this.findSessionRanges(data);
+
+        // Berechne High/Low für jede Session
+        sessionRanges.forEach(({ type, start, end, candles }) => {
+            if (candles.length === 0) return;
+
+            // Finde High/Low in dieser Session
+            let high = candles[0].high;
+            let low = candles[0].low;
+
+            candles.forEach(candle => {
+                if (candle.high > high) high = candle.high;
+                if (candle.low < low) low = candle.low;
+            });
+
+            sessions.push({ type, start, end });
+            highLows.push({ type, start, end, high, low, candles });
+        });
+
+        console.log(`✅ Session berechnet: ${sessions.length} Sessions gefunden`);
+        return { sessions, highLows };
+    }
+
+    // Finde Session-Ranges in Daten
+    findSessionRanges(data) {
+        if (!data || data.length === 0) return [];
+
+        // Berechne letzte N Handelstage ab letzter Kerze
+        const lastCandle = data[data.length - 1];
+        const lastCandleDate = new Date(lastCandle.time * 1000);
+        const tradingDaysList = this.getLastNTradingDays(lastCandleDate, this.config.tradingDaysLookback);
+
+        console.log(`📅 Letzte ${this.config.tradingDaysLookback} Handelstage:`, tradingDaysList);
+
+        const ranges = [];
+        let currentSession = null;
+        let currentCandles = [];
+
+        data.forEach(candle => {
+            // Prüfe ob Kerze in Handelstagen-Liste liegt
+            if (!this.isInTradingDaysList(candle.time, tradingDaysList)) {
+                // Kerze liegt nicht in Handelstagen → ignoriere Session
+                if (currentSession && currentCandles.length > 0) {
+                    // Speichere vorherige Session bevor wir abbrechen
+                    ranges.push({
+                        type: currentSession,
+                        start: currentCandles[0].time,
+                        end: currentCandles[currentCandles.length - 1].time,
+                        candles: [...currentCandles]
+                    });
+                }
+                currentSession = null;
+                currentCandles = [];
+                return;
+            }
+
+            // Wende UTC-Offset an (Candle-Zeit ist UTC, wir brauchen lokale Zeit)
+            const date = new Date(candle.time * 1000);
+            const utcHour = date.getUTCHours();
+            const localHour = (utcHour + this.config.utcOffset + 24) % 24; // +24 und %24 für negative Offsets
+            const localMinute = date.getUTCMinutes();
+            const hourMinute = `${String(localHour).padStart(2, '0')}:${String(localMinute).padStart(2, '0')}`;
+            const minutes = this.timeToMinutes(hourMinute);
+
+            // DEBUG: Log erste Kerze zur Verifizierung
+            if (data.indexOf(candle) === 0) {
+                console.log(`🕐 UTC-Offset: ${this.config.utcOffset} | UTC: ${utcHour}:${String(localMinute).padStart(2, '0')} → Lokal: ${hourMinute}`);
+            }
+
+            // Bestimme Session-Typ
+            let sessionType = null;
+            const asianMinutes = { start: this.timeToMinutes(this.config.asianStart), end: this.timeToMinutes(this.config.asianEnd) };
+            const europeanMinutes = { start: this.timeToMinutes(this.config.europeanStart), end: this.timeToMinutes(this.config.europeanEnd) };
+            const americanMinutes = { start: this.timeToMinutes(this.config.americanStart), end: this.timeToMinutes(this.config.americanEnd) };
+
+            if (minutes >= asianMinutes.start && minutes < asianMinutes.end) {
+                sessionType = 'asian';
+            } else if (minutes >= europeanMinutes.start && minutes < europeanMinutes.end) {
+                sessionType = 'european';
+            } else if (minutes >= americanMinutes.start && minutes < americanMinutes.end) {
+                sessionType = 'american';
+            }
+
+            // Session-Wechsel erkennen
+            if (sessionType !== currentSession) {
+                // Speichere vorherige Session
+                if (currentSession && currentCandles.length > 0) {
+                    ranges.push({
+                        type: currentSession,
+                        start: currentCandles[0].time,
+                        end: currentCandles[currentCandles.length - 1].time,
+                        candles: [...currentCandles]
+                    });
+                }
+
+                // Starte neue Session
+                currentSession = sessionType;
+                currentCandles = sessionType ? [candle] : [];
+            } else if (sessionType) {
+                currentCandles.push(candle);
+            }
+        });
+
+        // Letzte Session speichern
+        if (currentSession && currentCandles.length > 0) {
+            ranges.push({
+                type: currentSession,
+                start: currentCandles[0].time,
+                end: currentCandles[currentCandles.length - 1].time,
+                candles: currentCandles
+            });
+        }
+
+        console.log(`✅ ${ranges.length} Sessions in letzten ${this.config.tradingDaysLookback} Handelstagen gefunden`);
+        return ranges;
+    }
+
+    render(chart) {
+        if (!chart) {
+            console.error('❌ Session render: Chart nicht verfügbar');
+            return;
+        }
+
+        const candleData = window.candlestickSeries?.data();
+        if (!candleData || candleData.length === 0) {
+            console.warn('⚠️ Session render: Keine Candlestick-Daten');
+            return;
+        }
+
+        // Berechne Sessions
+        const { sessions, highLows } = this.calculate(candleData);
+
+        // WICHTIG: Lightweight Charts hat KEINE native Session-Box Unterstützung
+        // Workaround: Wir nutzen eine unsichtbare Line-Series als Placeholder
+        // Die echte Session-Visualisierung müsste über Canvas-Overlay erfolgen
+
+        // Erstelle Dummy-Series für Indikator-Label
+        this.series = chart.addLineSeries({
+            color: 'transparent',
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+            title: 'Sessions'
+        });
+
+        // Rendere Session-Boxen (immer!)
+        this.renderHighLowLines(chart, highLows);
+
+        console.log('✅ Session Indikator gerendert');
+    }
+
+    renderHighLowLines(chart, highLows) {
+        // Hole Candlestick Series ZUERST für Cleanup UND Rendering
+        const candlestickSeries = window.candlestickSeries;
+        if (!candlestickSeries) {
+            console.error('❌ Candlestick Series nicht verfügbar für Session Rectangles');
+            return;
+        }
+
+        // Clear alte Primitives & Lines
+        this.highLowLines.forEach(item => {
+            try {
+                // KRITISCH: Detach von candlestickSeries, nicht this.series!
+                if (item.primitive && candlestickSeries) {
+                    candlestickSeries.detachPrimitive(item.primitive);
+                }
+                if (item.series) {
+                    chart.removeSeries(item.series);
+                }
+            } catch (e) {
+                console.warn('⚠️ Fehler beim Entfernen:', e);
+            }
+        });
+        this.highLowLines = [];
+        console.log('🧹 Alte Session-Boxen entfernt');
+
+        // Rendere Session-Boxen mit Rectangle Primitives
+        highLows.forEach(({ type, start, end, high, low, candles }) => {
+            const sessionColor = this.getSessionColor(type);
+            const colorWithAlpha = this.colorWithTransparency(sessionColor, this.config.transparency);
+            const label = this.getSessionLabel(type);
+
+            // ========================================
+            // SESSION BOX: Rectangle Primitive = Echte Box
+            // ========================================
+            const rectangle = new SessionRectangle(
+                { time: start, price: low },    // P1: Start Zeit, Low Preis
+                { time: end, price: high },     // P2: End Zeit, High Preis
+                colorWithAlpha,                 // Fill Color mit Transparenz
+                chart,
+                candlestickSeries,
+                label,                          // Label-Text
+                sessionColor                    // Label-Farbe (volle Farbe, kein Alpha)
+            );
+
+            // Attach Primitive zu Candlestick Series
+            candlestickSeries.attachPrimitive(rectangle);
+            this.highLowLines.push({ primitive: rectangle, type: 'rectangle-box', sessionType: type });
+        });
+
+        console.log(`✅ ${highLows.length} Session Rectangle-Boxen + ${this.highLowLines.length} Items gerendert`);
+    }
+
+    getSessionColor(type) {
+        switch (type) {
+            case 'asian': return this.config.asianColor;
+            case 'european': return this.config.europeanColor;
+            case 'american': return this.config.americanColor;
+            default: return '#FFFFFF';
+        }
+    }
+
+    getSessionLabel(type) {
+        switch (type) {
+            case 'asian': return 'ASIAN';
+            case 'european': return 'EUROPE';
+            case 'american': return 'US';
+            default: return '';
+        }
+    }
+
+    update(candle, allData) {
+        // Bei Session-Indikator: Komplette Neuberechnung bei Update
+        if (!allData || allData.length === 0) return;
+
+        // Entferne alte Primitives & Lines
+        const candlestickSeries = window.candlestickSeries;
+        this.highLowLines.forEach(item => {
+            try {
+                // Detach Rectangle Primitives von Candlestick Series
+                if (item.primitive && candlestickSeries) {
+                    candlestickSeries.detachPrimitive(item.primitive);
+                }
+                // Remove Border Line Series
+                if (item.series && window.chart) {
+                    window.chart.removeSeries(item.series);
+                }
+            } catch (e) {
+                console.warn('⚠️ Update: Fehler beim Entfernen:', e);
+            }
+        });
+        this.highLowLines = [];
+
+        // Neu berechnen und rendern
+        const { sessions, highLows } = this.calculate(allData);
+        if (window.chart) {
+            this.renderHighLowLines(window.chart, highLows);
+        }
+
+        console.log('🔄 Session Indikator updated');
+    }
+
+    destroy() {
+        // Entferne alle Primitives & Lines
+        const candlestickSeries = window.candlestickSeries;
+        this.highLowLines.forEach(item => {
+            try {
+                // Detach Rectangle Primitives von Candlestick Series
+                if (item.primitive && candlestickSeries) {
+                    candlestickSeries.detachPrimitive(item.primitive);
+                }
+                // Remove Border Line Series
+                if (item.series && window.chart) {
+                    window.chart.removeSeries(item.series);
+                }
+            } catch (e) {
+                console.warn('⚠️ Destroy: Fehler beim Entfernen:', e);
+            }
+        });
+        this.highLowLines = [];
+
+        super.destroy();
+    }
+
+    getDisplayName() {
+        return 'Sessions (A/E/US)';
+    }
+}
+
+// ============================================================
 // INDICATOR MANAGER - Singleton Pattern
 // ============================================================
 
@@ -577,19 +1177,123 @@ class IndicatorManager {
         // Setze aktuellen Indikator für Modal
         window.currentIndicatorForSettings = indicator;
 
+        // SESSION Indikator → Spezielles Modal
+        if (indicator.type === 'SESSION') {
+            this.openSessionSettings(indicator);
+            return;
+        }
+
+        // EMA & andere → Standard Modal
         // Fülle Modal mit aktuellen Werten
         const modal = document.getElementById('indicatorSettingsModal');
         const periodInput = document.getElementById('indicatorPeriodInput');
         const colorInput = document.getElementById('indicatorColorInput');
+        const lineWidthInput = document.getElementById('indicatorLineWidthInput');
 
         if (periodInput) periodInput.value = indicator.config.period || 9;
         if (colorInput) colorInput.value = indicator.config.color || '#000000';
+        if (lineWidthInput) lineWidthInput.value = indicator.config.lineWidth || 2;
 
         // Öffne Modal
         if (modal) {
             modal.style.display = 'flex';
             console.log(`⚙️ Settings Modal geöffnet für ${indicator.getDisplayName()}`);
         }
+    }
+
+    // UI: Session Settings Modal öffnen
+    openSessionSettings(indicator) {
+        const modal = document.getElementById('sessionSettingsModal');
+        if (!modal) {
+            console.error('❌ Session Settings Modal nicht gefunden');
+            return;
+        }
+
+        // Fülle Modal mit aktuellen Werten
+        const config = indicator.config;
+
+        // UTC Offset (0 ist valide!)
+        document.getElementById('sessionUtcOffsetInput').value = config.utcOffset !== undefined ? config.utcOffset : 2;
+
+        // Transparenz
+        document.getElementById('sessionTransparencyInput').value = config.transparency || 10;
+        document.getElementById('sessionTransparencyValue').textContent = config.transparency || 10;
+
+        // Asian Session
+        document.getElementById('sessionAsianStart').value = config.asianStart || '00:00';
+        document.getElementById('sessionAsianEnd').value = config.asianEnd || '08:00';
+        document.getElementById('sessionAsianColor').value = config.asianColor || '#FFD700';
+
+        // European Session
+        document.getElementById('sessionEuropeanStart').value = config.europeanStart || '08:00';
+        document.getElementById('sessionEuropeanEnd').value = config.europeanEnd || '14:30';
+        document.getElementById('sessionEuropeanColor').value = config.europeanColor || '#00FF00';
+
+        // American Session
+        document.getElementById('sessionAmericanStart').value = config.americanStart || '14:30';
+        document.getElementById('sessionAmericanEnd').value = config.americanEnd || '22:00';
+        document.getElementById('sessionAmericanColor').value = config.americanColor || '#1E90FF';
+
+        // High/Low Lines
+        document.getElementById('sessionHighLowColor').value = config.highLowColor || '#FFFFFF';
+        document.getElementById('sessionHighLowWidth').value = config.highLowWidth || 1;
+
+        // Handelstage-Rückblick
+        document.getElementById('sessionTradingDaysInput').value = config.tradingDaysLookback || 5;
+
+        // Öffne Modal
+        modal.style.display = 'flex';
+        console.log('⚙️ Session Settings Modal geöffnet');
+    }
+
+    // UI: Session Settings anwenden
+    applySessionSettings() {
+        const indicator = window.currentIndicatorForSettings;
+
+        if (!indicator || indicator.type !== 'SESSION') {
+            console.warn('⚠️ Kein Session Indikator für Settings ausgewählt');
+            return;
+        }
+
+        // Lese neue Config
+        const utcOffsetValue = document.getElementById('sessionUtcOffsetInput').value;
+        const newConfig = {
+            utcOffset: utcOffsetValue !== '' ? parseInt(utcOffsetValue) : 2,  // Fix: 0 ist valide!
+            transparency: parseInt(document.getElementById('sessionTransparencyInput').value) || 10,
+
+            asianStart: document.getElementById('sessionAsianStart').value || '00:00',
+            asianEnd: document.getElementById('sessionAsianEnd').value || '08:00',
+            asianColor: document.getElementById('sessionAsianColor').value || '#FFD700',
+
+            europeanStart: document.getElementById('sessionEuropeanStart').value || '08:00',
+            europeanEnd: document.getElementById('sessionEuropeanEnd').value || '14:30',
+            europeanColor: document.getElementById('sessionEuropeanColor').value || '#00FF00',
+
+            americanStart: document.getElementById('sessionAmericanStart').value || '14:30',
+            americanEnd: document.getElementById('sessionAmericanEnd').value || '22:00',
+            americanColor: document.getElementById('sessionAmericanColor').value || '#1E90FF',
+
+            highLowColor: document.getElementById('sessionHighLowColor').value || '#FFFFFF',
+            highLowWidth: parseInt(document.getElementById('sessionHighLowWidth').value) || 1,
+
+            tradingDaysLookback: parseInt(document.getElementById('sessionTradingDaysInput').value) || 5
+        };
+
+        // Update Indikator
+        this.updateIndicatorConfig(indicator.id, newConfig);
+
+        // Modal schließen
+        this.closeSessionSettingsModal();
+
+        console.log('✅ Session Settings angewendet');
+    }
+
+    closeSessionSettingsModal() {
+        const modal = document.getElementById('sessionSettingsModal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+        window.currentIndicatorForSettings = null;
     }
 
     // UI: Settings anwenden
@@ -646,10 +1350,11 @@ class IndicatorManager {
 // Erstelle Singleton-Instanz
 const manager = IndicatorManager.getInstance();
 
-// Registriere EMA Indicator
+// Registriere Indikatoren
 manager.registerIndicator('EMA', EMAIndicator);
+manager.registerIndicator('SESSION', SessionIndicator);
 
 // Make globally available
 window.IndicatorManager = manager;
 
-console.log('✅ Indicator System bereit');
+console.log('✅ Indicator System bereit (EMA + SESSION)');
