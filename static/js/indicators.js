@@ -109,11 +109,8 @@ class EMAIndicator extends BaseIndicator {
             return [];
         }
 
-        // Filter nur echte Kerzen (keine Phantom-Kerzen)
-        const realData = data.filter(candle =>
-            candle.open !== candle.close ||
-            candle.high !== candle.low
-        );
+        // No phantom candles - use all data directly
+        const realData = data;
 
         if (realData.length < period) {
             console.warn(`⚠️ EMA(${period}): Nicht genug echte Kerzen (${realData.length} < ${period})`);

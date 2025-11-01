@@ -295,83 +295,61 @@
             return map[timeframe] || 300; // Fallback: 5min
         }
 
-        // Erweitere Daten um "Phantom-Kerzen" in der Zukunft
-        // → X-Achse zeigt Zeitstempel auch ohne echte Kerzen
-        function extendDataWithFuture(data, futureCandles = 100) {
-            if (!data || data.length === 0) {
-                return data;
-            }
+        // DEACTIVATED: Phantom-Kerzen komplett deaktiviert
+        // function extendDataWithFuture(data, futureCandles = 100) {
+        //     // Funktion deaktiviert - keine Phantom-Kerzen
+        //     return data;
+        // }
 
-            const lastCandle = data[data.length - 1];
-            const timeframeSeconds = getTimeframeSeconds(window.currentTimeframe || '5m');
-            const extendedData = [...data]; // Copy original data
+        //         // 🔮 Helper: Update Candle UND regeneriere Phantom-Kerzen
+        // // → Löst "Phantom bleiben nach Next" Problem
+        // function candlestickSeries.update(candle) {
+        //     // 1. Hole alle aktuellen Chart-Daten
+        //     const currentData = candlestickSeries.data();
 
-            console.log(`📅 Erweitere Chart um ${futureCandles} Zukunfts-Kerzen (Timeframe: ${window.currentTimeframe})`);
+        //     // 2. Finde letzte ECHTE Kerze (nicht Phantom)
+        //     // Phantom-Kerzen haben alle denselben OHLC-Wert
+        //     let realData = [];
+        //     for (let i = 0; i < currentData.length; i++) {
+        //         const c = currentData[i];
+        //         // Kerze ist echt wenn OHLC unterschiedlich ODER wenn es eine neue Kerze ist
+        //         if (c.open !== c.close || c.high !== c.low || i === 0) {
+        //             realData.push(c);
+        //         } else {
+        //             // Phantom-Kerze gefunden → Rest sind auch Phantoms
+        //             break;
+        //         }
+        //     }
 
-            for (let i = 1; i <= futureCandles; i++) {
-                const futureTime = lastCandle.time + (i * timeframeSeconds);
-                extendedData.push({
-                    time: futureTime,
-                    open: lastCandle.close,
-                    high: lastCandle.close,
-                    low: lastCandle.close,
-                    close: lastCandle.close
-                });
-            }
+        //     // 3. Füge neue echte Kerze hinzu (update oder replace)
+        //     const lastRealTime = realData.length > 0 ? realData[realData.length - 1].time : 0;
+        //     if (candle.time > lastRealTime) {
+        //         // Neue Kerze am Ende
+        //         realData.push(candle);
+        //     } else if (candle.time === lastRealTime) {
+        //         // Update letzte Kerze
+        //         realData[realData.length - 1] = candle;
+        //     } else {
+        //         // Kerze in der Mitte? Füge hinzu und sortiere
+        //         realData.push(candle);
+        //         realData.sort((a, b) => a.time - b.time);
+        //     }
 
-            console.log(`📅 Chart erweitert: ${data.length} echte + ${futureCandles} Phantom = ${extendedData.length} gesamt`);
-            return extendedData;
-        }
+        //     // 4. Regeneriere Phantom-Kerzen
+        //     const extendedData = extendDataWithFuture(realData, 100);
 
-        // 🔮 Helper: Update Candle UND regeneriere Phantom-Kerzen
-        // → Löst "Phantom bleiben nach Next" Problem
-        function updateCandleWithPhantoms(candle) {
-            // 1. Hole alle aktuellen Chart-Daten
-            const currentData = candlestickSeries.data();
+        //     // 5. Setze Chart-Daten neu
+        //     candlestickSeries.setData(extendedData);
 
-            // 2. Finde letzte ECHTE Kerze (nicht Phantom)
-            // Phantom-Kerzen haben alle denselben OHLC-Wert
-            let realData = [];
-            for (let i = 0; i < currentData.length; i++) {
-                const c = currentData[i];
-                // Kerze ist echt wenn OHLC unterschiedlich ODER wenn es eine neue Kerze ist
-                if (c.open !== c.close || c.high !== c.low || i === 0) {
-                    realData.push(c);
-                } else {
-                    // Phantom-Kerze gefunden → Rest sind auch Phantoms
-                    break;
-                }
-            }
+        //     console.log('🔮 updateCandleWithPhantoms:', realData.length, 'real +', 100, 'phantom =', extendedData.length, 'total');
 
-            // 3. Füge neue echte Kerze hinzu (update oder replace)
-            const lastRealTime = realData.length > 0 ? realData[realData.length - 1].time : 0;
-            if (candle.time > lastRealTime) {
-                // Neue Kerze am Ende
-                realData.push(candle);
-            } else if (candle.time === lastRealTime) {
-                // Update letzte Kerze
-                realData[realData.length - 1] = candle;
-            } else {
-                // Kerze in der Mitte? Füge hinzu und sortiere
-                realData.push(candle);
-                realData.sort((a, b) => a.time - b.time);
-            }
+        //     // 📊 INDICATOR SYSTEM: Update all indicators with new candle
+        //     if (window.IndicatorManager) {
+        //         window.IndicatorManager.updateAllIndicators(candle);
+        //     }
 
-            // 4. Regeneriere Phantom-Kerzen
-            const extendedData = extendDataWithFuture(realData, 100);
-
-            // 5. Setze Chart-Daten neu
-            candlestickSeries.setData(extendedData);
-
-            console.log('🔮 updateCandleWithPhantoms:', realData.length, 'real +', 100, 'phantom =', extendedData.length, 'total');
-
-            // 📊 INDICATOR SYSTEM: Update all indicators with new candle
-            if (window.IndicatorManager) {
-                window.IndicatorManager.updateAllIndicators(candle);
-            }
-
-            return realData.length; // Return number of real candles
-        }
+        //     return realData.length; // Return number of real candles
+        // }
 
         // Unbegrenzte coordinateToTime - Funktioniert auch AUSSERHALB der Daten
         // Extrapoliert Zeit basierend auf X-Koordinate, Candle-Spacing und letzter Kerze
@@ -944,7 +922,7 @@
                         }));
 
                         // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
-                        const extendedData = extendDataWithFuture(formattedData, 100);
+                        const extendedData = formattedData; // No phantom candles
                         candlestickSeries.setData(extendedData);
 
                         // DRASTISCHE SOFORT-LÖSUNG: 20% Freiraum GARANTIERT
@@ -1353,7 +1331,7 @@
                     if (data && data.length > 0) {
                         const validatedData = validateCandleData(data);
                         // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
-                        const extendedData = extendDataWithFuture(validatedData, 100);
+                        const extendedData = validatedData; // No phantom candles
                         candlestickSeries.setData(extendedData);
 
                         // Store last candle close price for market orders
@@ -1420,7 +1398,7 @@
 
                 case 'add_candle':
                     if (isInitialized && message.candle) {
-                        updateCandleWithPhantoms(message.candle);
+                        candlestickSeries.update(message.candle);
                         console.log('➡️ Candle added:', message.candle);
                     }
                     break;
@@ -1428,7 +1406,7 @@
                 case 'debug_skip':
                     // Legacy Debug Skip: Direkte Chart-Update ohne Smart Positioning System
                     if (isInitialized && message.candle) {
-                        updateCandleWithPhantoms(message.candle);
+                        candlestickSeries.update(message.candle);
                         console.log('⏭️ Debug Skip: Neue Kerze hinzugefügt:', message.candle);
                         console.log('📊 Candle Type:', message.candle_type || message.result_type);
                         console.log('🕒 Debug Time:', message.debug_time);
@@ -1447,7 +1425,7 @@
                     // ENHANCED: Multi-Timeframe Debug Skip mit Sync & Incomplete Candle Support
                     if (isInitialized && message.candle) {
                         // Update Chart mit primary candle
-                        updateCandleWithPhantoms(message.candle);
+                        candlestickSeries.update(message.candle);
 
                         console.log('🔄 Multi-TF Skip:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('📊 Type:', message.candle_type);
@@ -1515,7 +1493,7 @@
                         console.log('📊 Validated data length:', validatedGoToData.length);
 
                         // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
-                        const extendedGoToData = extendDataWithFuture(validatedGoToData, 100);
+                        const extendedGoToData = validatedGoToData; // No phantom candles
                         console.log('🔮 Extended data length:', extendedGoToData.length);
                         console.log('🔮 Last real candle time:', validatedGoToData[validatedGoToData.length - 1].time);
                         console.log('🔮 Last phantom candle time:', extendedGoToData[extendedGoToData.length - 1].time);
@@ -1590,7 +1568,7 @@
 
                         // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
                         // 🔮 KRITISCH: Verhindert "Magische Wand" nach Go To Date
-                        const extendedHistoricalData = extendDataWithFuture(validatedHistoricalData, 100);
+                        const extendedHistoricalData = validatedHistoricalData; // No phantom candles
                         console.log('🔮 go_to_date_complete: Extended data with', extendedHistoricalData.length - validatedHistoricalData.length, 'phantom candles');
 
                         candlestickSeries.setData(extendedHistoricalData);
@@ -1676,7 +1654,7 @@
                         }
 
                         // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
-                        const extendedTFData = extendDataWithFuture(validatedData, 100);
+                        const extendedTFData = validatedData; // No phantom candles
                         candlestickSeries.setData(extendedTFData);
 
                         // NEUE LOGIK: Zeige nur letzten 50 Kerzen mit 80/20 Aufteilung bei TF-Wechsel
@@ -1722,7 +1700,7 @@
                             low: parseFloat(message.candle.low),
                             close: parseFloat(message.candle.close)
                         };
-                        updateCandleWithPhantoms(validatedCandle);
+                        candlestickSeries.update(validatedCandle);
 
                         // Store last candle data for market orders and limit order triggers
                         window.lastCandleClose = validatedCandle.close;
@@ -1764,7 +1742,7 @@
                             low: parseFloat(message.candle.low),
                             close: parseFloat(message.candle.close)
                         };
-                        updateCandleWithPhantoms(validatedCandle);
+                        candlestickSeries.update(validatedCandle);
 
                         // Store last candle data for market orders and limit order triggers
                         window.lastCandleClose = validatedCandle.close;
