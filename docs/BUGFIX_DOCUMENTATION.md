@@ -1,5 +1,34 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Lazy-Load Datumssprung Bug - 01.11.2025 📅
+
+### Problem:
+Beim Lazy-Loading von Daten springt das Datum vom 12. Dezember zurück auf den 12. November. Daten werden falsch interpretiert.
+
+### Root Cause:
+**Datumsformat-Verwechslung** in `charts/core/data_loader.py:59`
+- CSV nutzt **US-Format**: `MM/DD/YYYY` (z.B. `12/11/2024` = 11. Dezember)
+- Code parste als **EU-Format**: `DD/MM/YYYY` (wegen `dayfirst=True` Parameter)
+- Resultat: `12/11/2024` wurde als 12. November interpretiert statt 11. Dezember
+
+### Fix Locations:
+```python
+# charts/core/data_loader.py:59
+# VORHER:
+df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+
+# NACHHER:
+df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed')
+```
+
+### Prevention:
+- CSV-Format immer dokumentieren und konsistent halten
+- Explizite Format-Strings verwenden statt `format='mixed'` wo möglich
+- Unit-Tests für Datums-Parsing in verschiedenen Monaten
+- Edge-Case: Tag 13-31 würde sofort fehlschlagen → Bug nur bei Tag 1-12 sichtbar
+
+---
+
 ## Asset Label & Indicators Modal - 27.10.2025 📊
 
 ### Feature-Beschreibung:

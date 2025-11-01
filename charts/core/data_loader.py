@@ -56,7 +56,7 @@ class CSVLoader:
 
                     # Normalize datetime column
                     if 'datetime' not in df.columns:
-                        df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed', dayfirst=True)
+                        df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed')
 
                     # Cache the data
                     self.data_cache[timeframe] = df
