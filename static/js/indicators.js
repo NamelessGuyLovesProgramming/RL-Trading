@@ -21,12 +21,24 @@ class BaseIndicator {
 
         this.id = id;
         this.type = type;
-        this.config = config;
+
+        // BLUEPRINT: Standard-Properties für ALLE Indikatoren
+        const blueprintDefaults = {
+            lineWidth: 2,               // Liniendicke (1-10)
+            lineStyle: 0,               // 0=solid, 1=dashed, 2=dotted (future)
+            priceLineVisible: false,
+            lastValueVisible: true,
+            crosshairMarkerVisible: true
+        };
+
+        // Merge: Blueprint Defaults + User Config
+        this.config = { ...blueprintDefaults, ...config };
+
         this.visible = true;
         this.series = null; // LightweightCharts Series
         this.data = null;   // Cached calculated data
 
-        console.log(`📊 Indikator erstellt: ${type} (ID: ${id})`);
+        console.log(`📊 Indikator erstellt: ${type} (ID: ${id})`, this.config);
     }
 
     // Abstract Methods - MÜSSEN von Subclasses implementiert werden
@@ -73,6 +85,20 @@ class BaseIndicator {
     getDisplayName() {
         return `${this.type}(${this.config.period || ''})`;
     }
+    // Blueprint: Gemeinsame Config-Controls für Settings Modal
+    getCommonConfigControls() {
+        return {
+            lineWidth: {
+                label: 'Linienstärke',
+                type: 'range',
+                min: 1,
+                max: 10,
+                step: 1,
+                value: this.config.lineWidth
+            }
+        };
+    }
+
 
     // Serialize für localStorage
     serialize() {
@@ -165,14 +191,15 @@ class EMAIndicator extends BaseIndicator {
             return;
         }
 
-        // Erstelle LineSeries
+        // Erstelle LineSeries mit Blueprint-Properties
         try {
             this.series = chart.addLineSeries({
                 color: this.config.color,
-                lineWidth: 2,
-                priceLineVisible: false,
-                lastValueVisible: true,
-                crosshairMarkerVisible: true,
+                lineWidth: this.config.lineWidth,           // From Blueprint
+                lineStyle: this.config.lineStyle,           // From Blueprint
+                priceLineVisible: this.config.priceLineVisible,
+                lastValueVisible: this.config.lastValueVisible,
+                crosshairMarkerVisible: this.config.crosshairMarkerVisible,
                 title: this.getDisplayName()
             });
 
@@ -347,6 +374,26 @@ class IndicatorManager {
         }
 
         indicator.setConfig(newConfig);
+
+        // 🔄 Re-render: Alte Series entfernen, dann neu zeichnen
+        const chartData = window.candlestickSeries?.data();
+        if (chartData && chartData.length > 0 && window.chart) {
+            // 1. Alte Series entfernen
+            if (indicator.series) {
+                try {
+                    window.chart.removeSeries(indicator.series);
+                    indicator.series = null;
+                } catch (e) {
+                    console.warn('⚠️ Fehler beim Entfernen der alten Series:', e);
+                }
+            }
+
+            // 2. Neu rendern mit neuer Config
+            indicator.render(window.chart);
+            indicator.update(null, chartData);
+            console.log(`🔄 Indikator neu gerendert mit neuer Config`);
+        }
+
         this.saveState();
 
         // UI-Label aktualisieren (Name könnte sich ändern)
@@ -556,10 +603,12 @@ class IndicatorManager {
 
         const periodInput = document.getElementById('indicatorPeriodInput');
         const colorInput = document.getElementById('indicatorColorInput');
+        const lineWidthInput = document.getElementById('indicatorLineWidthInput');  // Blueprint Property
 
         const newConfig = {
             period: parseInt(periodInput.value) || indicator.config.period,
-            color: colorInput.value || indicator.config.color
+            color: colorInput.value || indicator.config.color,
+            lineWidth: parseInt(lineWidthInput.value) || indicator.config.lineWidth  // Blueprint Property
         };
 
         this.updateIndicatorConfig(indicator.id, newConfig);

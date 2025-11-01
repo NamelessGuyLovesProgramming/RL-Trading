@@ -1573,6 +1573,12 @@
 
                         candlestickSeries.setData(extendedHistoricalData);
 
+                        // 📊 BUGFIX: Update Indikatoren nach Go To Date
+                        if (window.IndicatorManager) {
+                            window.IndicatorManager.syncWithChart(extendedHistoricalData);
+                            console.log('📊 Indikatoren nach Go To Date aktualisiert');
+                        }
+
                         if (validatedHistoricalData.length !== message.data.length) {
                             console.warn(`⚠️ ${message.data.length - validatedHistoricalData.length} invalid candles removed from historical data`);
                         }

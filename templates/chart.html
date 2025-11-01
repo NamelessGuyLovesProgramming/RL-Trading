@@ -216,6 +216,12 @@
                     <label class="balance-label">Farbe:</label>
                     <input type="color" id="indicatorColorInput" class="color-input" value="#000000">
                 </div>
+                <!-- Blueprint Property: Line Width Slider -->
+                <div class="balance-section" style="margin-top: 15px;">
+                    <label class="balance-label">Linienstärke: <span id="lineWidthValue">2</span></label>
+                    <input type="range" id="indicatorLineWidthInput" class="balance-input" value="2" min="1" max="10" step="1"
+                           oninput="document.getElementById('lineWidthValue').textContent = this.value" style="width: 100%;">
+                </div>
             </div>
             <div class="date-modal-buttons">
                 <button class="modal-btn" onclick="window.IndicatorManager.closeSettingsModal()">Abbrechen</button>
