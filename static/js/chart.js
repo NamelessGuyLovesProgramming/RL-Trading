@@ -2139,6 +2139,28 @@
 
                                             candlestickSeries.setData(cleanData);
                                             console.log('[BULLETPROOF-TF] ✅ SUCCESS: Data set on recreated chart');
+
+                                            // Jump to latest candles with 20% margin
+                                            if (window.smartPositioning) {
+                                                window.smartPositioning.resetToStandardPosition(cleanData);
+                                                console.log('[BULLETPROOF-TF] 📍 Jumped to latest candles (SmartPositioning)');
+                                            } else {
+                                                // Fallback: Direct positioning
+                                                const dataLength = cleanData.length;
+                                                const visibleCandles = Math.min(50, dataLength);
+                                                const startIndex = Math.max(0, dataLength - visibleCandles);
+                                                const startTime = cleanData[startIndex].time;
+                                                const endTime = cleanData[dataLength - 1].time;
+                                                const dataTimeSpan = endTime - startTime;
+                                                const rightMarginTime = (dataTimeSpan / 0.8) * 0.2;
+
+                                                window.isProgrammaticRangeChange = true;
+                                                chart.timeScale().setVisibleRange({
+                                                    from: startTime,
+                                                    to: endTime + rightMarginTime
+                                                });
+                                                console.log('[BULLETPROOF-TF] 📍 Jumped to latest candles (Fallback):', visibleCandles, 'candles');
+                                            }
                                         } else {
                                             // Standard approach for non-recreation scenarios
                                             console.log('[BULLETPROOF-TF] Using standard data setting...');
@@ -2147,6 +2169,28 @@
                                                 try {
                                                     candlestickSeries.setData(cleanData);
                                                     console.log('[BULLETPROOF-TF] ✅ SUCCESS: Standard data setting completed');
+
+                                                    // Jump to latest candles with 20% margin
+                                                    if (window.smartPositioning) {
+                                                        window.smartPositioning.resetToStandardPosition(cleanData);
+                                                        console.log('[BULLETPROOF-TF] 📍 Jumped to latest candles (SmartPositioning)');
+                                                    } else {
+                                                        // Fallback: Direct positioning
+                                                        const dataLength = cleanData.length;
+                                                        const visibleCandles = Math.min(50, dataLength);
+                                                        const startIndex = Math.max(0, dataLength - visibleCandles);
+                                                        const startTime = cleanData[startIndex].time;
+                                                        const endTime = cleanData[dataLength - 1].time;
+                                                        const dataTimeSpan = endTime - startTime;
+                                                        const rightMarginTime = (dataTimeSpan / 0.8) * 0.2;
+
+                                                        window.isProgrammaticRangeChange = true;
+                                                        chart.timeScale().setVisibleRange({
+                                                            from: startTime,
+                                                            to: endTime + rightMarginTime
+                                                        });
+                                                        console.log('[BULLETPROOF-TF] 📍 Jumped to latest candles (Fallback):', visibleCandles, 'candles');
+                                                    }
                                                 } catch (delayedError) {
                                                     console.error('[BULLETPROOF-TF] Delayed setData error:', delayedError);
                                                     location.reload();

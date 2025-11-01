@@ -1,5 +1,58 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Auto-Jump to Latest Candles bei Timeframe-Wechsel - 01.11.2025 🎯
+
+### Feature-Beschreibung:
+Chart springt automatisch zur neuesten Kerze mit 20% Right Margin nach jedem Timeframe-Wechsel.
+
+### Problem:
+Nach Timeframe-Wechsel (z.B. 5m → 15m) bleibt der Chart an der alten Position - User muss manuell zur neuesten Kerze scrollen.
+
+### Implementierung:
+**Robuste 2-Stufen-Lösung** in `static/js/chart.js`:
+
+1. **Primär**: Nutzt `window.smartPositioning.resetToStandardPosition()` (falls verfügbar)
+2. **Fallback**: Direkte `setVisibleRange()` Berechnung (bei Chart Recreation)
+
+**Fix Locations:**
+```javascript
+// static/js/chart.js:2143-2163 (Chart Recreation Path)
+// static/js/chart.js:2173-2193 (Standard Data Setting Path)
+
+// BEIDE Stellen nutzen:
+if (window.smartPositioning) {
+    window.smartPositioning.resetToStandardPosition(cleanData);
+} else {
+    // Fallback: Direkte Berechnung
+    const visibleCandles = Math.min(50, dataLength);
+    const startIndex = Math.max(0, dataLength - visibleCandles);
+    const dataTimeSpan = endTime - startTime;
+    const rightMarginTime = (dataTimeSpan / 0.8) * 0.2; // 20% margin
+
+    chart.timeScale().setVisibleRange({
+        from: startTime,
+        to: endTime + rightMarginTime
+    });
+}
+```
+
+**Positionierung:**
+- **50 Kerzen** sichtbar (oder weniger wenn nicht genug Daten)
+- **20% Right Margin** - Kerzen nehmen 80% der Chart-Breite ein
+- Berechnung: `rightMarginTime = (dataTimeSpan / 0.8) * 0.2`
+
+**Integration:**
+- Handler: `bulletproof_timeframe_changed` (Zeile 2068)
+- Nach `candlestickSeries.setData(cleanData)` in BEIDEN Code-Paths
+- Funktioniert für Chart Recreation UND Standard Data Setting
+
+### Prevention:
+- Bei neuen Timeframe-Features: Auto-Jump-Logik immer mit implementieren
+- Beide Code-Paths (Recreation + Standard) synchron halten
+- Fallback-Logik für fehlende Dependencies einbauen
+
+---
+
 ## Lazy-Load Datumssprung Bug - 01.11.2025 📅
 
 ### Problem:
