@@ -97,8 +97,14 @@ class TimeframeDataRepository:
             # Datetime format
             if df[time_column].dtype == 'object':
                 df[time_column] = pd.to_datetime(df[time_column])
-            print(f"[DEBUG] Suche nach datetime > {current_time}")
-            next_candles = df[df[time_column] > current_time]
+
+            # Make current_time timezone-aware if DataFrame column is timezone-aware
+            current_pd = pd.Timestamp(current_time)
+            if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+                current_pd = current_pd.tz_localize('UTC') if current_pd.tz is None else current_pd.tz_convert('UTC')
+
+            print(f"[DEBUG] Suche nach datetime > {current_pd}")
+            next_candles = df[df[time_column] > current_pd]
 
         print(f"[DEBUG] Gefundene next_candles: {len(next_candles)} Kerzen")
         if len(next_candles) > 0:
@@ -173,8 +179,15 @@ class TimeframeDataRepository:
 
             # CRITICAL: Konvertiere start_date und end_date zu Pandas Timestamps
             start_pd = pd.Timestamp(start_date)
+            # Make timezone-aware if DataFrame column is timezone-aware
+            if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+                start_pd = start_pd.tz_localize('UTC') if start_pd.tz is None else start_pd.tz_convert('UTC')
+
             if end_date:
                 end_pd = pd.Timestamp(end_date)
+                # Make timezone-aware if DataFrame column is timezone-aware
+                if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+                    end_pd = end_pd.tz_localize('UTC') if end_pd.tz is None else end_pd.tz_convert('UTC')
                 filtered_df = df[(df[time_column] >= start_pd) & (df[time_column] <= end_pd)]
             else:
                 filtered_df = df[df[time_column] >= start_pd]
@@ -228,6 +241,9 @@ class TimeframeDataRepository:
                 df[time_column] = pd.to_datetime(df[time_column])
 
             before_pd = pd.Timestamp(before_time)
+            # Make timezone-aware if DataFrame column is timezone-aware
+            if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+                before_pd = before_pd.tz_localize('UTC') if before_pd.tz is None else before_pd.tz_convert('UTC')
             filtered_df = df[df[time_column] < before_pd]
 
         # Nimm die LETZTEN count Kerzen aus den gefilterten (= die neuesten VOR before_time)
