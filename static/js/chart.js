@@ -35,6 +35,151 @@
         // Erster Test-Log
         serverLog('🚀 JavaScript-Execution gestartet');
 
+        // Global current timestamp storage
+        window.currentChartTimestamp = null;
+
+        // Chart Time Display Update Function
+        function updateChartTime(unixTimestamp) {
+            if (!unixTimestamp) return;
+
+            // Store timestamp globally for dropdown changes
+            window.currentChartTimestamp = unixTimestamp;
+
+            // Get selected UTC offset
+            const utcSelector = document.getElementById('utcSelector');
+            const utcOffset = utcSelector ? parseInt(utcSelector.value) : 0;
+
+            // Convert to milliseconds and create Date object
+            const date = new Date(unixTimestamp * 1000);
+
+            // Apply UTC offset
+            const utcHours = date.getUTCHours();
+            const adjustedHours = (utcHours + utcOffset + 24) % 24;
+
+            // Format time as HH:MM:SS
+            const hours = String(adjustedHours).padStart(2, '0');
+            const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+            const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+
+            const timeString = `${hours}:${minutes}:${seconds}`;
+
+            // Update UI element
+            const chartTimeEl = document.getElementById('chartTime');
+            if (chartTimeEl) {
+                chartTimeEl.textContent = timeString;
+            }
+
+            console.log(`[TIME] Updated to ${timeString} (UTC${utcOffset >= 0 ? '+' : ''}${utcOffset})`);
+        }
+
+        // UTC Selector Change Handler
+        document.addEventListener('DOMContentLoaded', function() {
+            const utcSelector = document.getElementById('utcSelector');
+            if (utcSelector) {
+                // Load saved UTC offset from localStorage (default: UTC+0)
+                const savedUtcOffset = localStorage.getItem('chartUtcOffset');
+                if (savedUtcOffset !== null) {
+                    utcSelector.value = savedUtcOffset;
+                    console.log('[UTC] Loaded saved offset: UTC' + savedUtcOffset);
+                } else {
+                    // First time: Set default to UTC+0
+                    utcSelector.value = '0';
+                    localStorage.setItem('chartUtcOffset', '0');
+                    console.log('[UTC] First run - set default to UTC+0');
+                }
+
+                utcSelector.addEventListener('change', function() {
+                    console.log('[UTC] Dropdown changed to UTC' + this.value);
+
+                    // Save to localStorage
+                    localStorage.setItem('chartUtcOffset', this.value);
+                    console.log('[UTC] Saved to localStorage: UTC' + this.value);
+
+                    // 1. Re-render clock time
+                    if (window.currentChartTimestamp) {
+                        updateChartTime(window.currentChartTimestamp);
+                    } else {
+                        console.warn('[UTC] No timestamp available yet');
+                    }
+
+                    // 2. Force chart time axis to re-render
+                    if (window.chart) {
+                        // Trigger re-render by applying timeScale options
+                        const timeScale = window.chart.timeScale();
+                        timeScale.applyOptions({
+                            timeVisible: true
+                        });
+                        console.log('[UTC] Chart time axis updated');
+                    }
+                });
+            }
+
+            // Check for DST changes on load
+            checkDSTWarning();
+        });
+
+        // Daylight Saving Time Warning (Germany)
+        function checkDSTWarning() {
+            const now = new Date();
+            const month = now.getMonth(); // 0-11 (0=Jan, 2=Mar, 9=Oct)
+            const date = now.getDate();
+
+            // Helper: Get last Sunday of a month
+            function getLastSunday(year, month) {
+                const lastDay = new Date(year, month + 1, 0); // Last day of month
+                const day = lastDay.getDay(); // 0=Sunday
+                const lastSunday = lastDay.getDate() - day;
+                return new Date(year, month, lastSunday);
+            }
+
+            const year = now.getFullYear();
+            const lastSundayMarch = getLastSunday(year, 2); // March (month index 2)
+            const lastSundayOctober = getLastSunday(year, 9); // October (month index 9)
+
+            // Check if within 7 days before DST change
+            const daysUntilMarch = Math.floor((lastSundayMarch - now) / (1000 * 60 * 60 * 24));
+            const daysUntilOctober = Math.floor((lastSundayOctober - now) / (1000 * 60 * 60 * 24));
+
+            let message = null;
+
+            if (daysUntilMarch >= 0 && daysUntilMarch <= 7) {
+                message = `⏰ Sommerzeit-Wechsel in ${daysUntilMarch} Tagen! (UTC+1 → UTC+2)`;
+            } else if (daysUntilOctober >= 0 && daysUntilOctober <= 7) {
+                message = `⏰ Winterzeit-Wechsel in ${daysUntilOctober} Tagen! (UTC+2 → UTC+1)`;
+            }
+
+            if (message) {
+                showDSTToast(message);
+            }
+        }
+
+        // DST Toast Notification
+        function showDSTToast(message) {
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                top: 90px;
+                right: 20px;
+                background: rgba(255, 165, 0, 0.9);
+                color: white;
+                padding: 10px 15px;
+                border-radius: 4px;
+                font-size: 12px;
+                z-index: 10000;
+                animation: slideIn 0.3s ease-out;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            `;
+
+            document.body.appendChild(toast);
+
+            // Auto-remove nach 10 Sekunden (länger als normale Toasts)
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease-in';
+                setTimeout(() => toast.remove(), 300);
+            }, 10000);
+        }
+
         let chart;
         let candlestickSeries;
         let ws;
@@ -567,6 +712,26 @@
                 grid: {
                     vertLines: { visible: false },
                     horzLines: { visible: false }
+                },
+                localization: {
+                    timeFormatter: (timestamp) => {
+                        // Get selected UTC offset
+                        const utcSelector = document.getElementById('utcSelector');
+                        const utcOffset = utcSelector ? parseInt(utcSelector.value) : 0;
+
+                        // Convert timestamp to Date
+                        const date = new Date(timestamp * 1000);
+
+                        // Apply UTC offset
+                        const utcHours = date.getUTCHours();
+                        const adjustedHours = (utcHours + utcOffset + 24) % 24;
+
+                        // Format as HH:MM
+                        const hours = String(adjustedHours).padStart(2, '0');
+                        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+
+                        return `${hours}:${minutes}`;
+                    }
                 }
             });
 
@@ -1480,6 +1645,7 @@
                         if (validatedData.length > 0) {
                             const lastCandle = validatedData[validatedData.length - 1];
                             window.lastCandleClose = lastCandle.close;
+                            updateChartTime(lastCandle.time);
                         }
 
                         if (validatedData.length !== data.length) {
@@ -1541,6 +1707,7 @@
                 case 'add_candle':
                     if (isInitialized && message.candle) {
                         candlestickSeries.update(message.candle);
+                        updateChartTime(message.candle.time);
                         console.log('➡️ Candle added:', message.candle);
                     }
                     break;
@@ -1549,6 +1716,7 @@
                     // Legacy Debug Skip: Direkte Chart-Update ohne Smart Positioning System
                     if (isInitialized && message.candle) {
                         candlestickSeries.update(message.candle);
+                        updateChartTime(message.candle.time);
                         console.log('⏭️ Debug Skip: Neue Kerze hinzugefügt:', message.candle);
                         console.log('📊 Candle Type:', message.candle_type || message.result_type);
                         console.log('🕒 Debug Time:', message.debug_time);
@@ -1893,6 +2061,7 @@
                             volume: parseInt(message.candle.volume) || 0
                         };
                         candlestickSeries.update(validatedCandle);
+                        updateChartTime(validatedCandle.time);
 
                         // Store last candle data for market orders and limit order triggers
                         window.lastCandleClose = validatedCandle.close;

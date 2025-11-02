@@ -57,6 +57,8 @@ class CSVLoader:
                     # Normalize datetime column
                     if 'datetime' not in df.columns:
                         df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='mixed')
+                        # Treat CSV times as UTC to avoid timezone conversion issues
+                        df['datetime'] = df['datetime'].dt.tz_localize('UTC')
 
                     # Cache the data
                     self.data_cache[timeframe] = df

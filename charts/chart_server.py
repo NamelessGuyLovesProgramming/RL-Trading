@@ -239,7 +239,7 @@ def initialize_components():
     if initial_chart_data:
         last_candle_time = initial_chart_data[-1]['time']
         unified_time_manager.initialize_time(last_candle_time)
-        logger.info(f"[INIT] Global time initialized: {datetime.fromtimestamp(last_candle_time)}")
+        logger.info(f"[INIT] Global time initialized: {datetime.utcfromtimestamp(last_candle_time)}")
 
     # Step 3: WebSocket Manager
     logger.info("[INIT] Creating WebSocket manager...")

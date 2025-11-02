@@ -52,7 +52,8 @@ class UnifiedTimeManager:
     def initialize_time(self, initial_time):
         """Initialisiert die globale Zeit - wird vom ersten Skip/GoTo aufgerufen"""
         if isinstance(initial_time, (int, float)):
-            initial_time = datetime.fromtimestamp(initial_time)
+            # Use UTC to avoid timezone conversion issues
+            initial_time = datetime.utcfromtimestamp(initial_time)
 
         self.current_debug_time = initial_time
         self.initialized = True
