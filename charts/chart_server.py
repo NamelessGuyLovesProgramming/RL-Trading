@@ -191,6 +191,11 @@ def initialize_components():
     logger.info("[INIT] Loading initial chart data...")
     csv_loader = CSVLoader()
 
+    # Preload all timeframes to prevent first-skip delay
+    logger.info("[INIT] Preloading all timeframes for instant skip performance...")
+    csv_loader.preload_all_timeframes()
+    logger.info("[INIT] ✅ All timeframes preloaded and cached")
+
     # Lade initiale 5m Chart-Daten aus CSV (wie chart_server.py Line 714-747)
     try:
         import pandas as pd
