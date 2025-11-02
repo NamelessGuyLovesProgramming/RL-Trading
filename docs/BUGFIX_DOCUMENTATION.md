@@ -1,5 +1,80 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## TradingView Legend Ghost-Bug bei Indikator Settings-Änderung - 02.11.2025 👻
+
+### Problem:
+Nach Änderung der EMA-Settings (Period/Color) wird der Indikator **doppelt in der TradingView Legend** (schwarze Box rechts oben) angezeigt, obwohl nur 1x im Code existiert.
+
+**Symptome:**
+```
+EMA(9)  22108.79  ← Original
+EMA(9)  22108.79  ← Ghost (alter cached Entry)
+```
+
+### Root Cause:
+TradingView Lightweight Charts cached alte Legend-Einträge wenn man `chart.removeSeries()` + `chart.addLineSeries()` auf derselben Series durchführt. Die interne Legend wird nicht korrekt gecleared.
+
+**Code-Path (VORHER):**
+```javascript
+// static/js/indicators.js:1223-1239
+updateIndicatorConfig(id, newConfig) {
+    // 1. Nur EIN Indikator wird entfernt
+    window.chart.removeSeries(indicator.series);
+
+    // 2. Nur EIN Indikator wird neu gerendert
+    indicator.render(window.chart);
+
+    // → Legend cached alte Entry = Ghost-Bug!
+}
+```
+
+### Fix:
+**Alle Indikatoren neu rendern** statt nur den geänderten → zwingt TradingView die Legend komplett neu zu bauen.
+
+**Fix Location:**
+```javascript
+// static/js/indicators.js:1223-1249
+updateIndicatorConfig(id, newConfig) {
+    indicator.setConfig(newConfig);
+
+    // 🔄 CRITICAL FIX: Re-render ALLE Indikatoren statt nur den einen
+    const chartData = window.candlestickSeries?.data();
+    if (chartData && chartData.length > 0 && window.chart) {
+        // Entferne ALLE Series von ALLEN Indikatoren
+        this.activeIndicators.forEach(ind => {
+            if (ind.series) {
+                window.chart.removeSeries(ind.series);
+                ind.series = null;
+            }
+        });
+
+        // Rendere ALLE Indikatoren neu (inkl. dem geänderten)
+        this.reRenderAll(window.chart);
+        console.log('🔄 Alle Indikatoren neu gerendert (Legend-Ghost-Bug-Fix)');
+    }
+
+    this.saveState();
+    this.renderLabels();
+}
+```
+
+**Warum funktioniert das?**
+- TradingView baut die Legend komplett neu auf wenn ALLE Series entfernt werden
+- Einzelnes `removeSeries()` + `addSeries()` auf einer Series → cached Entry bleibt
+- Alle `removeSeries()` + `reRenderAll()` → Legend wird von Grund auf neu gebaut
+
+### Test:
+1. ✅ EMA(9) hinzufügen → 1x in Legend
+2. ⚙️ Settings öffnen → Period auf 21 ändern
+3. 💾 Speichern
+4. ✅ Nur 1x EMA(21) in Legend (kein Ghost!)
+
+### Prevention:
+- Bei Series-Updates in Indikatoren: Immer ALLE Indikatoren neu rendern statt einzelne
+- Alternative: TradingView Legend komplett deaktivieren (`title: ''` in Series-Options)
+
+---
+
 ## Auto-Jump to Latest Candles bei Timeframe-Wechsel - 01.11.2025 🎯
 
 ### Feature-Beschreibung:

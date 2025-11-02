@@ -1220,23 +1220,26 @@ class IndicatorManager {
 
         indicator.setConfig(newConfig);
 
-        // 🔄 Re-render: Alte Series entfernen, dann neu zeichnen
+        // 🔄 CRITICAL FIX: Re-render ALLE Indikatoren statt nur den einen
+        // Grund: TradingView Legend cached alte Einträge bei removeSeries()
+        // Lösung: Alle Indikatoren neu rendern → Legend wird komplett neu gebaut
         const chartData = window.candlestickSeries?.data();
         if (chartData && chartData.length > 0 && window.chart) {
-            // 1. Alte Series entfernen
-            if (indicator.series) {
-                try {
-                    window.chart.removeSeries(indicator.series);
-                    indicator.series = null;
-                } catch (e) {
-                    console.warn('⚠️ Fehler beim Entfernen der alten Series:', e);
+            // Entferne ALLE Series von ALLEN Indikatoren
+            this.activeIndicators.forEach(ind => {
+                if (ind.series) {
+                    try {
+                        window.chart.removeSeries(ind.series);
+                        ind.series = null;
+                    } catch (e) {
+                        console.warn('⚠️ Fehler beim Entfernen der Series:', e);
+                    }
                 }
-            }
+            });
 
-            // 2. Neu rendern mit neuer Config
-            indicator.render(window.chart);
-            indicator.update(null, chartData);
-            console.log(`🔄 Indikator neu gerendert mit neuer Config`);
+            // Rendere ALLE Indikatoren neu (inkl. dem geänderten)
+            this.reRenderAll(window.chart);
+            console.log(`🔄 Alle Indikatoren neu gerendert (Legend-Ghost-Bug-Fix)`);
         }
 
         this.saveState();
