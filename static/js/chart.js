@@ -886,7 +886,8 @@
             // X-Achse Observer (Zeit/Zoom/Pan)
             chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
                 // 🎯 USER-DRAG DETECTION: Deaktiviere Autoscale bei manuellem Zoom/Pan
-                if (!window.isProgrammaticRangeChange && window.autoscaleEnabled) {
+                // ABER: Nicht während Go To Date (wenn originalAutoscaleState existiert)
+                if (!window.isProgrammaticRangeChange && window.autoscaleEnabled && typeof window.originalAutoscaleState === 'undefined') {
                     // User hat manuell gezoomt/gepannt → Autoscale OFF
                     window.autoscaleEnabled = false;
 
@@ -1827,12 +1828,28 @@
                             console.warn(`⚠️ ${message.data.length - validatedGoToData.length} invalid candles removed from go_to_date`);
                         }
 
-                        // ⚖️ AUTOSCALE PERSISTENZ: Stelle Autoscale-Einstellung nach Chart-Reinitialisierung wieder her
-                        if (typeof window.autoscaleEnabled !== 'undefined') {
+                        // ⚖️ AUTOSCALE RESTORE: Stelle ursprünglichen Zustand wieder her
+                        if (typeof window.originalAutoscaleState !== 'undefined') {
+                            // Restore Original-Zustand (war vorher AN oder AUS)
+                            window.autoscaleEnabled = window.originalAutoscaleState;
                             chart.priceScale('right').applyOptions({
-                                autoScale: window.autoscaleEnabled
+                                autoScale: window.originalAutoscaleState
                             });
-                            console.log('⚖️ Autoscale restored after chart_reinitialize:', window.autoscaleEnabled ? 'ON' : 'OFF');
+
+                            // Update Button UI
+                            const autoscaleBtn = document.getElementById('autoscaleBtn');
+                            if (autoscaleBtn) {
+                                if (window.originalAutoscaleState) {
+                                    autoscaleBtn.classList.add('active');
+                                    autoscaleBtn.title = 'Autoscale: ON';
+                                } else {
+                                    autoscaleBtn.classList.remove('active');
+                                    autoscaleBtn.title = 'Autoscale: OFF';
+                                }
+                            }
+
+                            console.log('⚖️ Autoscale restored to original state:', window.originalAutoscaleState ? 'ON' : 'OFF');
+                            delete window.originalAutoscaleState; // Cleanup
                         }
 
                         // Positioniere Chart zu gewähltem Datum (zeige 50 Kerzen ab Startdatum)
@@ -5784,6 +5801,19 @@
 
             console.log('[GO TO DATE] Request:', selectedDate);
             serverLog('[GO TO DATE] Request: ' + selectedDate);
+
+            // 💾 Speichere aktuellen Autoscale-Zustand NUR beim ersten Go To (nicht überschreiben!)
+            if (typeof window.originalAutoscaleState === 'undefined') {
+                window.originalAutoscaleState = window.autoscaleEnabled;
+                console.log('💾 Original Autoscale Status gespeichert:', window.originalAutoscaleState ? 'ON' : 'OFF');
+            }
+
+            // 🎯 Aktiviere Autoscale temporär für optimale Chart-Positionierung
+            if (!window.autoscaleEnabled) {
+                window.autoscaleEnabled = true;
+                chart.priceScale('right').applyOptions({ autoScale: true });
+                console.log('⚖️ Autoscale temporär aktiviert für Go To Date');
+            }
 
             // Modal schließen
             closeDateModal();
