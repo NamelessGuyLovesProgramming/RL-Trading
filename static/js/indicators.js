@@ -400,6 +400,7 @@ class RectanglePaneView {
         const chart = this._source.chart;
 
         if (!series || !chart) {
+            console.warn('⚠️ RectanglePaneView update: series oder chart nicht verfügbar');
             return;
         }
 
@@ -503,7 +504,7 @@ class SessionIndicator extends BaseIndicator {
             showLabels: true,
 
             // Handelstage-Rückblick (echte Handelstage Mo-Fr)
-            tradingDaysLookback: 5      // Anzahl Handelstage rückwirkend ab letzter Kerze
+            tradingDaysLookback: null   // null = unbegrenzt (alle Daten), Zahl = letzte N Handelstage
         };
 
         super(id, 'SESSION', { ...defaults, ...config });
@@ -511,6 +512,7 @@ class SessionIndicator extends BaseIndicator {
         // Session-Boxen Storage
         this.sessionBoxes = [];
         this.highLowLines = [];
+        this.chart = null; // Chart-Referenz für sichtbaren Bereich (wird in render() gesetzt)
 
         console.log('🌍 Session Indikator erstellt:', this.config);
     }
@@ -543,13 +545,22 @@ class SessionIndicator extends BaseIndicator {
     // Hilfsfunktion: Hole letzte N Handelstage ab Enddatum
     getLastNTradingDays(endDate, n) {
         const tradingDays = [];
-        const currentDate = new Date(endDate);
+
+        // CRITICAL FIX: Nutze lokale Zeit mit UTC-Offset statt UTC
+        // Konvertiere endDate zu lokaler Zeit
+        const offsetMinutes = this.config.utcOffset * 60;
+        const localEndDate = new Date(endDate.getTime() + offsetMinutes * 60 * 1000);
+
+        const currentDate = new Date(localEndDate);
 
         // Rückwärts zählen bis N Handelstage gefunden
         while (tradingDays.length < n) {
             if (this.isTradingDay(currentDate)) {
-                // Speichere Datum als YYYY-MM-DD String
-                const dateStr = currentDate.toISOString().split('T')[0];
+                // Speichere Datum als YYYY-MM-DD String (lokale Zeit)
+                const year = currentDate.getUTCFullYear();
+                const month = String(currentDate.getUTCMonth() + 1).padStart(2, '0');
+                const day = String(currentDate.getUTCDate()).padStart(2, '0');
+                const dateStr = `${year}-${month}-${day}`;
                 tradingDays.push(dateStr);
             }
             // Gehe 1 Tag zurück
@@ -559,10 +570,48 @@ class SessionIndicator extends BaseIndicator {
         return tradingDays;
     }
 
+    // Hilfsfunktion: Hole ALLE Handelstage aus verfügbaren Daten (unbegrenzter Modus)
+    getAllTradingDaysInData(data) {
+        const tradingDaysSet = new Set();
+
+        data.forEach(candle => {
+            const date = new Date(candle.time * 1000);
+
+            // Wende UTC-Offset an (konsistent mit isInTradingDaysList)
+            const offsetMinutes = this.config.utcOffset * 60;
+            const localDate = new Date(date.getTime() + offsetMinutes * 60 * 1000);
+
+            // Prüfe ob Handelstag (Mo-Fr)
+            if (this.isTradingDay(localDate)) {
+                // Extrahiere Datum als YYYY-MM-DD String
+                const year = localDate.getUTCFullYear();
+                const month = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+                const day = String(localDate.getUTCDate()).padStart(2, '0');
+                const dateStr = `${year}-${month}-${day}`;
+                tradingDaysSet.add(dateStr);
+            }
+        });
+
+        // Konvertiere Set zu Array und sortiere (älteste zuerst)
+        return Array.from(tradingDaysSet).sort();
+    }
+
     // Hilfsfunktion: Prüfe ob Kerze in Handelstagen-Liste liegt
     isInTradingDaysList(candleTime, tradingDaysList) {
         const date = new Date(candleTime * 1000);
-        const dateStr = date.toISOString().split('T')[0];
+
+        // CRITICAL FIX: Wende UTC-Offset an für konsistente Datumsberechnung
+        // UTC-Offset wird auch für Session-Erkennung genutzt - muss konsistent sein!
+        // Konvertiere zu lokaler Zeit mit Offset (in Minuten)
+        const offsetMinutes = this.config.utcOffset * 60;
+        const localDate = new Date(date.getTime() + offsetMinutes * 60 * 1000);
+
+        // Nutze lokales Datum für Vergleich
+        const year = localDate.getUTCFullYear();
+        const month = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(localDate.getUTCDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+
         return tradingDaysList.includes(dateStr);
     }
 
@@ -596,7 +645,6 @@ class SessionIndicator extends BaseIndicator {
             highLows.push({ type, start, end, high, low, candles });
         });
 
-        console.log(`✅ Session berechnet: ${sessions.length} Sessions gefunden`);
         return { sessions, highLows };
     }
 
@@ -604,34 +652,31 @@ class SessionIndicator extends BaseIndicator {
     findSessionRanges(data) {
         if (!data || data.length === 0) return [];
 
-        // Berechne letzte N Handelstage ab letzter Kerze
-        const lastCandle = data[data.length - 1];
-        const lastCandleDate = new Date(lastCandle.time * 1000);
-        const tradingDaysList = this.getLastNTradingDays(lastCandleDate, this.config.tradingDaysLookback);
+        // MODUS-SWITCH: null = unbegrenzt (alle Daten), Zahl = letzte N Handelstage
+        let tradingDaysList;
 
-        console.log(`📅 Letzte ${this.config.tradingDaysLookback} Handelstage:`, tradingDaysList);
+        if (this.config.tradingDaysLookback === null) {
+            // MODUS 2: Unbegrenzter Modus - alle verfügbaren Handelstage nutzen
+            tradingDaysList = this.getAllTradingDaysInData(data);
+        } else {
+            // MODUS 1: Begrenzter Modus - nur letzte N Handelstage
+            // CRITICAL: IMMER die neueste Kerze im Dataset nutzen (nicht sichtbare!)
+            // → Sessions bleiben bei den neuesten Daten, egal wo User scrollt
+            const newestCandle = data[data.length - 1];
+            const newestCandleDate = new Date(newestCandle.time * 1000);
+            tradingDaysList = this.getLastNTradingDays(newestCandleDate, this.config.tradingDaysLookback);
+        }
+
+        // CRITICAL FIX: Filtere Daten VORHER auf Handelstage, nicht WÄHREND der Iteration
+        // Verhindert abgebrochene Sessions durch Kerzen außerhalb der Handelstage
+        const filteredData = data.filter(candle => this.isInTradingDaysList(candle.time, tradingDaysList));
 
         const ranges = [];
         let currentSession = null;
         let currentCandles = [];
 
-        data.forEach(candle => {
-            // Prüfe ob Kerze in Handelstagen-Liste liegt
-            if (!this.isInTradingDaysList(candle.time, tradingDaysList)) {
-                // Kerze liegt nicht in Handelstagen → ignoriere Session
-                if (currentSession && currentCandles.length > 0) {
-                    // Speichere vorherige Session bevor wir abbrechen
-                    ranges.push({
-                        type: currentSession,
-                        start: currentCandles[0].time,
-                        end: currentCandles[currentCandles.length - 1].time,
-                        candles: [...currentCandles]
-                    });
-                }
-                currentSession = null;
-                currentCandles = [];
-                return;
-            }
+        filteredData.forEach(candle => {
+            // Alle Kerzen hier sind garantiert in den Handelstagen
 
             // Wende UTC-Offset an (Candle-Zeit ist UTC, wir brauchen lokale Zeit)
             const date = new Date(candle.time * 1000);
@@ -640,11 +685,6 @@ class SessionIndicator extends BaseIndicator {
             const localMinute = date.getUTCMinutes();
             const hourMinute = `${String(localHour).padStart(2, '0')}:${String(localMinute).padStart(2, '0')}`;
             const minutes = this.timeToMinutes(hourMinute);
-
-            // DEBUG: Log erste Kerze zur Verifizierung
-            if (data.indexOf(candle) === 0) {
-                console.log(`🕐 UTC-Offset: ${this.config.utcOffset} | UTC: ${utcHour}:${String(localMinute).padStart(2, '0')} → Lokal: ${hourMinute}`);
-            }
 
             // Bestimme Session-Typ
             let sessionType = null;
@@ -664,12 +704,13 @@ class SessionIndicator extends BaseIndicator {
             if (sessionType !== currentSession) {
                 // Speichere vorherige Session
                 if (currentSession && currentCandles.length > 0) {
-                    ranges.push({
+                    const sessionRange = {
                         type: currentSession,
                         start: currentCandles[0].time,
                         end: currentCandles[currentCandles.length - 1].time,
                         candles: [...currentCandles]
-                    });
+                    };
+                    ranges.push(sessionRange);
                 }
 
                 // Starte neue Session
@@ -682,15 +723,23 @@ class SessionIndicator extends BaseIndicator {
 
         // Letzte Session speichern
         if (currentSession && currentCandles.length > 0) {
-            ranges.push({
+            const sessionRange = {
                 type: currentSession,
                 start: currentCandles[0].time,
                 end: currentCandles[currentCandles.length - 1].time,
                 candles: currentCandles
-            });
+            };
+            ranges.push(sessionRange);
         }
 
-        console.log(`✅ ${ranges.length} Sessions in letzten ${this.config.tradingDaysLookback} Handelstagen gefunden`);
+        // Summary Log (kompakt)
+        const uniqueDays = new Set(ranges.map(r => new Date(r.start * 1000).toISOString().split('T')[0])).size;
+        if (this.config.tradingDaysLookback === null) {
+            console.log(`✅ ${ranges.length} Sessions in ${uniqueDays} Handelstagen (Unbegrenzter Modus)`);
+        } else {
+            console.log(`✅ ${ranges.length} Sessions in ${uniqueDays} Handelstagen (Limit: ${this.config.tradingDaysLookback} Tage)`);
+        }
+
         return ranges;
     }
 
@@ -699,6 +748,9 @@ class SessionIndicator extends BaseIndicator {
             console.error('❌ Session render: Chart nicht verfügbar');
             return;
         }
+
+        // CRITICAL: Speichere Chart-Referenz für sichtbaren Bereich in findSessionRanges()
+        this.chart = chart;
 
         const candleData = window.candlestickSeries?.data();
         if (!candleData || candleData.length === 0) {
@@ -753,8 +805,36 @@ class SessionIndicator extends BaseIndicator {
         this.highLowLines = [];
         console.log('🧹 Alte Session-Boxen entfernt');
 
+        // GUARD: Handelstage-Tracking für Begrenzung
+        const paintedTradingDays = new Set();
+        let skippedCount = 0;
+
+        // CRITICAL: Reverse Array → Neueste Sessions zuerst malen (für Limit)
+        // Ohne Reverse: Alte Sessions werden gemalt, neue übersprungen
+        // Mit Reverse: Neue Sessions werden gemalt, alte übersprungen (korrekt!)
+        const reversedHighLows = [...highLows].reverse();
+
         // Rendere Session-Boxen mit Rectangle Primitives
-        highLows.forEach(({ type, start, end, high, low, candles }) => {
+        let attachedCount = 0;
+        reversedHighLows.forEach(({ type, start, end, high, low, candles }, index) => {
+            // Extrahiere Handelstag aus Session-Start (mit UTC-Offset)
+            const sessionDate = new Date(start * 1000);
+            const offsetMinutes = this.config.utcOffset * 60;
+            const localDate = new Date(sessionDate.getTime() + offsetMinutes * 60 * 1000);
+            const dateKey = `${localDate.getUTCFullYear()}-${String(localDate.getUTCMonth() + 1).padStart(2, '0')}-${String(localDate.getUTCDate()).padStart(2, '0')}`;
+
+            // GUARD: Prüfe Handelstage-Limit (nur im begrenzten Modus)
+            if (this.config.tradingDaysLookback !== null) {
+                // Ist dieser Handelstag neu und würde Limit überschreiten?
+                if (!paintedTradingDays.has(dateKey) && paintedTradingDays.size >= this.config.tradingDaysLookback) {
+                    skippedCount++;
+                    return; // SKIP - Limit erreicht
+                }
+            }
+
+            // Handelstag merken
+            paintedTradingDays.add(dateKey);
+
             const sessionColor = this.getSessionColor(type);
             const colorWithAlpha = this.colorWithTransparency(sessionColor, this.config.transparency);
             const label = this.getSessionLabel(type);
@@ -773,11 +853,19 @@ class SessionIndicator extends BaseIndicator {
             );
 
             // Attach Primitive zu Candlestick Series
-            candlestickSeries.attachPrimitive(rectangle);
-            this.highLowLines.push({ primitive: rectangle, type: 'rectangle-box', sessionType: type });
+            try {
+                candlestickSeries.attachPrimitive(rectangle);
+                this.highLowLines.push({ primitive: rectangle, type: 'rectangle-box', sessionType: type });
+                attachedCount++;
+            } catch (e) {
+                console.error(`❌ Fehler beim Attach von Box #${index + 1}:`, e);
+            }
         });
 
-        console.log(`✅ ${highLows.length} Session Rectangle-Boxen + ${this.highLowLines.length} Items gerendert`);
+        if (skippedCount > 0) {
+            console.log(`⏭️ ${skippedCount} Sessions übersprungen (Handelstage-Limit: ${this.config.tradingDaysLookback})`);
+        }
+        console.log(`✅ ${attachedCount}/${highLows.length} Session Rectangle-Boxen attached (${paintedTradingDays.size} Handelstage)`);
     }
 
     getSessionColor(type) {
@@ -909,22 +997,40 @@ class IndicatorManager {
         const id = `${type}_${this.nextId++}`;
         const indicator = new IndicatorClass(id, config);
 
-        // Render auf Chart
-        indicator.render(window.chart);
+        // Render auf Chart mit Auto-Retry (Race Condition Protection)
+        const tryRender = (retryCount = 0) => {
+            try {
+                indicator.render(window.chart);
+                console.log(`✅ Indikator hinzugefügt: ${type} (ID: ${id})`);
 
-        // Speichern
-        this.activeIndicators.set(id, indicator);
+                // Speichern
+                this.activeIndicators.set(id, indicator);
 
-        // CRITICAL: Nur speichern wenn nicht vom Load aufgerufen (verhindert Duplikation)
-        if (!skipSave) {
-            this.saveState();
-        }
+                // CRITICAL: Nur speichern wenn nicht vom Load aufgerufen (verhindert Duplikation)
+                if (!skipSave) {
+                    this.saveState();
+                }
 
-        console.log(`✅ Indikator hinzugefügt: ${type} (ID: ${id})`);
+                // UI-Label rendern
+                this.renderLabels();
+            } catch (e) {
+                if (retryCount < 2) {
+                    // Retry nach kurzer Wartezeit (Chart noch nicht ready)
+                    console.warn(`⚠️ Indikator-Render fehlgeschlagen (Versuch ${retryCount + 1}/3), retry in ${100 * (retryCount + 1)}ms:`, e.message);
+                    setTimeout(() => tryRender(retryCount + 1), 100 * (retryCount + 1));
+                } else {
+                    // Nach 3 Versuchen: Aufgeben aber Indikator behalten für manuellen Retry
+                    console.error(`❌ Indikator-Render fehlgeschlagen nach 3 Versuchen: ${type} (ID: ${id})`, e);
+                    // Speichere trotzdem (User kann später neu laden)
+                    this.activeIndicators.set(id, indicator);
+                    if (!skipSave) {
+                        this.saveState();
+                    }
+                }
+            }
+        };
 
-        // UI-Label rendern
-        this.renderLabels();
-
+        tryRender();
         return id;
     }
 
@@ -1238,8 +1344,8 @@ class IndicatorManager {
         document.getElementById('sessionHighLowColor').value = config.highLowColor || '#FFFFFF';
         document.getElementById('sessionHighLowWidth').value = config.highLowWidth || 1;
 
-        // Handelstage-Rückblick
-        document.getElementById('sessionTradingDaysInput').value = config.tradingDaysLookback || 5;
+        // Handelstage-Rückblick (null = leer, Zahl = Wert)
+        document.getElementById('sessionTradingDaysInput').value = config.tradingDaysLookback !== null ? config.tradingDaysLookback : '';
 
         // Öffne Modal
         modal.style.display = 'flex';
@@ -1257,6 +1363,8 @@ class IndicatorManager {
 
         // Lese neue Config
         const utcOffsetValue = document.getElementById('sessionUtcOffsetInput').value;
+        const tradingDaysValue = document.getElementById('sessionTradingDaysInput').value.trim();
+
         const newConfig = {
             utcOffset: utcOffsetValue !== '' ? parseInt(utcOffsetValue) : 2,  // Fix: 0 ist valide!
             transparency: parseInt(document.getElementById('sessionTransparencyInput').value) || 10,
@@ -1276,7 +1384,8 @@ class IndicatorManager {
             highLowColor: document.getElementById('sessionHighLowColor').value || '#FFFFFF',
             highLowWidth: parseInt(document.getElementById('sessionHighLowWidth').value) || 1,
 
-            tradingDaysLookback: parseInt(document.getElementById('sessionTradingDaysInput').value) || 5
+            // MODUS SWITCH: Leer = null (unbegrenzt), Zahl = begrenzt
+            tradingDaysLookback: tradingDaysValue === '' ? null : parseInt(tradingDaysValue)
         };
 
         // Update Indikator

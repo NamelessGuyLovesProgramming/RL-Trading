@@ -321,6 +321,12 @@
 
                         console.log(`✅ +${newHistoricalData.length} Kerzen geladen: Total ${this.currentCandles} (${this.currentCandles}/${this.config.max})`);
 
+                        // 📊 BUGFIX: Update Indikatoren nach Lazy Load
+                        if (window.IndicatorManager) {
+                            window.IndicatorManager.syncWithTimeframe(combinedData);
+                            console.log('📊 Indikatoren nach Lazy Load aktualisiert');
+                        }
+
                         // Toast-Benachrichtigung
                         if (this.currentCandles >= this.config.max * 0.9) {
                             this.showZoomNotification(
