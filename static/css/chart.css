@@ -637,7 +637,7 @@
             left: 60px; /* Rechts von left-sidebar (35px + 25px Abstand) */
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 4px; /* Kompakter: 8px → 4px */
             z-index: 900;
             pointer-events: none; /* Erlaubt Click-Through auf Chart */
         }
@@ -645,25 +645,26 @@
         .indicator-label {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px; /* Kompakter: 10px → 8px */
             background: transparent; /* Kein Hintergrund by default */
             border: 1px solid transparent; /* Keine Border by default */
-            border-radius: 4px;
-            padding: 6px 12px;
+            border-radius: 3px; /* Kompakter: 4px → 3px */
+            padding: 4px 8px; /* Kompakter: 6px 12px → 4px 8px */
             pointer-events: auto; /* Labels selbst sind klickbar */
             transition: all 0.2s;
         }
 
-        .indicator-label:hover {
+        /* Gruppierter Hover: Container-Hover macht ALLE Labels sichtbar */
+        .indicator-labels-container:hover .indicator-label {
             background: rgba(30, 30, 30, 0.95); /* Hintergrund erscheint beim Hover */
             border-color: #404040; /* Border erscheint beim Hover */
         }
 
         .indicator-name {
-            font-size: 12px;
-            font-weight: bold;
+            font-size: 11px; /* Kompakter: 12px → 11px */
+            font-weight: 600; /* Etwas leichter: bold → 600 */
             color: #fff;
-            min-width: 60px;
+            min-width: 50px; /* Kompakter: 60px → 50px */
         }
 
         .indicator-name.hidden {
@@ -678,7 +679,8 @@
             transition: opacity 0.2s;
         }
 
-        .indicator-label:hover .indicator-controls {
+        /* Gruppierter Hover: Container-Hover macht ALLE Buttons sichtbar */
+        .indicator-labels-container:hover .indicator-controls {
             opacity: 1;
         }
 
@@ -686,10 +688,10 @@
             background: #2a2a2a;
             border: 1px solid #404040;
             color: #ccc;
-            padding: 3px 8px;
+            padding: 2px 6px; /* Kompakter: 3px 8px → 2px 6px */
             border-radius: 3px;
             cursor: pointer;
-            font-size: 11px;
+            font-size: 10px; /* Kompakter: 11px → 10px */
             transition: all 0.2s;
         }
 
