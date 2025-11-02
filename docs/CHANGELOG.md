@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.2] - 2025-11-02
+
+### 🎯 FEATURE - Temporäres Autoscaling bei "Go To Date"
+
+Intelligente Autoscale-Verwaltung während Chart-Navigation mit automatischer State-Wiederherstellung.
+
+#### Added
+
+**Smart Autoscale für "Go To Date"**:
+- ⚖️ Autoscale wird temporär aktiviert während "Go To Date" Navigation für optimale Chart-Positionierung
+- 💾 Original-Zustand (ON/OFF) wird gespeichert und nach Chart-Reload automatisch wiederhergestellt
+- ✅ User-Präferenz bleibt erhalten:
+  - Autoscale OFF → temporär ON während Laden → zurück zu OFF
+  - Autoscale ON → bleibt ON durchgehend
+
+#### Implementation Details
+
+**File: `static/js/chart.js`**
+
+1. **State Speicherung & Temporäre Aktivierung** (Lines 5804-5808):
+   ```javascript
+   // 💾 Speichere Original-Zustand NUR beim ersten Go To
+   if (typeof window.originalAutoscaleState === 'undefined') {
+       window.originalAutoscaleState = window.autoscaleEnabled;
+   }
+
+   // 🎯 Aktiviere Autoscale temporär für optimale Positionierung
+   if (!window.autoscaleEnabled) {
+       window.autoscaleEnabled = true;
+       chart.priceScale('right').applyOptions({ autoScale: true });
+   }
+   ```
+
+2. **State Wiederherstellung** (Lines 1830-1852):
+   ```javascript
+   // ⚖️ Stelle Original-Zustand nach Chart-Reload wieder her
+   if (typeof window.originalAutoscaleState !== 'undefined') {
+       window.autoscaleEnabled = window.originalAutoscaleState;
+       chart.priceScale('right').applyOptions({
+           autoScale: window.originalAutoscaleState
+       });
+
+       // Update Button UI
+       const autoscaleBtn = document.getElementById('autoscaleBtn');
+       if (autoscaleBtn) {
+           autoscaleBtn.classList.toggle('active', window.originalAutoscaleState);
+       }
+
+       delete window.originalAutoscaleState; // Cleanup
+   }
+   ```
+
+3. **User-Drag Detection Bypass** (Line 890):
+   ```javascript
+   // Deaktiviere Autoscale bei User-Drag, ABER nicht während Go To
+   if (!window.isProgrammaticRangeChange &&
+       window.autoscaleEnabled &&
+       typeof window.originalAutoscaleState === 'undefined') {
+       // User-Drag erkannt → Autoscale OFF
+   }
+   ```
+
+#### Testing
+
+**Test-Szenarien erfolgreich:**
+| Test | Vorher | Nachher | Status |
+|------|--------|---------|--------|
+| Szenario 1 | Autoscale OFF | Autoscale OFF | ✅ PASS |
+| Szenario 2 | Autoscale ON | Autoscale ON | ✅ PASS |
+
+**Test-Ablauf:**
+1. Setze Autoscale-Zustand (ON oder OFF)
+2. Öffne "Go To Date" Modal
+3. Wähle Datum und führe Navigation aus
+4. Verifiziere: Autoscale-Zustand entspricht Original-Zustand vor Navigation
+
+#### Technical Notes
+
+**Race Condition Prevention:**
+- User-Drag Detection wird während Go To Operation deaktiviert
+- Verhindert dass manuelle Drag-Erkennung den gespeicherten State überschreibt
+- `window.originalAutoscaleState` dient als Flag für laufende Go To Operation
+
+**State Management:**
+- `window.originalAutoscaleState`: Temporärer State (nur während Go To)
+- `window.autoscaleEnabled`: Persistenter State
+- Cleanup nach erfolgreicher Wiederherstellung
+
+**Commit:** `de941ab` - feat: Temporäres Autoscaling bei "Go To Date" mit State-Preservation
+
+---
+
 ## [2.1.1] - 2025-10-27
 
 ### 🎯 FEATURE - Limit Order Wick-Triggering & Canvas Transparency
