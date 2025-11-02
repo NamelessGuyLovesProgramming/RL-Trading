@@ -722,15 +722,28 @@
                         // Convert timestamp to Date
                         const date = new Date(timestamp * 1000);
 
-                        // Apply UTC offset
-                        const utcHours = date.getUTCHours();
-                        const adjustedHours = (utcHours + utcOffset + 24) % 24;
+                        // Apply UTC offset by adjusting the date
+                        const offsetMs = utcOffset * 60 * 60 * 1000;
+                        const adjustedDate = new Date(date.getTime() + offsetMs);
 
-                        // Format as HH:MM
-                        const hours = String(adjustedHours).padStart(2, '0');
-                        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+                        // Weekday names (short)
+                        const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                        const weekday = weekdays[adjustedDate.getUTCDay()];
 
-                        return `${hours}:${minutes}`;
+                        // Month names (short, German)
+                        const months = ['Jan', 'Feb', 'Mrz', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+                        const month = months[adjustedDate.getUTCMonth()];
+
+                        // Day and year
+                        const day = adjustedDate.getUTCDate();
+                        const year = String(adjustedDate.getUTCFullYear()).slice(-2);
+
+                        // Time
+                        const hours = String(adjustedDate.getUTCHours()).padStart(2, '0');
+                        const minutes = String(adjustedDate.getUTCMinutes()).padStart(2, '0');
+
+                        // Format: "Fri 17 Dez '25 00:00"
+                        return `${weekday} ${day} ${month} '${year} ${hours}:${minutes}`;
                     }
                 }
             });
