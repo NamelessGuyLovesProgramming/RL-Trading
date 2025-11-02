@@ -33,8 +33,7 @@ class TimeframeDataRepository:
         Returns:
             Dict or None: Candle-Daten (time, open, high, low, close, volume) oder None bei Fehler
         """
-        if isinstance(target_time, (int, float)):
-            target_time = datetime.fromtimestamp(target_time)
+        target_time = self.unified_time.ensure_utc_aware(target_time)
 
         # Standardtoleranz basierend auf Timeframe
         if tolerance_minutes is None:
@@ -71,8 +70,7 @@ class TimeframeDataRepository:
         """
         print(f"[DEBUG] get_next_candle_after_time: {timeframe}, current_time={current_time}")
 
-        if isinstance(current_time, (int, float)):
-            current_time = datetime.fromtimestamp(current_time)
+        current_time = self.unified_time.ensure_utc_aware(current_time)
 
         df = self._load_and_validate_timeframe_data(timeframe)
         if df is None or df.empty:
@@ -217,9 +215,8 @@ class TimeframeDataRepository:
         Returns:
             Liste von Candle-Dicts, sortiert chronologisch (älteste zuerst)
         """
-        # Normalisiere before_time zu datetime
-        if isinstance(before_time, (int, float)):
-            before_time = datetime.fromtimestamp(before_time)
+        # Normalisiere before_time zu datetime (UTC-aware)
+        before_time = self.unified_time.ensure_utc_aware(before_time)
 
         print(f"[TimeframeDataRepository] [LAZY-LOAD] Loading {count} candles BEFORE {before_time} for {timeframe}")
 
@@ -326,7 +323,7 @@ class TimeframeDataRepository:
         elif 'time' in row.index:
             timestamp = row['time']
             if isinstance(timestamp, (int, float)):
-                time_value = datetime.fromtimestamp(timestamp)
+                time_value = self.unified_time.ensure_utc_aware(timestamp)
             else:
                 time_value = pd.to_datetime(timestamp)
                 timestamp = time_value.timestamp()

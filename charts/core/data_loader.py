@@ -3,9 +3,9 @@ CSV Data Loader Service
 Robust CSV-Daten Loader mit Multi-Path Fallback und Caching
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class CSVLoader:
@@ -15,6 +15,20 @@ class CSVLoader:
         self.data_cache: Dict[str, Any] = {}  # {timeframe: pandas.DataFrame}
         self.available_timeframes = ["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h"]
         print("[CSVLoader] Initialized multi-timeframe CSV loader")
+
+    @staticmethod
+    def ensure_utc_aware(dt: Union[datetime, Any]) -> datetime:
+        """
+        Ensures datetime is UTC-aware.
+        Prevents: Invalid comparison between dtype=datetime64[ns, UTC] and Timestamp
+        """
+        if not isinstance(dt, datetime):
+            return dt
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        elif dt.tzinfo != timezone.utc:
+            return dt.astimezone(timezone.utc)
+        return dt
 
     def get_csv_paths(self, timeframe: str) -> List[Path]:
         """Gibt prioritisierte Liste von CSV-Pfaden für einen Timeframe zurück"""
@@ -91,6 +105,8 @@ class CSVLoader:
 
         import pandas as pd
 
+        # CRITICAL: Ensure UTC-aware comparison to prevent "Invalid comparison between dtype=datetime64[ns, UTC] and Timestamp"
+        current_datetime = self.ensure_utc_aware(current_datetime)
         target_datetime = pd.Timestamp(current_datetime)
         future_candles = df[df['datetime'] > target_datetime].sort_values('datetime')
 

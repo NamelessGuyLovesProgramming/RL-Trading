@@ -4,8 +4,8 @@ Single Source of Truth für ALLE Zeit-bezogenen Operationen
 Koordiniert master_clock, debug_controller, TimeframeSyncManager und global_skip_events
 """
 
-from typing import Dict, Set, List, Any, Optional
-from datetime import datetime, timedelta
+from typing import Dict, Set, List, Any, Optional, Union
+from datetime import datetime, timedelta, timezone
 
 
 class UnifiedTimeManager:
@@ -49,11 +49,39 @@ class UnifiedTimeManager:
 
         print("[UnifiedTimeManager] Zentrale Zeit-Koordination mit Skip-State Isolation initialisiert")
 
+    @staticmethod
+    def ensure_utc_aware(timestamp: Union[int, float, datetime]) -> datetime:
+        """
+        🌍 Zentrale UTC-Timezone Conversion
+        Konvertiert ALLE Timestamps zu UTC-aware datetime objects
+
+        Args:
+            timestamp: Unix timestamp (int/float) oder datetime object
+
+        Returns:
+            UTC-aware datetime object
+        """
+        if isinstance(timestamp, (int, float)):
+            # Unix timestamp -> UTC-aware datetime
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        elif isinstance(timestamp, datetime):
+            # Datetime -> ensure UTC-aware
+            if timestamp.tzinfo is None:
+                # Naive datetime -> assume UTC and make aware
+                return timestamp.replace(tzinfo=timezone.utc)
+            elif timestamp.tzinfo != timezone.utc:
+                # Other timezone -> convert to UTC
+                return timestamp.astimezone(timezone.utc)
+            else:
+                # Already UTC-aware
+                return timestamp
+        else:
+            raise TypeError(f"Unsupported timestamp type: {type(timestamp)}")
+
     def initialize_time(self, initial_time):
         """Initialisiert die globale Zeit - wird vom ersten Skip/GoTo aufgerufen"""
-        if isinstance(initial_time, (int, float)):
-            # Use UTC to avoid timezone conversion issues
-            initial_time = datetime.utcfromtimestamp(initial_time)
+        # Use central UTC conversion
+        initial_time = self.ensure_utc_aware(initial_time)
 
         self.current_debug_time = initial_time
         self.initialized = True
