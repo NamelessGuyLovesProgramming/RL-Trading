@@ -44,6 +44,9 @@
         window.chart = null;
         window.candlestickSeries = null;
 
+        // VOLUME DATA CACHE - Lightweight Charts speichert kein Volume!
+        window.volumeDataCache = [];
+
         // Chart initialisieren
         // EINFACHE CHART POSITIONING FUNKTION
         function setChartWith20PercentMargin(chartData) {
@@ -314,6 +317,15 @@
                         this.candlestickSeries.setData(combinedData);
                         this.currentCandles = combinedData.length;
 
+                        // 💾 CRITICAL: Update Volume Cache with historical data
+                        const newVolumeData = newHistoricalData.map(candle => ({
+                            time: candle.time,
+                            volume: candle.volume || 0
+                        }));
+                        // Prepend new historical volume data (older data comes first)
+                        window.volumeDataCache = [...newVolumeData, ...window.volumeDataCache];
+                        console.log(`💾 Volume Cache updated: +${newVolumeData.length} historical entries (Total: ${window.volumeDataCache.length})`);
+
                         // Update oldestLoadedTime
                         if (newHistoricalData.length > 0) {
                             this.oldestLoadedTime = newHistoricalData[0].time;
@@ -568,6 +580,14 @@
                 borderDownColor: '#f23645',
                 wickUpColor: '#089981',
                 wickDownColor: '#f23645'
+            });
+
+            // CRITICAL: Reserve space at bottom for Volume indicator
+            candlestickSeries.priceScale().applyOptions({
+                scaleMargins: {
+                    top: 0.1,       // 10% space from top
+                    bottom: 0.08    // 8% space at bottom for Volume (= uses upper 82%)
+                }
             });
 
             // Make candlestickSeries globally available for PnL rendering
@@ -1028,7 +1048,8 @@
                             open: parseFloat(item.open) || 0,
                             high: parseFloat(item.high) || 0,
                             low: parseFloat(item.low) || 0,
-                            close: parseFloat(item.close) || 0
+                            close: parseFloat(item.close) || 0,
+                            volume: parseInt(item.volume) || 0
                         }));
 
                         // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
@@ -1386,7 +1407,8 @@
                 open: parseFloat(item.open),
                 high: parseFloat(item.high),
                 low: parseFloat(item.low),
-                close: parseFloat(item.close)
+                close: parseFloat(item.close),
+                volume: parseInt(item.volume) || 0
             }));
 
             // Log filter results
@@ -1422,7 +1444,8 @@
                     open: parseFloat(item.open) || 18500,
                     high: parseFloat(item.high) || 18505,
                     low: parseFloat(item.low) || 18495,
-                    close: parseFloat(item.close) || 18500
+                    close: parseFloat(item.close) || 18500,
+                    volume: parseInt(item.volume) || 0
                 }));
             }
 
@@ -1438,8 +1461,17 @@
                     if (!isInitialized) initChart();
 
                     const data = message.data.data;
+                    console.log('🔍 DEBUG: First candle from backend:', data && data.length > 0 ? data[0] : 'no data');
                     if (data && data.length > 0) {
                         const validatedData = validateCandleData(data);
+
+                        // 💾 VOLUME CACHE: Speichere Volume separat (Lightweight Charts speichert es nicht!)
+                        window.volumeDataCache = validatedData.map(candle => ({
+                            time: candle.time,
+                            volume: candle.volume || 0
+                        }));
+                        console.log(`💾 Volume Cache: ${window.volumeDataCache.length} entries cached`);
+
                         // 📅 Erweitere Daten um Zukunfts-Kerzen für X-Achsen-Zeitstempel
                         const extendedData = validatedData; // No phantom candles
                         candlestickSeries.setData(extendedData);
@@ -1814,7 +1846,8 @@
                             open: parseFloat(message.candle.open),
                             high: parseFloat(message.candle.high),
                             low: parseFloat(message.candle.low),
-                            close: parseFloat(message.candle.close)
+                            close: parseFloat(message.candle.close),
+                            volume: parseInt(message.candle.volume) || 0
                         };
                         candlestickSeries.update(validatedCandle);
 
@@ -1856,7 +1889,8 @@
                             open: parseFloat(message.candle.open),
                             high: parseFloat(message.candle.high),
                             low: parseFloat(message.candle.low),
-                            close: parseFloat(message.candle.close)
+                            close: parseFloat(message.candle.close),
+                            volume: parseInt(message.candle.volume) || 0
                         };
                         candlestickSeries.update(validatedCandle);
 
@@ -2047,6 +2081,14 @@
                                     borderVisible: false,
                                     wickUpColor: '#089981',
                                     wickDownColor: '#f23645'
+                                });
+
+                                // CRITICAL: Reserve space at bottom for Volume indicator
+                                candlestickSeries.priceScale().applyOptions({
+                                    scaleMargins: {
+                                        top: 0.1,       // 10% space from top
+                                        bottom: 0.08    // 8% space at bottom for Volume
+                                    }
                                 });
 
                                 // Update global reference after recreation
@@ -4797,7 +4839,8 @@
                         open: parseFloat(item.open) || 0,  // Ensure float with fallback
                         high: parseFloat(item.high) || 0,
                         low: parseFloat(item.low) || 0,
-                        close: parseFloat(item.close) || 0
+                        close: parseFloat(item.close) || 0,
+                        volume: parseInt(item.volume) || 0
                     }));
 
                     // Cache for instant future access
@@ -6058,6 +6101,21 @@ function addSessionIndicator() {
 
     // Close dialog
     closeAddEMADialog();
+}
+
+function addVolumeIndicator() {
+    closeIndicatorsModal(); // Close Indicators Modal
+
+    // Add via IndicatorManager mit Default-Config
+    if (window.IndicatorManager) {
+        window.IndicatorManager.addIndicator('VOLUME', {
+            // Default Config wird in VolumeIndicator Konstruktor gesetzt
+        });
+
+        console.log('✅ Volume Indikator hinzugefügt');
+    } else {
+        console.error('❌ IndicatorManager nicht verfügbar');
+    }
 }
 
 // ========================================

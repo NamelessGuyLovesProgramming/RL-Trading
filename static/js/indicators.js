@@ -945,6 +945,145 @@ class SessionIndicator extends BaseIndicator {
 }
 
 // ============================================================
+// VOLUME INDICATOR - Volume Histogram with Price Direction
+// ============================================================
+
+class VolumeIndicator extends BaseIndicator {
+    constructor(id, config = {}) {
+        // Default Config
+        const defaults = {
+            bullishColor: '#26a69a',    // Grün für bullish (Close >= Open)
+            bearishColor: '#ef5350',    // Rot für bearish (Close < Open)
+            scaleMargins: {
+                top: 0.92,              // 92% Abstand vom oberen Rand (startet bei 92%)
+                bottom: 0               // Null Abstand zur X-Achse (belegt untere 8%)
+            }
+        };
+
+        super(id, 'VOLUME', { ...defaults, ...config });
+        console.log('📊 Volume Indikator erstellt:', this.config);
+    }
+
+    calculate(data) {
+        if (!data || data.length === 0) {
+            console.warn('⚠️ Volume: Keine Daten verfügbar');
+            return [];
+        }
+
+        // Extrahiere Volume + berechne Farbe basierend auf Candle-Direction
+        const volumeData = data.map(candle => {
+            // Validierung: Volume vorhanden?
+            if (candle.volume === undefined || candle.volume === null) {
+                console.warn('⚠️ Candle ohne Volume gefunden:', candle);
+                return null;
+            }
+
+            // Farb-Logik: Grün wenn Close >= Open, Rot sonst
+            const color = candle.close >= candle.open
+                ? this.config.bullishColor
+                : this.config.bearishColor;
+
+            return {
+                time: candle.time,
+                value: candle.volume,
+                color: color
+            };
+        }).filter(item => item !== null); // Filtere invalide Daten
+
+        console.log(`✅ Volume berechnet: ${volumeData.length} Bars`);
+        this.data = volumeData;
+        return volumeData;
+    }
+
+    render(chart) {
+        if (!chart) {
+            console.error('❌ Volume render: Chart nicht verfügbar');
+            return;
+        }
+
+        // Hole Candlestick-Daten + Volume aus Cache
+        const candleData = window.candlestickSeries?.data();
+        if (!candleData || candleData.length === 0) {
+            console.warn('⚠️ Volume render: Keine Candlestick-Daten verfügbar');
+            return;
+        }
+
+        // CRITICAL: Merge Candle-Daten mit Volume aus Cache
+        const candleDataWithVolume = candleData.map((candle, index) => {
+            const volumeEntry = window.volumeDataCache?.find(v => v.time === candle.time);
+            return {
+                ...candle,
+                volume: volumeEntry?.volume || 0
+            };
+        });
+
+        // Berechne Volume-Daten
+        const volumeData = this.calculate(candleDataWithVolume);
+        if (volumeData.length === 0) {
+            console.warn('⚠️ Volume render: Berechnung ergab keine Daten');
+            return;
+        }
+
+        // Erstelle Histogram-Series (Overlay-Modus)
+        try {
+            this.series = chart.addHistogramSeries({
+                priceFormat: {
+                    type: 'volume'  // Volume-Format für korrekte Darstellung
+                },
+                priceScaleId: '',   // Overlay-Modus (eigene Scale)
+                lastValueVisible: false,
+                priceLineVisible: false,
+                title: 'Volume'
+            });
+
+            // CRITICAL: Apply scaleMargins to Volume's price scale (separate from main chart)
+            this.series.priceScale().applyOptions({
+                scaleMargins: this.config.scaleMargins
+            });
+
+            this.series.setData(volumeData);
+            this.series.applyOptions({ visible: this.visible });
+
+            console.log(`✅ Volume-Indikator gerendert: ${volumeData.length} Bars`);
+        } catch (e) {
+            console.error('❌ Fehler beim Rendern von Volume:', e);
+        }
+    }
+
+    update(candle, allData) {
+        if (!allData || allData.length === 0) {
+            console.warn('⚠️ Volume update: Keine Daten verfügbar');
+            return;
+        }
+
+        // CRITICAL: Merge mit Volume-Cache
+        const allDataWithVolume = allData.map(c => {
+            const volumeEntry = window.volumeDataCache?.find(v => v.time === c.time);
+            return {
+                ...c,
+                volume: volumeEntry?.volume || 0
+            };
+        });
+
+        // Komplette Neuberechnung bei jedem Update
+        const newVolumeData = this.calculate(allDataWithVolume);
+
+        if (this.series && newVolumeData.length > 0) {
+            try {
+                this.series.setData(newVolumeData);
+                console.log(`🔄 Volume updated: ${newVolumeData.length} Bars`);
+            } catch (e) {
+                console.error('❌ Fehler beim Update von Volume:', e);
+            }
+        }
+    }
+
+    getDisplayName() {
+        return 'Volume';
+    }
+}
+
+// ============================================================
 // INDICATOR MANAGER - Singleton Pattern
 // ============================================================
 
@@ -1462,8 +1601,9 @@ const manager = IndicatorManager.getInstance();
 // Registriere Indikatoren
 manager.registerIndicator('EMA', EMAIndicator);
 manager.registerIndicator('SESSION', SessionIndicator);
+manager.registerIndicator('VOLUME', VolumeIndicator);
 
 // Make globally available
 window.IndicatorManager = manager;
 
-console.log('✅ Indicator System bereit (EMA + SESSION)');
+console.log('✅ Indicator System bereit (EMA + SESSION + VOLUME)');
