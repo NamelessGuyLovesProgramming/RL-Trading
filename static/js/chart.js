@@ -1919,6 +1919,13 @@
                             console.log('📊 Indikatoren nach Go To Date aktualisiert');
                         }
 
+                        // 🔥 LAZY LOAD RESET: Verhindert Mischen alter/neuer Daten nach Go To Date
+                        if (window.lazyLoadSystem) {
+                            window.lazyLoadSystem.oldestLoadedTime = null;
+                            window.lazyLoadSystem.currentCandles = extendedHistoricalData.length;
+                            console.log('🔄 Lazy Load State nach Go To Date zurückgesetzt');
+                        }
+
                         if (validatedHistoricalData.length !== message.data.length) {
                             console.warn(`⚠️ ${message.data.length - validatedHistoricalData.length} invalid candles removed from historical data`);
                         }

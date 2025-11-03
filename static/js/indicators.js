@@ -1251,7 +1251,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         }
 
         // 🔥 FIX: Lösche alle bestehenden LineSeries VOR Neuberechnung (Go To Date Fix)
-        console.log(`🧹 Lösche ${this.lineSeries.length} alte LineSeries...`);
         this.lineSeries.forEach(series => {
             try {
                 this.chart.removeSeries(series);
@@ -1260,14 +1259,8 @@ class SessionHighLowIndicator extends BaseIndicator {
             }
         });
         this.lineSeries = [];
-        console.log('✅ Alte LineSeries entfernt');
-
-        console.log('🔍 ========== SESSION HIGH/LOW CALCULATION START ==========');
-        console.log(`📊 Total Candles: ${data.length}`);
-        console.log(`📅 Neueste Kerze: ${new Date(data[data.length - 1].time * 1000).toISOString()}`);
 
         const sessionRanges = this.findSessionRanges(data);
-        console.log(`📋 Gefundene Session Ranges: ${sessionRanges.length}`);
 
         const completed = [];
 
@@ -1278,16 +1271,8 @@ class SessionHighLowIndicator extends BaseIndicator {
         sessionRanges.forEach((range, index) => {
             const { type, start, end, candles } = range;
 
-            console.log(`\n🔷 Session #${index + 1}: ${type.toUpperCase()}`);
-            console.log(`   Start: ${new Date(start * 1000).toISOString()}`);
-            console.log(`   End (letzte Kerze): ${new Date(end * 1000).toISOString()}`);
-            console.log(`   Kerzen: ${candles.length}`);
-
             // Guard: Mindestens 1 Kerze
-            if (candles.length === 0) {
-                console.log(`   ⚠️ SKIP: Keine Kerzen`);
-                return;
-            }
+            if (candles.length === 0) return;
 
             // CRITICAL: Ist das die letzte Session im Array?
             // → Könnte noch laufen, nur abgeschlossene Sessions nutzen
@@ -1298,11 +1283,7 @@ class SessionHighLowIndicator extends BaseIndicator {
             const sessionEndBuffer = end + (5 * 60); // 5 Minuten Puffer
             const isCompleted = sessionEndBuffer < newestCandleTime;
 
-            console.log(`   Ist letzte Session? ${isLastSession}`);
-            console.log(`   Ist abgeschlossen? ${isCompleted} (End+5min: ${new Date(sessionEndBuffer * 1000).toISOString()})`);
-
             if (!isCompleted && isLastSession) {
-                console.log(`   ⏳ SKIP: Session noch aktiv`);
                 return; // Skip aktive Session
             }
 
@@ -1323,9 +1304,6 @@ class SessionHighLowIndicator extends BaseIndicator {
                 }
             });
 
-            console.log(`   📈 High: ${high.toFixed(2)} @ ${new Date(highTime * 1000).toISOString()}`);
-            console.log(`   📉 Low: ${low.toFixed(2)} @ ${new Date(lowTime * 1000).toISOString()}`);
-
             // CRITICAL: Berechne THEORETISCHES Session-Ende (nicht letzte Kerzen-Zeit!)
             // `end` ist die Start-Zeit der letzten Kerze, NICHT das Session-Ende!
             // Wir brauchen das tatsächliche Session-Ende basierend auf Session-Typ
@@ -1333,15 +1311,11 @@ class SessionHighLowIndicator extends BaseIndicator {
             const offsetMinutes = this.config.utcOffset * 60;
             const localDate = new Date(sessionDate.getTime() + offsetMinutes * 60 * 1000);
 
-            console.log(`   🕐 Session-Start Local: ${localDate.toISOString()}`);
-
             // Session-Ende-Zeit aus Config holen
             let sessionEndTimeStr;
             if (type === 'asian') sessionEndTimeStr = this.config.asianEnd;
             else if (type === 'european') sessionEndTimeStr = this.config.europeanEnd;
             else if (type === 'american') sessionEndTimeStr = this.config.americanEnd;
-
-            console.log(`   ⏰ Config End-Zeit: ${sessionEndTimeStr} (${type})`);
 
             // Parse End-Zeit (z.B. "14:30")
             const [endHour, endMinute] = sessionEndTimeStr.split(':').map(Number);
@@ -1356,13 +1330,8 @@ class SessionHighLowIndicator extends BaseIndicator {
                 0
             ));
 
-            console.log(`   🎯 Theoretical End Date (UTC): ${theoreticalEndDate.toISOString()}`);
-
             // Konvertiere zurück zu UTC (minus offset)
             const theoreticalEndTimestamp = Math.floor((theoreticalEndDate.getTime() - offsetMinutes * 60 * 1000) / 1000);
-
-            console.log(`   ✅ Theoretical End Timestamp: ${theoreticalEndTimestamp} (${new Date(theoreticalEndTimestamp * 1000).toISOString()})`);
-            console.log(`   🔄 Differenz (letzte Kerze vs. theoretical): ${((theoreticalEndTimestamp - end) / 60).toFixed(1)} Minuten`);
 
             completed.push({
                 sessionId: `${type}_${start}`,
@@ -1374,12 +1343,7 @@ class SessionHighLowIndicator extends BaseIndicator {
                 startTime: start,
                 endTime: theoreticalEndTimestamp  // Nutze theoretisches Ende statt letzter Kerzen-Zeit!
             });
-
-            console.log(`   ✅ Session gespeichert!`);
         });
-
-        console.log(`\n✅ TOTAL: ${completed.length} abgeschlossene Sessions gefunden`);
-        console.log('🔍 ========== SESSION HIGH/LOW CALCULATION END ==========\n');
 
         this.completedSessions = completed;
 
@@ -1402,15 +1366,11 @@ class SessionHighLowIndicator extends BaseIndicator {
             return { highs: [], lows: [] };
         }
 
-        console.log(`\n🔍 ========== BREAKOUT CHECK START ==========`);
-
         // Neueste Kerzen-Zeit
         const newestCandleTime = candleData[candleData.length - 1].time;
-        console.log(`📅 Neueste Kerze: ${new Date(newestCandleTime * 1000).toISOString()}`);
 
         // 🔥 ZEIT-FILTER: Nur Sessions die VOR oder BIS zur neuesten Kerze liegen
         const relevantSessions = this.completedSessions.filter(s => s.endTime <= newestCandleTime);
-        console.log(`📊 Sessions gefiltert: ${this.completedSessions.length} → ${relevantSessions.length} (entfernt: ${this.completedSessions.length - relevantSessions.length} zukünftige)`);
 
         // Sammle alle Highs und Lows NUR von relevanten Sessions
         const allHighs = relevantSessions.map(s => ({ price: s.high, sessionId: s.sessionId, session: s, type: 'high' }));
@@ -1454,8 +1414,6 @@ class SessionHighLowIndicator extends BaseIndicator {
 
             return !isBroken; // Nur ungebrochene Levels zurückgeben
         });
-
-        console.log(`✅ Unbroken Levels: ${unbrokenHighs.length} Highs, ${unbrokenLows.length} Lows`);
 
         // DEDUPLIZIERUNG: Entferne doppelte Preis-Levels (behalte neueste Session)
         const uniqueHighs = [];
