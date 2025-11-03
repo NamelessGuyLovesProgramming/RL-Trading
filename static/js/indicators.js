@@ -1583,7 +1583,7 @@ class SessionHighLowIndicator extends BaseIndicator {
                     priceLineVisible: false,
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
-                    title: `H ${session.high.toFixed(2)}`
+                    title: '' // Y-Achsen Label deaktiviert
                 });
 
                 // Setze Daten: Start = Kerze die das High machte, Ende = neueste Kerze
@@ -1652,7 +1652,7 @@ class SessionHighLowIndicator extends BaseIndicator {
                     priceLineVisible: false,
                     lastValueVisible: false,
                     crosshairMarkerVisible: false,
-                    title: `L ${session.low.toFixed(2)}`
+                    title: '' // Y-Achsen Label deaktiviert
                 });
 
                 // Setze Daten: Start = Kerze die das Low machte, Ende = neueste Kerze
