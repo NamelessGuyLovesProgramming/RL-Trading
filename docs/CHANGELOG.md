@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.3] - 2025-11-03
+
+### 🧹 REFACTOR - Session Indikator Code Cleanup
+
+#### Changed
+
+**Session H/L Y-Achsen Labels Entfernung**:
+- 🏷️ Y-Achsen Price Labels (z.B. "H 21769.00", "L 21630.25") von Session H/L Linien entfernt
+- ✨ Cleaner Chart Look ohne redundante Preis-Anzeigen
+- 📍 File: `static/js/indicators.js` (Lines 1586, 1655)
+
+**Debug-Logs Cleanup**:
+- 🗑️ 85 Zeilen Debug-Logs aus Session & Session H/L Indikatoren entfernt
+- 🎯 Nur kritische console.error Logs beibehalten (z.B. ungültige Werte, Fehler beim LineSeries Erstellen)
+- 📊 Entfernte Logs:
+  - Session Initialization, Rendering, Updates, Destruction
+  - Session H/L Scanning, LineSeries Creation, Breakout Detection
+  - Settings Modal Open/Close, Apply Settings
+- 📍 File: `static/js/indicators.js` (Multiple Locations)
+
+#### Benefits
+
+- 📉 Reduzierte Console-Log Spam → bessere Performance
+- 🔍 Übersichtlichere Console für echte Fehler
+- 🎨 Cleaner Chart ohne redundante Y-Achsen Labels
+
+---
+
 ## [2.1.2] - 2025-11-02
 
 ### 🎯 FEATURE - Temporäres Autoscaling bei "Go To Date"
