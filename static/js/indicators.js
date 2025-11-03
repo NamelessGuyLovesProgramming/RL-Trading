@@ -1135,6 +1135,7 @@ class SessionHighLowIndicator extends BaseIndicator {
         // Storage
         this.completedSessions = [];    // [{sessionId, type, high, low, endTime}]
         this.lineSeries = [];           // Aktive LineSeries (extend right only)
+        this.priceLines = [];           // Price Lines für Breakout Detection
         this.lastPrice = null;          // Letzter Preis für Breakout-Detection
         this.chart = null;              // Chart-Referenz für LineSeries
 
