@@ -1249,6 +1249,18 @@ class SessionHighLowIndicator extends BaseIndicator {
             return { completedSessions: [] };
         }
 
+        // 🔥 FIX: Lösche alle bestehenden LineSeries VOR Neuberechnung (Go To Date Fix)
+        console.log(`🧹 Lösche ${this.lineSeries.length} alte LineSeries...`);
+        this.lineSeries.forEach(series => {
+            try {
+                this.chart.removeSeries(series);
+            } catch (e) {
+                console.warn('⚠️ Fehler beim Entfernen der LineSeries:', e);
+            }
+        });
+        this.lineSeries = [];
+        console.log('✅ Alte LineSeries entfernt');
+
         console.log('🔍 ========== SESSION HIGH/LOW CALCULATION START ==========');
         console.log(`📊 Total Candles: ${data.length}`);
         console.log(`📅 Neueste Kerze: ${new Date(data[data.length - 1].time * 1000).toISOString()}`);
