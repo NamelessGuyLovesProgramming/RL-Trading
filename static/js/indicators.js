@@ -1391,9 +1391,17 @@ class SessionHighLowIndicator extends BaseIndicator {
 
         console.log(`\n🔍 ========== BREAKOUT CHECK START ==========`);
 
-        // Sammle alle Highs und Lows
-        const allHighs = this.completedSessions.map(s => ({ price: s.high, sessionId: s.sessionId, session: s, type: 'high' }));
-        const allLows = this.completedSessions.map(s => ({ price: s.low, sessionId: s.sessionId, session: s, type: 'low' }));
+        // Neueste Kerzen-Zeit
+        const newestCandleTime = candleData[candleData.length - 1].time;
+        console.log(`📅 Neueste Kerze: ${new Date(newestCandleTime * 1000).toISOString()}`);
+
+        // 🔥 ZEIT-FILTER: Nur Sessions die VOR oder BIS zur neuesten Kerze liegen
+        const relevantSessions = this.completedSessions.filter(s => s.endTime <= newestCandleTime);
+        console.log(`📊 Sessions gefiltert: ${this.completedSessions.length} → ${relevantSessions.length} (entfernt: ${this.completedSessions.length - relevantSessions.length} zukünftige)`);
+
+        // Sammle alle Highs und Lows NUR von relevanten Sessions
+        const allHighs = relevantSessions.map(s => ({ price: s.high, sessionId: s.sessionId, session: s, type: 'high' }));
+        const allLows = relevantSessions.map(s => ({ price: s.low, sessionId: s.sessionId, session: s, type: 'low' }));
 
         // BREAKOUT-FILTER: Entferne durchbrochene Levels
         const unbrokenHighs = allHighs.filter(({ price, session }) => {
