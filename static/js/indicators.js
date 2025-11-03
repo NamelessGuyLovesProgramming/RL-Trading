@@ -57,10 +57,27 @@ class BaseIndicator {
     // Concrete Methods - Verfügbar für alle Indikatoren
     toggleVisibility() {
         this.visible = !this.visible;
+
+        // Handle single series (EMA, VOLUME)
         if (this.series) {
             this.series.applyOptions({ visible: this.visible });
-            console.log(`👁️ ${this.type}(${this.id}) Visibility: ${this.visible}`);
         }
+
+        // Handle multiple series in a Map (SESSION)
+        if (this.seriesMap && this.seriesMap instanceof Map) {
+            this.seriesMap.forEach(series => {
+                series.applyOptions({ visible: this.visible });
+            });
+        }
+
+        // Handle multiple series in an Array (SESSION_HL)
+        if (this.lineSeries && Array.isArray(this.lineSeries)) {
+            this.lineSeries.forEach(series => {
+                series.applyOptions({ visible: this.visible });
+            });
+        }
+
+        console.log(`👁️ ${this.type}(${this.id}) Visibility: ${this.visible}`);
     }
 
     setConfig(newConfig) {
@@ -1084,6 +1101,799 @@ class VolumeIndicator extends BaseIndicator {
 }
 
 // ============================================================
+// SESSION HIGH/LOW INDICATOR - Swing Highs/Lows from Sessions
+// ============================================================
+
+class SessionHighLowIndicator extends BaseIndicator {
+    constructor(id, config = {}) {
+        // Default Config
+        const defaults = {
+            // Timezone Settings (wie SessionIndicator)
+            utcOffset: 2,               // UTC+2 für Europa/Berlin
+
+            // Session Zeiten (in lokaler Zeit mit UTC-Offset)
+            asianStart: '00:00',
+            asianEnd: '08:00',
+            europeanStart: '08:00',
+            europeanEnd: '14:30',
+            americanStart: '14:30',
+            americanEnd: '22:00',
+
+            // Sliding Window (KEIN Tages-Limit!)
+            maxLinesAbove: 5,           // Max. High-Linien über Preis
+            maxLinesBelow: 5,           // Max. Low-Linien unter Preis
+
+            // Line Styling
+            highColor: '#FF5252',       // Rot für Highs (Widerstand)
+            lowColor: '#4CAF50',        // Grün für Lows (Support)
+            lineWidth: 2,
+            lineStyle: 0                // 0=solid, 2=dashed
+        };
+
+        super(id, 'SESSION_HL', { ...defaults, ...config });
+
+        // Storage
+        this.completedSessions = [];    // [{sessionId, type, high, low, endTime}]
+        this.lineSeries = [];           // Aktive LineSeries (extend right only)
+        this.lastPrice = null;          // Letzter Preis für Breakout-Detection
+        this.chart = null;              // Chart-Referenz für LineSeries
+
+        console.log('🎯 Session High/Low Indikator erstellt:', this.config);
+    }
+
+    // ========================================
+    // SESSION DETECTION (wiederverwenden)
+    // ========================================
+
+    timeToMinutes(timeStr) {
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        return hours * 60 + minutes;
+    }
+
+    // ========================================
+    // HELPER: Trading Day Check (optional für Mo-Fr Filter)
+    // ========================================
+
+    isTradingDay(date) {
+        const dayOfWeek = date.getUTCDay();
+        return dayOfWeek >= 1 && dayOfWeek <= 5; // Mo-Fr
+    }
+
+    // ========================================
+    // SESSION RANGE DETECTION
+    // ========================================
+
+    findSessionRanges(data) {
+        if (!data || data.length === 0) return [];
+
+        console.log(`📊 Scanning ${data.length} candles for sessions...`);
+
+        const ranges = [];
+        let currentSession = null;
+        let currentCandles = [];
+        let previousDay = null; // 🔥 NEU: Tracke Tag-Wechsel
+
+        // ALLE Daten verwenden (kein Tages-Limit!)
+        data.forEach(candle => {
+            const date = new Date(candle.time * 1000);
+            const utcHour = date.getUTCHours();
+            const localHour = (utcHour + this.config.utcOffset + 24) % 24;
+            const localMinute = date.getUTCMinutes();
+            const hourMinute = `${String(localHour).padStart(2, '0')}:${String(localMinute).padStart(2, '0')}`;
+            const minutes = this.timeToMinutes(hourMinute);
+
+            // 🔥 NEU: Tag extrahieren (YYYY-MM-DD)
+            const currentDay = date.toISOString().split('T')[0]; // "2024-12-27"
+            const dayChanged = previousDay !== null && currentDay !== previousDay;
+
+            // Session-Typ bestimmen
+            let sessionType = null;
+            const asianMinutes = { start: this.timeToMinutes(this.config.asianStart), end: this.timeToMinutes(this.config.asianEnd) };
+            const europeanMinutes = { start: this.timeToMinutes(this.config.europeanStart), end: this.timeToMinutes(this.config.europeanEnd) };
+            const americanMinutes = { start: this.timeToMinutes(this.config.americanStart), end: this.timeToMinutes(this.config.americanEnd) };
+
+            if (minutes >= asianMinutes.start && minutes < asianMinutes.end) {
+                sessionType = 'asian';
+            } else if (minutes >= europeanMinutes.start && minutes < europeanMinutes.end) {
+                sessionType = 'european';
+            } else if (minutes >= americanMinutes.start && minutes < americanMinutes.end) {
+                sessionType = 'american';
+            }
+
+            // 🔥 ERWEITERT: Session-Wechsel ODER Tag-Wechsel
+            // → Neue Session bei: Session-Typ ändert sich ODER Tag ändert sich
+            const shouldStartNewSession = (sessionType !== currentSession) || dayChanged;
+
+            if (shouldStartNewSession) {
+                // Speichere vorherige Session
+                if (currentSession && currentCandles.length > 0) {
+                    ranges.push({
+                        type: currentSession,
+                        start: currentCandles[0].time,
+                        end: currentCandles[currentCandles.length - 1].time,
+                        candles: [...currentCandles]
+                    });
+                }
+
+                // Neue Session
+                currentSession = sessionType;
+                currentCandles = sessionType ? [candle] : [];
+            } else if (sessionType) {
+                currentCandles.push(candle);
+            }
+
+            // 🔥 NEU: Tag merken
+            previousDay = currentDay;
+        });
+
+        // Letzte Session
+        if (currentSession && currentCandles.length > 0) {
+            ranges.push({
+                type: currentSession,
+                start: currentCandles[0].time,
+                end: currentCandles[currentCandles.length - 1].time,
+                candles: currentCandles
+            });
+        }
+
+        return ranges;
+    }
+
+    // ========================================
+    // CALCULATE - Finde abgeschlossene Sessions
+    // ========================================
+
+    calculate(data) {
+        if (!data || data.length === 0) {
+            console.warn('⚠️ SessionHL: Keine Daten verfügbar');
+            return { completedSessions: [] };
+        }
+
+        console.log('🔍 ========== SESSION HIGH/LOW CALCULATION START ==========');
+        console.log(`📊 Total Candles: ${data.length}`);
+        console.log(`📅 Neueste Kerze: ${new Date(data[data.length - 1].time * 1000).toISOString()}`);
+
+        const sessionRanges = this.findSessionRanges(data);
+        console.log(`📋 Gefundene Session Ranges: ${sessionRanges.length}`);
+
+        const completed = [];
+
+        // WICHTIG: Letzte Session könnte noch laufen → ausschließen
+        // Prüfe: Ist end-Zeit der Session < neueste Kerze?
+        const newestCandleTime = data[data.length - 1].time;
+
+        sessionRanges.forEach((range, index) => {
+            const { type, start, end, candles } = range;
+
+            console.log(`\n🔷 Session #${index + 1}: ${type.toUpperCase()}`);
+            console.log(`   Start: ${new Date(start * 1000).toISOString()}`);
+            console.log(`   End (letzte Kerze): ${new Date(end * 1000).toISOString()}`);
+            console.log(`   Kerzen: ${candles.length}`);
+
+            // Guard: Mindestens 1 Kerze
+            if (candles.length === 0) {
+                console.log(`   ⚠️ SKIP: Keine Kerzen`);
+                return;
+            }
+
+            // CRITICAL: Ist das die letzte Session im Array?
+            // → Könnte noch laufen, nur abgeschlossene Sessions nutzen
+            const isLastSession = index === sessionRanges.length - 1;
+
+            // Prüfe: Ist Session wirklich abgeschlossen?
+            // Heuristik: end-Zeit + 5min < neueste Kerze (gibt Puffer für Sessionende)
+            const sessionEndBuffer = end + (5 * 60); // 5 Minuten Puffer
+            const isCompleted = sessionEndBuffer < newestCandleTime;
+
+            console.log(`   Ist letzte Session? ${isLastSession}`);
+            console.log(`   Ist abgeschlossen? ${isCompleted} (End+5min: ${new Date(sessionEndBuffer * 1000).toISOString()})`);
+
+            if (!isCompleted && isLastSession) {
+                console.log(`   ⏳ SKIP: Session noch aktiv`);
+                return; // Skip aktive Session
+            }
+
+            // Berechne High/Low UND speichere die Zeit wann sie gemacht wurden
+            let high = candles[0].high;
+            let highTime = candles[0].time;
+            let low = candles[0].low;
+            let lowTime = candles[0].time;
+
+            candles.forEach(candle => {
+                if (candle.high > high) {
+                    high = candle.high;
+                    highTime = candle.time;  // Merke WANN das High gemacht wurde
+                }
+                if (candle.low < low) {
+                    low = candle.low;
+                    lowTime = candle.time;  // Merke WANN das Low gemacht wurde
+                }
+            });
+
+            console.log(`   📈 High: ${high.toFixed(2)} @ ${new Date(highTime * 1000).toISOString()}`);
+            console.log(`   📉 Low: ${low.toFixed(2)} @ ${new Date(lowTime * 1000).toISOString()}`);
+
+            // CRITICAL: Berechne THEORETISCHES Session-Ende (nicht letzte Kerzen-Zeit!)
+            // `end` ist die Start-Zeit der letzten Kerze, NICHT das Session-Ende!
+            // Wir brauchen das tatsächliche Session-Ende basierend auf Session-Typ
+            const sessionDate = new Date(start * 1000);
+            const offsetMinutes = this.config.utcOffset * 60;
+            const localDate = new Date(sessionDate.getTime() + offsetMinutes * 60 * 1000);
+
+            console.log(`   🕐 Session-Start Local: ${localDate.toISOString()}`);
+
+            // Session-Ende-Zeit aus Config holen
+            let sessionEndTimeStr;
+            if (type === 'asian') sessionEndTimeStr = this.config.asianEnd;
+            else if (type === 'european') sessionEndTimeStr = this.config.europeanEnd;
+            else if (type === 'american') sessionEndTimeStr = this.config.americanEnd;
+
+            console.log(`   ⏰ Config End-Zeit: ${sessionEndTimeStr} (${type})`);
+
+            // Parse End-Zeit (z.B. "14:30")
+            const [endHour, endMinute] = sessionEndTimeStr.split(':').map(Number);
+
+            // Konstruiere theoretisches Session-Ende
+            const theoreticalEndDate = new Date(Date.UTC(
+                localDate.getUTCFullYear(),
+                localDate.getUTCMonth(),
+                localDate.getUTCDate(),
+                endHour,
+                endMinute,
+                0
+            ));
+
+            console.log(`   🎯 Theoretical End Date (UTC): ${theoreticalEndDate.toISOString()}`);
+
+            // Konvertiere zurück zu UTC (minus offset)
+            const theoreticalEndTimestamp = Math.floor((theoreticalEndDate.getTime() - offsetMinutes * 60 * 1000) / 1000);
+
+            console.log(`   ✅ Theoretical End Timestamp: ${theoreticalEndTimestamp} (${new Date(theoreticalEndTimestamp * 1000).toISOString()})`);
+            console.log(`   🔄 Differenz (letzte Kerze vs. theoretical): ${((theoreticalEndTimestamp - end) / 60).toFixed(1)} Minuten`);
+
+            completed.push({
+                sessionId: `${type}_${start}`,
+                type,
+                high,
+                highTime,  // WANN wurde das High gemacht
+                low,
+                lowTime,   // WANN wurde das Low gemacht
+                startTime: start,
+                endTime: theoreticalEndTimestamp  // Nutze theoretisches Ende statt letzter Kerzen-Zeit!
+            });
+
+            console.log(`   ✅ Session gespeichert!`);
+        });
+
+        console.log(`\n✅ TOTAL: ${completed.length} abgeschlossene Sessions gefunden`);
+        console.log('🔍 ========== SESSION HIGH/LOW CALCULATION END ==========\n');
+
+        this.completedSessions = completed;
+
+        return { completedSessions: completed };
+    }
+
+    // ========================================
+    // SLIDING WINDOW - Filtere sichtbare Levels
+    // ========================================
+
+    getVisibleLevels(currentPrice) {
+        if (!this.completedSessions || this.completedSessions.length === 0) {
+            return { highs: [], lows: [] };
+        }
+
+        // Hole alle Candle-Daten für Breakout-Check
+        const candleData = window.candlestickSeries?.data();
+        if (!candleData || candleData.length === 0) {
+            console.warn('⚠️ Keine Candlestick-Daten für Breakout-Check');
+            return { highs: [], lows: [] };
+        }
+
+        console.log(`\n🔍 ========== BREAKOUT CHECK START ==========`);
+
+        // Sammle alle Highs und Lows
+        const allHighs = this.completedSessions.map(s => ({ price: s.high, sessionId: s.sessionId, session: s, type: 'high' }));
+        const allLows = this.completedSessions.map(s => ({ price: s.low, sessionId: s.sessionId, session: s, type: 'low' }));
+
+        // BREAKOUT-FILTER: Entferne durchbrochene Levels
+        const unbrokenHighs = allHighs.filter(({ price, session }) => {
+            // Prüfe: Gab es NACH session.endTime eine Kerze, die das High durchbrochen hat?
+            const brokenCandle = candleData.find(candle => {
+                // Nur Kerzen NACH Session-Ende prüfen
+                if (candle.time <= session.endTime) return false;
+
+                // High durchbrochen wenn: Kerze ging ÜBER das Level (Wick oder Close)
+                return candle.high > price || candle.close > price;
+            });
+
+            const isBroken = !!brokenCandle;
+
+            if (isBroken) {
+                console.log(`   ❌ HIGH ${price.toFixed(2)} durchbrochen bei ${new Date(brokenCandle.time * 1000).toISOString()}`);
+            }
+
+            return !isBroken; // Nur ungebrochene Levels zurückgeben
+        });
+
+        const unbrokenLows = allLows.filter(({ price, session }) => {
+            // Prüfe: Gab es NACH session.endTime eine Kerze, die das Low durchbrochen hat?
+            const brokenCandle = candleData.find(candle => {
+                // Nur Kerzen NACH Session-Ende prüfen
+                if (candle.time <= session.endTime) return false;
+
+                // Low durchbrochen wenn: Kerze ging UNTER das Level (Wick oder Close)
+                return candle.low < price || candle.close < price;
+            });
+
+            const isBroken = !!brokenCandle;
+
+            if (isBroken) {
+                console.log(`   ❌ LOW ${price.toFixed(2)} durchbrochen bei ${new Date(brokenCandle.time * 1000).toISOString()}`);
+            }
+
+            return !isBroken; // Nur ungebrochene Levels zurückgeben
+        });
+
+        console.log(`✅ Unbroken Levels: ${unbrokenHighs.length} Highs, ${unbrokenLows.length} Lows`);
+
+        // DEDUPLIZIERUNG: Entferne doppelte Preis-Levels (behalte neueste Session)
+        const uniqueHighs = [];
+        const seenHighPrices = new Set();
+        unbrokenHighs.forEach(h => {
+            // Runde auf 2 Dezimalstellen für Vergleich (vermeidet Floating-Point-Probleme)
+            const roundedPrice = Math.round(h.price * 100) / 100;
+            if (!seenHighPrices.has(roundedPrice)) {
+                seenHighPrices.add(roundedPrice);
+                uniqueHighs.push(h);
+            }
+        });
+
+        const uniqueLows = [];
+        const seenLowPrices = new Set();
+        unbrokenLows.forEach(l => {
+            const roundedPrice = Math.round(l.price * 100) / 100;
+            if (!seenLowPrices.has(roundedPrice)) {
+                seenLowPrices.add(roundedPrice);
+                uniqueLows.push(l);
+            }
+        });
+
+        // Filter: Highs ÜBER aktuellem Preis (Widerstand)
+        const highsAbove = uniqueHighs
+            .filter(h => h.price > currentPrice)
+            .sort((a, b) => a.price - b.price) // Sortiere aufsteigend (nächste zuerst)
+            .slice(0, this.config.maxLinesAbove);
+
+        // Filter: Lows UNTER aktuellem Preis (Support)
+        const lowsBelow = uniqueLows
+            .filter(l => l.price < currentPrice)
+            .sort((a, b) => b.price - a.price) // Sortiere absteigend (nächste zuerst)
+            .slice(0, this.config.maxLinesBelow);
+
+        console.log(`📊 Final Visible Levels: ${highsAbove.length} Highs über ${currentPrice.toFixed(2)}, ${lowsBelow.length} Lows darunter`);
+        console.log('🔍 ========== BREAKOUT CHECK END ==========\n');
+
+        return { highs: highsAbove, lows: lowsBelow };
+    }
+
+    // ========================================
+    // RENDER - Erstelle PriceLines
+    // ========================================
+
+    render(chart) {
+        if (!chart) {
+            console.error('❌ SessionHL render: Chart nicht verfügbar');
+            return;
+        }
+
+        // Speichere Chart-Referenz für LineSeries
+        this.chart = chart;
+
+        const candleData = window.candlestickSeries?.data();
+        if (!candleData || candleData.length === 0) {
+            console.warn('⚠️ SessionHL render: Keine Candlestick-Daten');
+            return;
+        }
+
+        // Berechne abgeschlossene Sessions
+        this.calculate(candleData);
+
+        // Initial Render: Hole aktuellen Preis
+        const currentPrice = candleData[candleData.length - 1].close;
+        this.lastPrice = currentPrice;
+
+        // Rendere LineSeries (extend right only)
+        this.updateLineSeries(currentPrice, candleData);
+
+        console.log('✅ Session High/Low Indikator gerendert');
+    }
+
+    // ========================================
+    // UPDATE LINE SERIES (Extend Right Only)
+    // ========================================
+
+    updateLineSeries(currentPrice, candleData) {
+        if (!this.chart) {
+            console.warn('⚠️ SessionHL: Chart nicht verfügbar für LineSeries');
+            return;
+        }
+
+        // 🔥 VALIDIERUNG: Prüfe ob candleData vorhanden
+        if (!candleData || candleData.length === 0) {
+            console.warn('⚠️ SessionHL: Keine Candle-Daten verfügbar für LineSeries');
+            return;
+        }
+
+        console.log('\n🎨 ========== UPDATE LINE SERIES START ==========');
+        console.log(`💰 Current Price: ${currentPrice.toFixed(2)}`);
+
+        // Clear alte LineSeries
+        this.lineSeries.forEach(series => {
+            try {
+                this.chart.removeSeries(series);
+            } catch (e) {
+                console.warn('⚠️ Fehler beim Entfernen der LineSeries:', e);
+            }
+        });
+        this.lineSeries = [];
+
+        // Hole sichtbare Levels
+        const { highs, lows } = this.getVisibleLevels(currentPrice);
+
+        console.log(`\n📊 Visible Levels nach Sliding Window:`);
+        console.log(`   Highs (Widerstand): ${highs.length}`);
+        console.log(`   Lows (Support): ${lows.length}`);
+
+        // Neueste Kerzen-Zeit (für Linien-Ende)
+        const newestCandleTime = candleData[candleData.length - 1].time;
+
+        // 🔥 VALIDIERUNG: Prüfe ob newestCandleTime gültig ist
+        if (!newestCandleTime || isNaN(newestCandleTime)) {
+            console.error('❌ SessionHL: Ungültige newestCandleTime:', newestCandleTime);
+            return;
+        }
+
+        console.log(`\n🕐 Neueste Kerze: ${new Date(newestCandleTime * 1000).toISOString()}`);
+
+        // Erstelle LineSeries für Highs (Widerstand)
+        highs.forEach(({ price, sessionId }) => {
+            try {
+                // Finde Session-Ende für diese Linie
+                const session = this.completedSessions.find(s => s.sessionId === sessionId);
+                if (!session) {
+                    console.warn(`⚠️ Session nicht gefunden für High ${price} (ID: ${sessionId})`);
+                    return;
+                }
+
+                // DEBUG: Prüfe ob Preis mit Session-High übereinstimmt
+                if (Math.abs(price - session.high) > 0.01) {
+                    console.warn(`⚠️ HIGH MISMATCH! Linie: ${price}, Session High: ${session.high}`);
+                }
+
+                console.log(`\n🔴 HIGH Line #${this.lineSeries.length + 1}:`);
+                console.log(`   Price: ${session.high.toFixed(2)}`);
+                console.log(`   Session: ${session.type} (${session.sessionId})`);
+                console.log(`   Start-Zeit: ${new Date(session.endTime * 1000).toISOString()}`);
+                console.log(`   End-Zeit: ${new Date(newestCandleTime * 1000).toISOString()}`);
+                console.log(`   Dauer: ${((newestCandleTime - session.endTime) / 3600).toFixed(1)} Stunden`);
+
+                // 🔥 VALIDIERUNG: Prüfe alle Werte vor setData()
+                if (!session.endTime || isNaN(session.endTime)) {
+                    console.error(`❌ SKIP HIGH: Ungültige session.endTime:`, session.endTime);
+                    return;
+                }
+                if (!session.high || isNaN(session.high)) {
+                    console.error(`❌ SKIP HIGH: Ungültige session.high:`, session.high);
+                    return;
+                }
+                if (session.endTime > newestCandleTime) {
+                    console.warn(`⚠️ SKIP HIGH: session.endTime (${session.endTime}) > newestCandleTime (${newestCandleTime})`);
+                    return;
+                }
+
+                // Wähle Farbe basierend auf Session-Typ
+                const highColor = session.type === 'asian' ? this.config.asianHighColor :
+                                 session.type === 'european' ? this.config.europeanHighColor :
+                                 this.config.americanHighColor;
+
+                // Erstelle LineSeries: Von Session-Ende bis neueste Kerze
+                const lineSeries = this.chart.addLineSeries({
+                    color: highColor,
+                    lineWidth: this.config.lineWidth,
+                    lineStyle: this.config.lineStyle,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                    title: `H ${session.high.toFixed(2)}`
+                });
+
+                // Setze Daten: Start = Kerze die das High machte, Ende = neueste Kerze
+                const lineStartTime = session.highTime;  // Beginne direkt an der Kerze die das High machte!
+                const lineData = [
+                    { time: lineStartTime, value: session.high },
+                    { time: newestCandleTime, value: session.high }
+                ];
+
+                console.log(`   ✅ LineSeries Data:`, lineData);
+
+                lineSeries.setData(lineData);
+
+                this.lineSeries.push(lineSeries);
+            } catch (e) {
+                console.error(`❌ Fehler beim Erstellen der High LineSeries (${price}):`, e);
+            }
+        });
+
+        // Erstelle LineSeries für Lows (Support)
+        lows.forEach(({ price, sessionId }) => {
+            try {
+                // Finde Session-Ende für diese Linie
+                const session = this.completedSessions.find(s => s.sessionId === sessionId);
+                if (!session) {
+                    console.warn(`⚠️ Session nicht gefunden für Low ${price} (ID: ${sessionId})`);
+                    return;
+                }
+
+                // DEBUG: Prüfe ob Preis mit Session-Low übereinstimmt
+                if (Math.abs(price - session.low) > 0.01) {
+                    console.warn(`⚠️ LOW MISMATCH! Linie: ${price}, Session Low: ${session.low}`);
+                }
+
+                console.log(`\n🟢 LOW Line #${this.lineSeries.length + 1}:`);
+                console.log(`   Price: ${session.low.toFixed(2)}`);
+                console.log(`   Session: ${session.type} (${session.sessionId})`);
+                console.log(`   Start-Zeit: ${new Date(session.endTime * 1000).toISOString()}`);
+                console.log(`   End-Zeit: ${new Date(newestCandleTime * 1000).toISOString()}`);
+                console.log(`   Dauer: ${((newestCandleTime - session.endTime) / 3600).toFixed(1)} Stunden`);
+
+                // 🔥 VALIDIERUNG: Prüfe alle Werte vor setData()
+                if (!session.endTime || isNaN(session.endTime)) {
+                    console.error(`❌ SKIP LOW: Ungültige session.endTime:`, session.endTime);
+                    return;
+                }
+                if (!session.low || isNaN(session.low)) {
+                    console.error(`❌ SKIP LOW: Ungültige session.low:`, session.low);
+                    return;
+                }
+                if (session.endTime > newestCandleTime) {
+                    console.warn(`⚠️ SKIP LOW: session.endTime (${session.endTime}) > newestCandleTime (${newestCandleTime})`);
+                    return;
+                }
+
+                // Wähle Farbe basierend auf Session-Typ
+                const lowColor = session.type === 'asian' ? this.config.asianLowColor :
+                                session.type === 'european' ? this.config.europeanLowColor :
+                                this.config.americanLowColor;
+
+                // Erstelle LineSeries: Von Session-Ende bis neueste Kerze
+                const lineSeries = this.chart.addLineSeries({
+                    color: lowColor,
+                    lineWidth: this.config.lineWidth,
+                    lineStyle: this.config.lineStyle,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                    title: `L ${session.low.toFixed(2)}`
+                });
+
+                // Setze Daten: Start = Kerze die das Low machte, Ende = neueste Kerze
+                const lineStartTime = session.lowTime;  // Beginne direkt an der Kerze die das Low machte!
+                const lineData = [
+                    { time: lineStartTime, value: session.low },
+                    { time: newestCandleTime, value: session.low }
+                ];
+
+                console.log(`   ✅ LineSeries Data:`, lineData);
+
+                lineSeries.setData(lineData);
+
+                this.lineSeries.push(lineSeries);
+            } catch (e) {
+                console.error(`❌ Fehler beim Erstellen der Low LineSeries (${price}):`, e);
+            }
+        });
+
+        console.log(`\n✅ TOTAL: ${this.lineSeries.length} LineSeries gerendert (${highs.length} Highs, ${lows.length} Lows)`);
+        console.log('🎨 ========== UPDATE LINE SERIES END ==========\n');
+    }
+
+    // ========================================
+    // UPDATE - Breakout Detection
+    // ========================================
+
+    update(candle, allData) {
+        if (!allData || allData.length === 0) return;
+
+        // Hole aktuellen Preis
+        const currentPrice = allData[allData.length - 1].close;
+
+        // CRITICAL: Breakout Detection
+        // Prüfe: Hat sich der Preis "signifikant" bewegt?
+        // Heuristik: Wenn Preis wick/touch durch eine der sichtbaren Linien ging
+        const currentHigh = allData[allData.length - 1].high;
+        const currentLow = allData[allData.length - 1].low;
+
+        let needsUpdate = false;
+
+        // Prüfe ob eine unserer PriceLines durchbrochen wurde
+        this.priceLines.forEach(line => {
+            // Leider können wir den Preis nicht direkt von der PriceLine lesen
+            // Workaround: Wir vergleichen mit lastPrice und schauen ob Sliding Window sich ändern würde
+        });
+
+        // Einfachere Heuristik: Hat sich Preis um > 0.1% bewegt seit letztem Update?
+        if (this.lastPrice !== null) {
+            const priceChange = Math.abs(currentPrice - this.lastPrice) / this.lastPrice;
+            if (priceChange > 0.001) { // 0.1% Änderung
+                needsUpdate = true;
+            }
+        }
+
+        // ODER: Neue Kerze deutet auf Session-Wechsel hin (alle 5min neu checken)
+        // Für Echtzeit: Bei jedem Update neu berechnen (Performance OK für <100 Sessions)
+        needsUpdate = true; // Simpel: Immer updaten
+
+        if (needsUpdate) {
+            // Neuberechnung der Sessions (könnten neue abgeschlossene Sessions haben)
+            this.calculate(allData);
+
+            // Update LineSeries (extend right to newest candle)
+            this.updateLineSeries(currentPrice, allData);
+
+            this.lastPrice = currentPrice;
+        }
+
+        console.log('🔄 SessionHL updated');
+    }
+
+    destroy() {
+        // Entferne alle LineSeries
+        if (this.chart) {
+            this.lineSeries.forEach(series => {
+                try {
+                    this.chart.removeSeries(series);
+                } catch (e) {
+                    console.warn('⚠️ Destroy: Fehler beim Entfernen der LineSeries:', e);
+                }
+            });
+        }
+        this.lineSeries = [];
+        this.completedSessions = [];
+        this.chart = null;
+
+        console.log('🗑️ SessionHL destroyed');
+    }
+
+    getDisplayName() {
+        return `Session H/L (${this.config.maxLinesAbove}/${this.config.maxLinesBelow} Lines)`;
+    }
+
+    // ========================================
+    // SETTINGS HTML (für Edit-Dialog)
+    // ========================================
+
+    getSettingsHTML() {
+        return `
+            <div class="setting-group">
+                <label>🌍 UTC Offset:</label>
+                <input type="number" id="edit_shl_utcOffset" value="${this.config.utcOffset}" min="-12" max="14" step="1">
+                <small>Deine lokale Zeitzone (z.B. UTC+2 für Berlin)</small>
+            </div>
+
+            <div class="setting-group">
+                <label>🌏 Asian Session:</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="time" id="edit_shl_asianStart" value="${this.config.asianStart}">
+                    <span>bis</span>
+                    <input type="time" id="edit_shl_asianEnd" value="${this.config.asianEnd}">
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label>🌍 European Session:</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="time" id="edit_shl_europeanStart" value="${this.config.europeanStart}">
+                    <span>bis</span>
+                    <input type="time" id="edit_shl_europeanEnd" value="${this.config.europeanEnd}">
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label>🌎 American Session:</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="time" id="edit_shl_americanStart" value="${this.config.americanStart}">
+                    <span>bis</span>
+                    <input type="time" id="edit_shl_americanEnd" value="${this.config.americanEnd}">
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label>📊 Max. Linien (oben/unten):</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="number" id="edit_shl_maxLinesAbove" value="${this.config.maxLinesAbove}" min="1" max="20" step="1" style="flex: 1;">
+                    <span>/</span>
+                    <input type="number" id="edit_shl_maxLinesBelow" value="${this.config.maxLinesBelow}" min="1" max="20" step="1" style="flex: 1;">
+                </div>
+                <small>Wie viele Resistance/Support-Linien gleichzeitig zeigen</small>
+            </div>
+
+            <div class="setting-group">
+                <label>🎨 Session Farben:</label>
+                <div style="display: grid; grid-template-columns: auto 40px 40px; gap: 8px; align-items: center; margin-top: 10px;">
+                    <!-- Header -->
+                    <div style="color: #888; font-size: 12px;"></div>
+                    <div style="color: #888; font-size: 11px; text-align: center;">High</div>
+                    <div style="color: #888; font-size: 11px; text-align: center;">Low</div>
+
+                    <!-- Asian Session -->
+                    <div style="color: #ff00bb; font-weight: bold;">🌏 Asian</div>
+                    <input type="color" id="edit_shl_asianHighColor" value="${this.config.asianHighColor || '#FF00BB'}" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                    <input type="color" id="edit_shl_asianLowColor" value="${this.config.asianLowColor || '#FF00BB'}" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+
+                    <!-- European Session -->
+                    <div style="color: #00fbff; font-weight: bold;">🌍 European</div>
+                    <input type="color" id="edit_shl_europeanHighColor" value="${this.config.europeanHighColor || '#00CCFF'}" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                    <input type="color" id="edit_shl_europeanLowColor" value="${this.config.europeanLowColor || '#00CCFF'}" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+
+                    <!-- American Session -->
+                    <div style="color: #ffae00; font-weight: bold;">🌎 American</div>
+                    <input type="color" id="edit_shl_americanHighColor" value="${this.config.americanHighColor || '#FF9900'}" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                    <input type="color" id="edit_shl_americanLowColor" value="${this.config.americanLowColor || '#FF9900'}" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label>📏 Linien-Stil:</label>
+                <select id="edit_shl_lineStyle">
+                    <option value="0" ${this.config.lineStyle === 0 ? 'selected' : ''}>Solid (durchgezogen)</option>
+                    <option value="1" ${this.config.lineStyle === 1 ? 'selected' : ''}>Dotted (gepunktet)</option>
+                    <option value="2" ${this.config.lineStyle === 2 ? 'selected' : ''}>Dashed (gestrichelt)</option>
+                    <option value="3" ${this.config.lineStyle === 3 ? 'selected' : ''}>Large Dashed (große Striche)</option>
+                    <option value="4" ${this.config.lineStyle === 4 ? 'selected' : ''}>Sparse Dotted (wenige Punkte)</option>
+                </select>
+            </div>
+
+            <div class="setting-group">
+                <label>📏 Linien-Breite:</label>
+                <input type="number" id="edit_shl_lineWidth" value="${this.config.lineWidth}" min="1" max="5" step="1">
+            </div>
+        `;
+    }
+
+    applySettings() {
+        // Lese Werte aus Edit-Dialog
+        this.config.utcOffset = parseInt(document.getElementById('edit_shl_utcOffset')?.value) || 0;
+        this.config.asianStart = document.getElementById('edit_shl_asianStart')?.value || '00:00';
+        this.config.asianEnd = document.getElementById('edit_shl_asianEnd')?.value || '09:00';
+        this.config.europeanStart = document.getElementById('edit_shl_europeanStart')?.value || '09:00';
+        this.config.europeanEnd = document.getElementById('edit_shl_europeanEnd')?.value || '15:30';
+        this.config.americanStart = document.getElementById('edit_shl_americanStart')?.value || '15:30';
+        this.config.americanEnd = document.getElementById('edit_shl_americanEnd')?.value || '22:00';
+        this.config.maxLinesAbove = parseInt(document.getElementById('edit_shl_maxLinesAbove')?.value) || 5;
+        this.config.maxLinesBelow = parseInt(document.getElementById('edit_shl_maxLinesBelow')?.value) || 5;
+        // Session-spezifische Farben
+        this.config.asianHighColor = document.getElementById('edit_shl_asianHighColor')?.value || '#FF00BB';
+        this.config.asianLowColor = document.getElementById('edit_shl_asianLowColor')?.value || '#FF00BB';
+        this.config.europeanHighColor = document.getElementById('edit_shl_europeanHighColor')?.value || '#00CCFF';
+        this.config.europeanLowColor = document.getElementById('edit_shl_europeanLowColor')?.value || '#00CCFF';
+        this.config.americanHighColor = document.getElementById('edit_shl_americanHighColor')?.value || '#FF9900';
+        this.config.americanLowColor = document.getElementById('edit_shl_americanLowColor')?.value || '#FF9900';
+        this.config.lineStyle = parseInt(document.getElementById('edit_shl_lineStyle')?.value) || 0;
+        this.config.lineWidth = parseInt(document.getElementById('edit_shl_lineWidth')?.value) || 1;
+
+        console.log('⚙️ SessionHL Settings angewendet:', this.config);
+
+        // Trigger re-render mit aktualisierten Settings
+        const candleData = window.candlestickSeries?.data();
+        if (candleData && candleData.length > 0) {
+            this.calculate(candleData);
+            const currentPrice = candleData[candleData.length - 1].close;
+            this.updateLineSeries(currentPrice, candleData);
+        }
+    }
+}
+
+// ============================================================
 // INDICATOR MANAGER - Singleton Pattern
 // ============================================================
 
@@ -1431,6 +2241,12 @@ class IndicatorManager {
             return;
         }
 
+        // Indikator mit getSettingsHTML() → Custom Settings
+        if (typeof indicator.getSettingsHTML === 'function') {
+            this.openCustomSettings(indicator);
+            return;
+        }
+
         // EMA & andere → Standard Modal
         // Fülle Modal mit aktuellen Werten
         const modal = document.getElementById('indicatorSettingsModal');
@@ -1582,6 +2398,58 @@ class IndicatorManager {
         window.currentIndicatorForSettings = null;
     }
 
+    // UI: Custom Settings Modal öffnen (für Indikatoren mit getSettingsHTML())
+    openCustomSettings(indicator) {
+        const modal = document.getElementById('indicatorSettingsModal');
+        if (!modal) {
+            console.error('❌ Settings Modal nicht gefunden');
+            return;
+        }
+
+        // Hole Custom HTML vom Indikator
+        const customHTML = indicator.getSettingsHTML();
+
+        // Finde Settings Content Container
+        const settingsContent = modal.querySelector('.settings-content');
+        const modalButtons = modal.querySelector('.date-modal-buttons');
+
+        if (!settingsContent || !modalButtons) {
+            console.error('❌ Settings Content oder Buttons Container nicht gefunden');
+            return;
+        }
+
+        // Ersetze Content mit Custom HTML
+        settingsContent.innerHTML = customHTML;
+
+        // Ersetze Buttons
+        modalButtons.innerHTML = `
+            <button class="modal-btn" onclick="window.IndicatorManager.closeSettingsModal()">Abbrechen</button>
+            <button class="modal-btn primary" onclick="window.IndicatorManager.applyCustomSettings()">💾 Speichern</button>
+        `;
+
+        // Öffne Modal
+        modal.style.display = 'flex';
+        console.log(`⚙️ Custom Settings Modal geöffnet für ${indicator.getDisplayName()}`);
+    }
+
+    // UI: Custom Settings anwenden
+    applyCustomSettings() {
+        const indicator = window.currentIndicatorForSettings;
+
+        if (!indicator || typeof indicator.applySettings !== 'function') {
+            console.warn('⚠️ Kein Custom Settings Indikator ausgewählt oder applySettings() fehlt');
+            return;
+        }
+
+        // Rufe die applySettings() Methode des Indikators auf
+        indicator.applySettings();
+
+        // Modal schließen
+        this.closeSettingsModal();
+
+        console.log(`✅ Custom Settings angewendet für ${indicator.getDisplayName()}`);
+    }
+
     // Cleanup: Alle Indikatoren entfernen
     removeAll() {
         this.activeIndicators.forEach((indicator, id) => {
@@ -1605,8 +2473,9 @@ const manager = IndicatorManager.getInstance();
 manager.registerIndicator('EMA', EMAIndicator);
 manager.registerIndicator('SESSION', SessionIndicator);
 manager.registerIndicator('VOLUME', VolumeIndicator);
+manager.registerIndicator('SESSION_HL', SessionHighLowIndicator);
 
 // Make globally available
 window.IndicatorManager = manager;
 
-console.log('✅ Indicator System bereit (EMA + SESSION + VOLUME)');
+console.log('✅ Indicator System bereit (EMA + SESSION + VOLUME + SESSION_HL)');

@@ -75,6 +75,112 @@
         </div>
     </div>
 
+    <!-- Session High/Low Settings Modal -->
+    <div id="sessionHLSettingsModal" class="date-modal" style="display: none;">
+        <div class="date-modal-content" style="max-width: 600px;">
+            <div class="date-modal-header">
+                <span class="date-modal-title">⚙️ Session High/Low Settings</span>
+                <button class="close-modal" onclick="closeSessionHLSettings()">&times;</button>
+            </div>
+
+            <div class="settings-content" style="max-height: 500px; overflow-y: auto;">
+                <!-- Timezone Settings -->
+                <div class="balance-section">
+                    <label class="balance-label">🌍 UTC Offset:</label>
+                    <input type="number" id="shlUtcOffset" class="balance-input" value="0" min="-12" max="14" step="1">
+                    <small style="color: #888;">Deine lokale Zeitzone (z.B. UTC+2 für Berlin)</small>
+                </div>
+
+                <!-- Session Times -->
+                <div class="balance-section">
+                    <label class="balance-label">🌏 Asian Session:</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="time" id="shlAsianStart" class="balance-input" value="00:00" style="flex: 1;">
+                        <span style="color: #888;">bis</span>
+                        <input type="time" id="shlAsianEnd" class="balance-input" value="09:00" style="flex: 1;">
+                    </div>
+                </div>
+
+                <div class="balance-section">
+                    <label class="balance-label">🌍 European Session:</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="time" id="shlEuropeanStart" class="balance-input" value="09:00" style="flex: 1;">
+                        <span style="color: #888;">bis</span>
+                        <input type="time" id="shlEuropeanEnd" class="balance-input" value="15:30" style="flex: 1;">
+                    </div>
+                </div>
+
+                <div class="balance-section">
+                    <label class="balance-label">🌎 American Session:</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="time" id="shlAmericanStart" class="balance-input" value="15:30" style="flex: 1;">
+                        <span style="color: #888;">bis</span>
+                        <input type="time" id="shlAmericanEnd" class="balance-input" value="22:00" style="flex: 1;">
+                    </div>
+                </div>
+
+                <!-- Line Limits -->
+                <div class="balance-section">
+                    <label class="balance-label">📊 Max. Linien (oben/unten):</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="number" id="shlMaxLinesAbove" class="balance-input" value="5" min="1" max="20" step="1" style="flex: 1;">
+                        <span style="color: #888;">/</span>
+                        <input type="number" id="shlMaxLinesBelow" class="balance-input" value="5" min="1" max="20" step="1" style="flex: 1;">
+                    </div>
+                    <small style="color: #888;">Wie viele Resistance/Support-Linien gleichzeitig zeigen</small>
+                </div>
+
+                <!-- Colors per Session -->
+                <div class="balance-section">
+                    <label class="balance-label">🎨 Session Farben:</label>
+                    <div style="display: grid; grid-template-columns: auto 40px 40px; gap: 8px; align-items: center; margin-top: 10px;">
+                        <!-- Header -->
+                        <div style="color: #888; font-size: 12px;"></div>
+                        <div style="color: #888; font-size: 11px; text-align: center;">High</div>
+                        <div style="color: #888; font-size: 11px; text-align: center;">Low</div>
+
+                        <!-- Asian Session -->
+                        <div style="color: #ff00bb; font-weight: bold;">🌏 Asian</div>
+                        <input type="color" id="shlAsianHighColor" value="#FF00BB" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                        <input type="color" id="shlAsianLowColor" value="#FF00BB" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+
+                        <!-- European Session -->
+                        <div style="color: #00fbff; font-weight: bold;">🌍 European</div>
+                        <input type="color" id="shlEuropeanHighColor" value="#00CCFF" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                        <input type="color" id="shlEuropeanLowColor" value="#00CCFF" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+
+                        <!-- American Session -->
+                        <div style="color: #ffae00; font-weight: bold;">🌎 American</div>
+                        <input type="color" id="shlAmericanHighColor" value="#FF9900" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                        <input type="color" id="shlAmericanLowColor" value="#FF9900" style="width: 40px; height: 40px; border: 2px solid #333; border-radius: 4px; cursor: pointer;">
+                    </div>
+                </div>
+
+                <!-- Line Style -->
+                <div class="balance-section">
+                    <label class="balance-label">📏 Linien-Stil:</label>
+                    <select id="shlLineStyle" class="balance-input">
+                        <option value="0">Solid (durchgezogen)</option>
+                        <option value="1">Dotted (gepunktet)</option>
+                        <option value="2">Dashed (gestrichelt)</option>
+                        <option value="3">Large Dashed (große Striche)</option>
+                        <option value="4">Sparse Dotted (wenige Punkte)</option>
+                    </select>
+                </div>
+
+                <div class="balance-section">
+                    <label class="balance-label">📏 Linien-Breite:</label>
+                    <input type="number" id="shlLineWidth" class="balance-input" value="1" min="1" max="5" step="1">
+                </div>
+            </div>
+
+            <div class="date-modal-buttons">
+                <button class="modal-btn" onclick="closeSessionHLSettings()">Abbrechen</button>
+                <button class="modal-btn primary" onclick="applySessionHLSettings()">✅ Indikator hinzufügen</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Trade Dialog Modal -->
     <div id="tradeModal" class="date-modal" style="display: none;">
         <div class="date-modal-content" style="max-width: 450px;">
@@ -168,6 +274,7 @@
                     <div class="indicator-item clickable" onclick="openAddEMADialog()">📈 EMA (Exponential Moving Average)</div>
                     <div class="indicator-item clickable" onclick="addSessionIndicator()">🌍 Session Indicator (Asian/European/US)</div>
                     <div class="indicator-item clickable" onclick="addVolumeIndicator()">📊 Volume Indicator</div>
+                    <div class="indicator-item clickable" onclick="openSessionHLSettings()">🎯 Session High/Low (Swing Levels)</div>
                     <div class="indicator-item">RSI (Coming Soon)</div>
                     <div class="indicator-item">MACD (Coming Soon)</div>
                 </div>
@@ -203,12 +310,12 @@
 
     <!-- Indicator Settings Modal (EMA) -->
     <div id="indicatorSettingsModal" class="date-modal" style="display: none;">
-        <div class="date-modal-content" style="max-width: 450px;">
+        <div class="date-modal-content" style="max-width: 650px; max-height: 80vh; overflow-y: auto;">
             <div class="date-modal-header">
                 <span class="date-modal-title">⚙️ Indikator Einstellungen</span>
                 <button class="close-modal" onclick="window.IndicatorManager.closeSettingsModal()">&times;</button>
             </div>
-            <div class="settings-content">
+            <div class="settings-content" style="max-height: calc(80vh - 140px); overflow-y: auto;">
                 <div class="balance-section">
                     <label class="balance-label">Period (Anzahl Kerzen):</label>
                     <input type="number" id="indicatorPeriodInput" class="balance-input" value="9" min="2" max="200" step="1">
@@ -506,7 +613,7 @@
     <!-- Autoscale Toggle Button -->
     <button id="autoscaleBtn" class="active" title="Autoscale: ON">⚖️</button>
 
-    <script src="/static/js/indicators.js?v=volume-minimal"></script>
+    <script src="/static/js/indicators.js?v=visibility-fix"></script>
     <script src="/static/js/chart.js?v=volume-minimal"></script>
 </body>
 </html>

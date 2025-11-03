@@ -6331,6 +6331,68 @@ function addVolumeIndicator() {
 }
 
 // ========================================
+// Session High/Low Settings Functions
+// ========================================
+
+function openSessionHLSettings() {
+    closeIndicatorsModal(); // Close Indicators Modal
+    const modal = document.getElementById('sessionHLSettingsModal');
+    modal.style.display = 'flex';
+    console.log('⚙️ Session High/Low Settings Modal geöffnet');
+}
+
+function closeSessionHLSettings() {
+    const modal = document.getElementById('sessionHLSettingsModal');
+    modal.style.display = 'none';
+    console.log('⚙️ Session High/Low Settings Modal geschlossen');
+}
+
+function applySessionHLSettings() {
+    // Lese alle Werte aus dem Formular
+    const utcOffsetValue = document.getElementById('shlUtcOffset').value;
+
+    const config = {
+        utcOffset: utcOffsetValue !== '' ? parseInt(utcOffsetValue) : 0,  // Fix: 0 ist valide!
+        asianStart: document.getElementById('shlAsianStart').value || '00:00',
+        asianEnd: document.getElementById('shlAsianEnd').value || '09:00',
+        europeanStart: document.getElementById('shlEuropeanStart').value || '09:00',
+        europeanEnd: document.getElementById('shlEuropeanEnd').value || '15:30',
+        americanStart: document.getElementById('shlAmericanStart').value || '15:30',
+        americanEnd: document.getElementById('shlAmericanEnd').value || '22:00',
+        maxLinesAbove: parseInt(document.getElementById('shlMaxLinesAbove').value) || 5,
+        maxLinesBelow: parseInt(document.getElementById('shlMaxLinesBelow').value) || 5,
+        // Session-spezifische Farben
+        asianHighColor: document.getElementById('shlAsianHighColor').value || '#FF00BB',
+        asianLowColor: document.getElementById('shlAsianLowColor').value || '#FF00BB',
+        europeanHighColor: document.getElementById('shlEuropeanHighColor').value || '#00CCFF',
+        europeanLowColor: document.getElementById('shlEuropeanLowColor').value || '#00CCFF',
+        americanHighColor: document.getElementById('shlAmericanHighColor').value || '#FF9900',
+        americanLowColor: document.getElementById('shlAmericanLowColor').value || '#FF9900',
+        lineStyle: parseInt(document.getElementById('shlLineStyle').value) || 0,
+        lineWidth: parseInt(document.getElementById('shlLineWidth').value) || 1
+    };
+
+    console.log('💾 SessionHL Settings:', config);
+
+    // Schließe Modal
+    closeSessionHLSettings();
+
+    // Füge Indikator mit Custom-Config hinzu
+    addSessionHLIndicator(config);
+}
+
+function addSessionHLIndicator(config = {}) {
+    // Add via IndicatorManager mit Custom oder Default-Config
+    if (window.IndicatorManager) {
+        window.IndicatorManager.addIndicator('SESSION_HL', config);
+
+        console.log('✅ Session High/Low Indikator hinzugefügt mit Config:', config);
+    } else {
+        console.error('❌ IndicatorManager nicht verfügbar');
+    }
+}
+
+// ========================================
 // Asset Name Update Function
 // ========================================
 
