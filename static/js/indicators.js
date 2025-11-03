@@ -530,8 +530,6 @@ class SessionIndicator extends BaseIndicator {
         this.sessionBoxes = [];
         this.highLowLines = [];
         this.chart = null; // Chart-Referenz für sichtbaren Bereich (wird in render() gesetzt)
-
-        console.log('🌍 Session Indikator erstellt:', this.config);
     }
 
     // Hilfsfunktion: Zeit-String zu Minuten seit Mitternacht
@@ -635,7 +633,6 @@ class SessionIndicator extends BaseIndicator {
     // Berechne Session-Daten und High/Low
     calculate(data) {
         if (!data || data.length === 0) {
-            console.warn('⚠️ Session: Keine Daten verfügbar');
             return { sessions: [], highLows: [] };
         }
 
@@ -750,13 +747,6 @@ class SessionIndicator extends BaseIndicator {
         }
 
         // Summary Log (kompakt)
-        const uniqueDays = new Set(ranges.map(r => new Date(r.start * 1000).toISOString().split('T')[0])).size;
-        if (this.config.tradingDaysLookback === null) {
-            console.log(`✅ ${ranges.length} Sessions in ${uniqueDays} Handelstagen (Unbegrenzter Modus)`);
-        } else {
-            console.log(`✅ ${ranges.length} Sessions in ${uniqueDays} Handelstagen (Limit: ${this.config.tradingDaysLookback} Tage)`);
-        }
-
         return ranges;
     }
 
@@ -771,7 +761,6 @@ class SessionIndicator extends BaseIndicator {
 
         const candleData = window.candlestickSeries?.data();
         if (!candleData || candleData.length === 0) {
-            console.warn('⚠️ Session render: Keine Candlestick-Daten');
             return;
         }
 
@@ -793,8 +782,6 @@ class SessionIndicator extends BaseIndicator {
 
         // Rendere Session-Boxen (immer!)
         this.renderHighLowLines(chart, highLows);
-
-        console.log('✅ Session Indikator gerendert');
     }
 
     renderHighLowLines(chart, highLows) {
@@ -820,7 +807,6 @@ class SessionIndicator extends BaseIndicator {
             }
         });
         this.highLowLines = [];
-        console.log('🧹 Alte Session-Boxen entfernt');
 
         // GUARD: Handelstage-Tracking für Begrenzung
         const paintedTradingDays = new Set();
@@ -878,11 +864,6 @@ class SessionIndicator extends BaseIndicator {
                 console.error(`❌ Fehler beim Attach von Box #${index + 1}:`, e);
             }
         });
-
-        if (skippedCount > 0) {
-            console.log(`⏭️ ${skippedCount} Sessions übersprungen (Handelstage-Limit: ${this.config.tradingDaysLookback})`);
-        }
-        console.log(`✅ ${attachedCount}/${highLows.length} Session Rectangle-Boxen attached (${paintedTradingDays.size} Handelstage)`);
     }
 
     getSessionColor(type) {
@@ -930,8 +911,6 @@ class SessionIndicator extends BaseIndicator {
         if (window.chart) {
             this.renderHighLowLines(window.chart, highLows);
         }
-
-        console.log('🔄 Session Indikator updated');
     }
 
     destroy() {
@@ -1138,8 +1117,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         this.priceLines = [];           // Price Lines für Breakout Detection
         this.lastPrice = null;          // Letzter Preis für Breakout-Detection
         this.chart = null;              // Chart-Referenz für LineSeries
-
-        console.log('🎯 Session High/Low Indikator erstellt:', this.config);
     }
 
     // ========================================
@@ -1166,8 +1143,6 @@ class SessionHighLowIndicator extends BaseIndicator {
 
     findSessionRanges(data) {
         if (!data || data.length === 0) return [];
-
-        console.log(`📊 Scanning ${data.length} candles for sessions...`);
 
         const ranges = [];
         let currentSession = null;
@@ -1246,7 +1221,6 @@ class SessionHighLowIndicator extends BaseIndicator {
 
     calculate(data) {
         if (!data || data.length === 0) {
-            console.warn('⚠️ SessionHL: Keine Daten verfügbar');
             return { completedSessions: [] };
         }
 
@@ -1470,7 +1444,6 @@ class SessionHighLowIndicator extends BaseIndicator {
 
         const candleData = window.candlestickSeries?.data();
         if (!candleData || candleData.length === 0) {
-            console.warn('⚠️ SessionHL render: Keine Candlestick-Daten');
             return;
         }
 
@@ -1483,8 +1456,6 @@ class SessionHighLowIndicator extends BaseIndicator {
 
         // Rendere LineSeries (extend right only)
         this.updateLineSeries(currentPrice, candleData);
-
-        console.log('✅ Session High/Low Indikator gerendert');
     }
 
     // ========================================
@@ -1493,18 +1464,13 @@ class SessionHighLowIndicator extends BaseIndicator {
 
     updateLineSeries(currentPrice, candleData) {
         if (!this.chart) {
-            console.warn('⚠️ SessionHL: Chart nicht verfügbar für LineSeries');
             return;
         }
 
         // 🔥 VALIDIERUNG: Prüfe ob candleData vorhanden
         if (!candleData || candleData.length === 0) {
-            console.warn('⚠️ SessionHL: Keine Candle-Daten verfügbar für LineSeries');
             return;
         }
-
-        console.log('\n🎨 ========== UPDATE LINE SERIES START ==========');
-        console.log(`💰 Current Price: ${currentPrice.toFixed(2)}`);
 
         // Clear alte LineSeries
         this.lineSeries.forEach(series => {
@@ -1519,10 +1485,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         // Hole sichtbare Levels
         const { highs, lows } = this.getVisibleLevels(currentPrice);
 
-        console.log(`\n📊 Visible Levels nach Sliding Window:`);
-        console.log(`   Highs (Widerstand): ${highs.length}`);
-        console.log(`   Lows (Support): ${lows.length}`);
-
         // Neueste Kerzen-Zeit (für Linien-Ende)
         const newestCandleTime = candleData[candleData.length - 1].time;
 
@@ -1532,29 +1494,14 @@ class SessionHighLowIndicator extends BaseIndicator {
             return;
         }
 
-        console.log(`\n🕐 Neueste Kerze: ${new Date(newestCandleTime * 1000).toISOString()}`);
-
         // Erstelle LineSeries für Highs (Widerstand)
         highs.forEach(({ price, sessionId }) => {
             try {
                 // Finde Session-Ende für diese Linie
                 const session = this.completedSessions.find(s => s.sessionId === sessionId);
                 if (!session) {
-                    console.warn(`⚠️ Session nicht gefunden für High ${price} (ID: ${sessionId})`);
                     return;
                 }
-
-                // DEBUG: Prüfe ob Preis mit Session-High übereinstimmt
-                if (Math.abs(price - session.high) > 0.01) {
-                    console.warn(`⚠️ HIGH MISMATCH! Linie: ${price}, Session High: ${session.high}`);
-                }
-
-                console.log(`\n🔴 HIGH Line #${this.lineSeries.length + 1}:`);
-                console.log(`   Price: ${session.high.toFixed(2)}`);
-                console.log(`   Session: ${session.type} (${session.sessionId})`);
-                console.log(`   Start-Zeit: ${new Date(session.endTime * 1000).toISOString()}`);
-                console.log(`   End-Zeit: ${new Date(newestCandleTime * 1000).toISOString()}`);
-                console.log(`   Dauer: ${((newestCandleTime - session.endTime) / 3600).toFixed(1)} Stunden`);
 
                 // 🔥 VALIDIERUNG: Prüfe alle Werte vor setData()
                 if (!session.endTime || isNaN(session.endTime)) {
@@ -1566,7 +1513,6 @@ class SessionHighLowIndicator extends BaseIndicator {
                     return;
                 }
                 if (session.endTime > newestCandleTime) {
-                    console.warn(`⚠️ SKIP HIGH: session.endTime (${session.endTime}) > newestCandleTime (${newestCandleTime})`);
                     return;
                 }
 
@@ -1593,8 +1539,6 @@ class SessionHighLowIndicator extends BaseIndicator {
                     { time: newestCandleTime, value: session.high }
                 ];
 
-                console.log(`   ✅ LineSeries Data:`, lineData);
-
                 lineSeries.setData(lineData);
 
                 this.lineSeries.push(lineSeries);
@@ -1609,21 +1553,8 @@ class SessionHighLowIndicator extends BaseIndicator {
                 // Finde Session-Ende für diese Linie
                 const session = this.completedSessions.find(s => s.sessionId === sessionId);
                 if (!session) {
-                    console.warn(`⚠️ Session nicht gefunden für Low ${price} (ID: ${sessionId})`);
                     return;
                 }
-
-                // DEBUG: Prüfe ob Preis mit Session-Low übereinstimmt
-                if (Math.abs(price - session.low) > 0.01) {
-                    console.warn(`⚠️ LOW MISMATCH! Linie: ${price}, Session Low: ${session.low}`);
-                }
-
-                console.log(`\n🟢 LOW Line #${this.lineSeries.length + 1}:`);
-                console.log(`   Price: ${session.low.toFixed(2)}`);
-                console.log(`   Session: ${session.type} (${session.sessionId})`);
-                console.log(`   Start-Zeit: ${new Date(session.endTime * 1000).toISOString()}`);
-                console.log(`   End-Zeit: ${new Date(newestCandleTime * 1000).toISOString()}`);
-                console.log(`   Dauer: ${((newestCandleTime - session.endTime) / 3600).toFixed(1)} Stunden`);
 
                 // 🔥 VALIDIERUNG: Prüfe alle Werte vor setData()
                 if (!session.endTime || isNaN(session.endTime)) {
@@ -1635,7 +1566,6 @@ class SessionHighLowIndicator extends BaseIndicator {
                     return;
                 }
                 if (session.endTime > newestCandleTime) {
-                    console.warn(`⚠️ SKIP LOW: session.endTime (${session.endTime}) > newestCandleTime (${newestCandleTime})`);
                     return;
                 }
 
@@ -1662,8 +1592,6 @@ class SessionHighLowIndicator extends BaseIndicator {
                     { time: newestCandleTime, value: session.low }
                 ];
 
-                console.log(`   ✅ LineSeries Data:`, lineData);
-
                 lineSeries.setData(lineData);
 
                 this.lineSeries.push(lineSeries);
@@ -1671,9 +1599,6 @@ class SessionHighLowIndicator extends BaseIndicator {
                 console.error(`❌ Fehler beim Erstellen der Low LineSeries (${price}):`, e);
             }
         });
-
-        console.log(`\n✅ TOTAL: ${this.lineSeries.length} LineSeries gerendert (${highs.length} Highs, ${lows.length} Lows)`);
-        console.log('🎨 ========== UPDATE LINE SERIES END ==========\n');
     }
 
     // ========================================
@@ -1721,8 +1646,6 @@ class SessionHighLowIndicator extends BaseIndicator {
 
             this.lastPrice = currentPrice;
         }
-
-        console.log('🔄 SessionHL updated');
     }
 
     destroy() {
@@ -1739,8 +1662,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         this.lineSeries = [];
         this.completedSessions = [];
         this.chart = null;
-
-        console.log('🗑️ SessionHL destroyed');
     }
 
     getDisplayName() {
@@ -1859,8 +1780,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         this.config.americanLowColor = document.getElementById('edit_shl_americanLowColor')?.value || '#FF9900';
         this.config.lineStyle = parseInt(document.getElementById('edit_shl_lineStyle')?.value) || 0;
         this.config.lineWidth = parseInt(document.getElementById('edit_shl_lineWidth')?.value) || 1;
-
-        console.log('⚙️ SessionHL Settings angewendet:', this.config);
 
         // Trigger re-render mit aktualisierten Settings
         const candleData = window.candlestickSeries?.data();
@@ -2286,7 +2205,6 @@ class IndicatorManager {
 
         // Öffne Modal
         modal.style.display = 'flex';
-        console.log('⚙️ Session Settings Modal geöffnet');
     }
 
     // UI: Session Settings anwenden
@@ -2294,7 +2212,6 @@ class IndicatorManager {
         const indicator = window.currentIndicatorForSettings;
 
         if (!indicator || indicator.type !== 'SESSION') {
-            console.warn('⚠️ Kein Session Indikator für Settings ausgewählt');
             return;
         }
 
@@ -2330,8 +2247,6 @@ class IndicatorManager {
 
         // Modal schließen
         this.closeSessionSettingsModal();
-
-        console.log('✅ Session Settings angewendet');
     }
 
     closeSessionSettingsModal() {
