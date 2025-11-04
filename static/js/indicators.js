@@ -99,6 +99,51 @@ class BaseIndicator {
         this.data = null;
     }
 
+    /**
+     * Request Chart Update - Für Primitive-basierte Indikatoren
+     * Triggert Chart-Neuzeichnung nach Primitive-Änderungen (attach/detach)
+     * Sucht in allen gängigen Primitive-Container-Strukturen
+     */
+    requestChartUpdate() {
+        console.log(`🔄 requestChartUpdate() called for ${this.type}`);
+
+        // Try multiple container structures (Array, Map, single object)
+        const containers = [
+            this.highLowLines,      // Session Indikator
+            this.fvgBoxes,          // FVG Indikator
+            this.sessionBoxes,      // Potenzielle zukünftige Indikatoren
+            this.primitives         // Generic container
+        ];
+
+        for (const container of containers) {
+            if (!container) continue;
+
+            // Array-basierte Container (z.B. highLowLines, fvgBoxes)
+            if (Array.isArray(container) && container.length > 0) {
+                console.log(`  📦 Found Array container with ${container.length} items`);
+                const firstItem = container[0];
+                if (firstItem.primitive && firstItem.primitive._requestUpdate) {
+                    console.log(`  ✅ Calling _requestUpdate()`);
+                    firstItem.primitive._requestUpdate();
+                    return; // Update ausgeführt
+                }
+            }
+
+            // Map-basierte Container (z.B. seriesMap)
+            if (container instanceof Map && container.size > 0) {
+                console.log(`  📦 Found Map container with ${container.size} items`);
+                const firstEntry = container.values().next().value;
+                if (firstEntry && firstEntry._requestUpdate) {
+                    console.log(`  ✅ Calling _requestUpdate() on Map entry`);
+                    firstEntry._requestUpdate();
+                    return;
+                }
+            }
+        }
+
+        console.log(`  ⚠️ No valid container found with _requestUpdate`);
+    }
+
     // Getter für UI-Label
     getDisplayName() {
         return `${this.type}(${this.config.period || ''})`;
@@ -947,6 +992,8 @@ class SessionIndicator extends BaseIndicator {
             if (candleData && candleData.length > 0) {
                 const { sessions, highLows } = this.calculate(candleData);
                 this.renderHighLowLines(window.chart, highLows);
+                // Force chart update nach Primitive-Attach
+                this.requestChartUpdate();
             }
         } else {
             // AUSSCHALTEN: Alle Primitives detachen
@@ -2049,15 +2096,8 @@ class FVGIndicator extends BaseIndicator {
             return;
         }
 
-        // Speichere requestUpdate für später
-        let requestUpdate = null;
-
         this.fvgBoxes.forEach(box => {
             try {
-                // Speichere requestUpdate vom ersten Primitive
-                if (!requestUpdate && box.primitive._requestUpdate) {
-                    requestUpdate = box.primitive._requestUpdate;
-                }
                 this.candlestickSeries.detachPrimitive(box.primitive);
             } catch (e) {
                 console.warn('⚠️ FVG: Fehler beim Detach:', e);
@@ -2066,10 +2106,8 @@ class FVGIndicator extends BaseIndicator {
 
         this.fvgBoxes = [];
 
-        // Force Chart Update nach dem Detach
-        if (requestUpdate) {
-            requestUpdate();
-        }
+        // Force Chart Update nach dem Detach (uses generelle BaseIndicator Methode)
+        this.requestChartUpdate();
     }
 
     update(candle, allData) {
@@ -2380,10 +2418,8 @@ class FVGIndicator extends BaseIndicator {
             }
         });
 
-        // Force Chart Update durch requestUpdate() wenn verfügbar
-        if (this.fvgBoxes.length > 0 && this.fvgBoxes[0].primitive._requestUpdate) {
-            this.fvgBoxes[0].primitive._requestUpdate();
-        }
+        // Force Chart Update (uses generelle BaseIndicator Methode)
+        this.requestChartUpdate();
 
         console.log(`👁️ ${this.type}(${this.id}) Visibility: ${this.visible} (${this.fvgBoxes.length} Boxen)`);
     }
@@ -2512,7 +2548,9 @@ class IndicatorManager {
         this.saveState();
 
         // UI-Label aktualisieren (Eye-Icon)
-        this.renderLabels();
+        // CRITICAL FIX: Update nur das spezifische Label statt alle neu zu rendern
+        // Verhindert Doppel-Toggle durch Event-Propagation zu neu erstellten Buttons
+        this.updateIndicatorLabel(id);
     }
 
     // Settings Update
@@ -2717,6 +2755,47 @@ class IndicatorManager {
         });
 
         console.log(`🏷️ ${this.activeIndicators.size} Labels gerendert`);
+    }
+
+    // UI: Einzelnes Label updaten (ohne DOM-Neubildung → verhindert Event-Propagation)
+    updateIndicatorLabel(id) {
+        const indicator = this.activeIndicators.get(id);
+        if (!indicator) {
+            console.warn(`⚠️ Indikator nicht gefunden: ${id}`);
+            return;
+        }
+
+        // Finde das existierende Label-Element
+        const container = document.getElementById('indicatorLabels');
+        if (!container) {
+            console.warn('⚠️ Indicator Labels Container nicht gefunden');
+            return;
+        }
+
+        const labelElement = container.querySelector(`[data-id="${id}"]`);
+        if (!labelElement) {
+            console.warn(`⚠️ Label-Element nicht gefunden für ${id} - verwende renderLabels() als Fallback`);
+            this.renderLabels();
+            return;
+        }
+
+        // Update nur Eye-Icon und Visibility-Klasse (OHNE Button neu zu erstellen)
+        const eyeIcon = indicator.visible ? '👁️' : '👁️‍🗨️';
+        const visibleClass = indicator.visible ? 'visible' : 'hidden';
+
+        // Update Eye-Icon im Button
+        const eyeButton = labelElement.querySelector('.indicator-control-btn[title="Toggle Visibility"]');
+        if (eyeButton) {
+            eyeButton.textContent = eyeIcon;
+        }
+
+        // Update Visibility-Klasse des Namens
+        const nameSpan = labelElement.querySelector('.indicator-name');
+        if (nameSpan) {
+            nameSpan.className = `indicator-name ${visibleClass}`;
+        }
+
+        console.log(`🔄 Label updated für ${id} (visible: ${indicator.visible})`);
     }
 
     // UI: Settings Modal öffnen

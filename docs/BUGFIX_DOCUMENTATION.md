@@ -5073,3 +5073,181 @@ except Exception:
 ✅ **Production Ready** - Comprehensive test suite passed, battle-tested architecture
 
 **This fix represents a revolutionary improvement in chart reliability and multi-timeframe stability for trading operations.**
+
+
+---
+
+## Session Indikator Toggle - Doppel-Toggle & Fehlende Chart-Updates - 04.11.2025 👁️
+
+### Problem:
+Session Indikator Toggle funktionierte nicht korrekt:
+- Toggle ON → Session Boxen wurden erstellt, aber **NICHT sofort sichtbar**
+- Erst nach Chart-Interaktion (Klick/Bewegung) erschienen sie
+- **Symptom:** User muss Chart bewegen um Änderung zu sehen
+
+### Root Cause:
+**2 separate Bugs:**
+
+#### Bug 1: Event-Propagation (Doppel-Toggle)
+Das Click-Event wurde **zweimal** gefeuert (ON → OFF statt nur ON).
+
+**Code-Path (VORHER):**
+```javascript
+// static/js/indicators.js:2539-2551
+toggleVisibility(id) {
+    indicator.toggleVisibility(); // Toggle ON
+    this.saveState();
+    this.renderLabels(); // ← LÖSCHT alle Buttons & erstellt NEU!
+}
+```
+
+**Was passiert:**
+1. User klickt Eye-Icon → Toggle ON
+2. `renderLabels()` löscht ALLE Buttons (`container.innerHTML = ''`)
+3. Neue Buttons werden mit neuen Event-Handlers erstellt
+4. **Ursprünglicher Click-Event propagiert zum NEU erstellten Button**
+5. Zweiter Toggle wird gefeuert → Toggle OFF
+
+**Beweis (Console-Logs VORHER):**
+```
+msgid=5618: >>> Toggling ON
+msgid=5619: ✅ Sessions Toggle: OFF  ← FALSCH! Sollte ON sein
+```
+
+#### Bug 2: Fehlende Chart-Updates für Primitives
+Session Boxen nutzen **LightweightCharts Primitives** (SessionRectangle), die einen expliziten `_requestUpdate()` Call benötigen um sichtbar zu werden.
+
+**Code-Path (VORHER):**
+```javascript
+// static/js/indicators.js:980-988
+toggleVisibility() {
+    this.visible = !this.visible;
+    if (this.visible) {
+        this.renderHighLowLines(window.chart, highLows);
+        // ← FEHLT: requestUpdate() Call!
+    }
+}
+```
+
+### Fix:
+**2 Lösungen implementiert:**
+
+#### Fix 1: Generelle `requestChartUpdate()` Methode (BaseIndicator)
+**Fix Location:** `static/js/indicators.js:107-145`
+
+```javascript
+requestChartUpdate() {
+    console.log(`🔄 requestChartUpdate() called for ${this.type}`);
+
+    // Versuche mehrere Container-Strukturen (Array, Map, single object)
+    const containers = [
+        this.highLowLines,      // Session Indikator
+        this.fvgBoxes,          // FVG Indikator
+        this.sessionBoxes,      // Potenzielle zukünftige Indikatoren
+        this.primitives         // Generic container
+    ];
+
+    for (const container of containers) {
+        if (!container) continue;
+
+        // Array-basierte Container (z.B. highLowLines, fvgBoxes)
+        if (Array.isArray(container) && container.length > 0) {
+            const firstItem = container[0];
+            if (firstItem.primitive && firstItem.primitive._requestUpdate) {
+                firstItem.primitive._requestUpdate();
+                return; // Update ausgeführt
+            }
+        }
+
+        // Map-basierte Container (z.B. seriesMap)
+        if (container instanceof Map && container.size > 0) {
+            const firstEntry = container.values().next().value;
+            if (firstEntry && firstEntry._requestUpdate) {
+                firstEntry._requestUpdate();
+                return;
+            }
+        }
+    }
+}
+```
+
+**Verwendung:**
+```javascript
+// static/js/indicators.js:988
+if (this.visible) {
+    this.renderHighLowLines(window.chart, highLows);
+    this.requestChartUpdate(); // ← NEU: Force chart update
+}
+```
+
+#### Fix 2: `updateIndicatorLabel()` statt `renderLabels()`
+**Fix Location:** `static/js/indicators.js:2760-2799`
+
+```javascript
+// NEU: Einzelnes Label updaten (ohne DOM-Neubildung)
+updateIndicatorLabel(id) {
+    const indicator = this.activeIndicators.get(id);
+    const labelElement = container.querySelector(`[data-id="${id}"]`);
+
+    // Update nur Eye-Icon und Visibility-Klasse (OHNE Button neu zu erstellen)
+    const eyeIcon = indicator.visible ? '👁️' : '👁️‍🗨️';
+    const eyeButton = labelElement.querySelector('.indicator-control-btn[title="Toggle Visibility"]');
+    if (eyeButton) {
+        eyeButton.textContent = eyeIcon; // ← NUR Icon-Text ändern
+    }
+
+    // Update Visibility-Klasse des Namens
+    const nameSpan = labelElement.querySelector('.indicator-name');
+    if (nameSpan) {
+        nameSpan.className = `indicator-name ${visibleClass}`;
+    }
+}
+```
+
+**Verwendung:**
+```javascript
+// static/js/indicators.js:2539-2554
+toggleVisibility(id) {
+    indicator.toggleVisibility();
+    this.saveState();
+    this.updateIndicatorLabel(id); // ← GEÄNDERT von renderLabels()
+}
+```
+
+### Testing:
+**MCP Chrome DevTools Tests:**
+
+✅ **Toggle ON Test:**
+```javascript
+// Console Output NACH FIX:
+msgid=5901: ✅ Sessions Toggle: ON  ← Nur 1x! Kein Doppel-Toggle
+msgid=5903: 🔄 Label updated für SESSION_1 (visible: true)
+```
+- Screenshot: Session Boxen **SOFORT sichtbar** (Asian, US)
+- Keine manuelle Chart-Interaktion nötig
+
+✅ **Toggle OFF Test:**
+```javascript
+msgid=5904: ✅ Sessions Toggle: OFF  ← Nur 1x
+msgid=5906: 🔄 Label updated für SESSION_1 (visible: false)
+```
+- Screenshot: Session Boxen verschwunden
+- Sofortiges visuelles Feedback
+
+### Prevention:
+1. **Niemals `renderLabels()` in Event-Handlers** aufrufen während Click-Event läuft
+2. **Immer `updateIndicatorLabel(id)`** verwenden für UI-Updates nach Toggle
+3. **Generelle `requestChartUpdate()`** verwenden für alle Primitive-basierten Indikatoren
+4. **DOM-Manipulation während Events vermeiden** → Event-Propagation zu neuen Elementen
+
+### Affected Components:
+- **Session Indikator** (static/js/indicators.js:975-1010)
+- **FVG Indikator** (static/js/indicators.js:2086-2103, 2413-2414) - ebenfalls refactored
+- **BaseIndicator** (static/js/indicators.js:107-145) - neue Methode
+- **IndicatorManager** (static/js/indicators.js:2553, 2760-2799) - neue Methode
+
+### Impact:
+✅ **Session Toggle:** ON/OFF funktioniert sofort ohne Chart-Interaktion
+✅ **FVG Toggle:** Profitiert ebenfalls von genereller Lösung
+✅ **Code-Qualität:** Wiederverwendbare `requestChartUpdate()` für alle Primitives
+✅ **UX:** Sofortiges visuelles Feedback bei allen Indikator-Toggles
