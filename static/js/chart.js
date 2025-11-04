@@ -38,6 +38,12 @@
         // Global current timestamp storage
         window.currentChartTimestamp = null;
 
+        // Auto-Forward Timer für Play-Modus
+        let autoForwardTimer = null;
+
+        // Speed-Mapping: Slider Index -> Custom Speed Value
+        const SPEED_VALUES = [0.3, 0.5, 1, 2, 3, 5, 10, 15, 20];
+
         // Chart Time Display Update Function
         function updateChartTime(unixTimestamp) {
             if (!unixTimestamp) return;
@@ -1791,6 +1797,13 @@
                     if (playPauseBtn) {
                         playPauseBtn.textContent = message.play_mode ? '⏸️' : '▶️';
                         console.log('🔄 Play Button Updated:', message.play_mode ? '⏸️' : '▶️');
+                    }
+
+                    // Start/Stop Auto-Forward Timer
+                    if (message.play_mode) {
+                        startAutoForward();
+                    } else {
+                        stopAutoForward();
                     }
                     break;
 
@@ -5171,6 +5184,45 @@
             });
         }
 
+        // Auto-Forward Timer Functions
+        function startAutoForward() {
+            // Stoppe existierenden Timer falls vorhanden
+            if (autoForwardTimer) {
+                clearInterval(autoForwardTimer);
+            }
+
+            // Hole Speed-Wert aus Mapping
+            const speedSlider = document.getElementById('speedSlider');
+            const sliderIndex = speedSlider ? parseInt(speedSlider.value) : 3; // Default Index 3 = 2x
+            const speed = SPEED_VALUES[sliderIndex];
+
+            // Berechne Interval: 1 Sekunde / Speed (in Millisekunden)
+            // Bei 0.3x Speed = 3333ms (1 Kerze alle 3.3 Sekunden)
+            // Bei 1x Speed = 1000ms (1 Kerze pro Sekunde)
+            // Bei 2x Speed = 500ms (2 Kerzen pro Sekunde)
+            // Bei 5x Speed = 200ms (5 Kerzen pro Sekunde)
+            // Bei 20x Speed = 50ms (20 Kerzen pro Sekunde)
+            const intervalMs = 1000 / speed;
+
+            console.log(`⏰ Auto-Forward gestartet: ${speed}x Speed (alle ${intervalMs}ms)`);
+            serverLog(`⏰ Auto-Forward Timer started: ${speed}x`, { intervalMs });
+
+            // Starte Timer
+            autoForwardTimer = setInterval(() => {
+                console.log('⏭️ Auto-Forward: Sending Skip...');
+                handleDebugSkip();
+            }, intervalMs);
+        }
+
+        function stopAutoForward() {
+            if (autoForwardTimer) {
+                clearInterval(autoForwardTimer);
+                autoForwardTimer = null;
+                console.log('⏸️ Auto-Forward gestoppt');
+                serverLog('⏸️ Auto-Forward Timer stopped');
+            }
+        }
+
         // Debug Play/Pause Button Handler
         function handleDebugPlayPause() {
             console.log('🚀 DEBUG PLAY/PAUSE: Toggle - Button clicked!');
@@ -5195,6 +5247,18 @@
                 console.error('❌ Debug PlayPause Error:', error);
                 serverLog('❌ Debug PlayPause failed', error);
             });
+        }
+
+        // Debug Speed Handler
+        function handleDebugSpeed(speed) {
+            console.log('🔧 DEBUG SPEED: Geändert zu', speed + 'x');
+            serverLog(`[DEBUG-SPEED] Speed changed to: ${speed}x`);
+
+            // Wenn Auto-Forward aktiv ist, Timer neu starten mit neuer Speed
+            if (autoForwardTimer) {
+                console.log('⏰ Auto-Forward Timer wird mit neuer Speed neu gestartet...');
+                startAutoForward();
+            }
         }
 
         // Debug Control Timeframe Handler - ONLY sets variable, NO chart reload
@@ -5995,12 +6059,17 @@
             const speedSlider = document.getElementById('speedSlider');
             const speedDisplay = document.getElementById('speedDisplay');
             if (speedSlider && speedDisplay) {
+                // Initial Display setzen
+                speedDisplay.textContent = `${SPEED_VALUES[speedSlider.value]}x`;
+
                 speedSlider.addEventListener('input', function() {
-                    speedDisplay.textContent = `${this.value}x`;
+                    const speedValue = SPEED_VALUES[this.value];
+                    speedDisplay.textContent = `${speedValue}x`;
                 });
 
                 speedSlider.addEventListener('change', function() {
-                    handleDebugSpeed(this.value);
+                    const speedValue = SPEED_VALUES[this.value];
+                    handleDebugSpeed(speedValue);
                 });
             }
 

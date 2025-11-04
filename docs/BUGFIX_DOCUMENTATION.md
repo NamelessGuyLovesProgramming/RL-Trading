@@ -1,5 +1,96 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Play Button Speed-Slider - Custom Speed Mapping - 04.11.2025 ⚡
+
+### Feature Request:
+User wollte den Speed-Slider von "Zeit-basiert" auf "Kerzen-pro-Sekunde" umstellen mit spezifischen Werten: **0.3x, 0.5x, 1x, 2x, 3x, 5x, 10x, 15x, 20x**
+
+**ALT:**
+- Slider: 1-15 (linear)
+- Formel: `intervalMs = (60 * 1000) / speed`
+- Bedeutung: Bei 2x → alle 30 Sekunden ein Skip (langsam)
+
+**NEU gewünscht:**
+- Bei 1x → 1 Kerze pro Sekunde
+- Bei 5x → 5 Kerzen pro Sekunde
+- Bei 20x → 20 Kerzen pro Sekunde
+
+### Implementation:
+**4 Code-Änderungen:**
+
+1. **Speed-Mapping Array** (`chart.js:45`)
+```javascript
+const SPEED_VALUES = [0.3, 0.5, 1, 2, 3, 5, 10, 15, 20];
+```
+
+2. **Slider Range** (`chart.html:466`)
+```html
+<!-- VORHER: min="1" max="15" value="2" -->
+<!-- NACHHER: -->
+<input type="range" id="speedSlider"
+  min="0" max="8" value="3">
+```
+→ 9 Positionen (Index 0-8), Default Position 3 = 2x
+
+3. **Display Logic** (`chart.js:6058-6070`)
+```javascript
+// VORHER: Direct value
+speedDisplay.textContent = `${this.value}x`;
+
+// NACHHER: Mapped value
+const speedValue = SPEED_VALUES[this.value];
+speedDisplay.textContent = `${speedValue}x`;
+```
+
+4. **Timer-Formel** (`chart.js:5197-5205`)
+```javascript
+// VORHER:
+const intervalMs = (60 * 1000) / speed; // 2x = 30000ms
+
+// NACHHER:
+const intervalMs = 1000 / speed; // 2x = 500ms (2 Kerzen/Sek)
+```
+
+### Speed-Tabelle:
+
+| Pos | Display | Interval | Kerzen/Sek | Beschreibung |
+|-----|---------|----------|------------|--------------|
+| 0   | 0.3x    | 3333ms   | 0.3 🐌     | Super Langsam |
+| 1   | 0.5x    | 2000ms   | 0.5        | Langsam |
+| 2   | 1x      | 1000ms   | 1          | Normal |
+| 3   | **2x**  | 500ms    | 2          | **Default** |
+| 4   | 3x      | 333ms    | 3          | Schnell |
+| 5   | 5x      | 200ms    | 5          | Sehr Schnell |
+| 6   | 10x     | 100ms    | 10         | Turbo |
+| 7   | 15x     | 67ms     | 15         | Ultra-Turbo |
+| 8   | 20x     | 50ms     | 20         | Maximum Speed |
+
+### Test-Ergebnisse (5x Speed):
+```
+Start:  00:00:00 (2. Januar 2024)
+Test:   ~50 Sekunden @ 5x Speed
+Ende:   01:25:00 (3. Januar 2024)
+
+✅ 170 Skips (85 Minuten Chart-Zeit)
+✅ Alle 200ms ein Skip (exakt wie erwartet)
+✅ Button-Toggle ▶️ ↔ ⏸️ funktioniert
+✅ Speed-Änderung während Playback funktioniert
+```
+
+### Ergebnis:
+✅ 9 Custom Speed-Werte statt linearer 1-15 Slider
+✅ 1x = 1 Kerze/Sekunde (wie gewünscht)
+✅ Bis zu 20 Kerzen pro Sekunde möglich
+✅ Smooth Slider-Feeling bleibt erhalten
+
+### Files Changed:
+- `static/js/chart.js:45` - Speed-Mapping Array
+- `static/js/chart.js:5205` - Neue Timer-Formel
+- `static/js/chart.js:6058-6070` - Display Logic
+- `templates/chart.html:466` - Slider Range
+
+---
+
 ## Go To Date - Monat/Jahr Auswahl gesperrt - 04.11.2025 📅
 
 ### Problem:
