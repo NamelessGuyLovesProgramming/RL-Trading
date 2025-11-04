@@ -203,6 +203,46 @@ class TimeframeDataRepository:
         print(f"[TimeframeDataRepository] [DATA] {len(candles)} Kerzen geladen für {timeframe} ({start_date} bis {end_date or 'Ende'})")
         return candles
 
+    def find_first_candle_after(self, timeframe: str, after_time) -> Optional[Dict[str, Any]]:
+        """
+        Findet die erste verfügbare Kerze NACH einem bestimmten Zeitpunkt
+
+        Args:
+            timeframe: Timeframe (z.B. '5m')
+            after_time: Zeitpunkt nach dem gesucht wird
+
+        Returns:
+            Erste Kerze nach after_time oder None wenn keine gefunden
+        """
+        after_time = self.unified_time.ensure_utc_aware(after_time)
+
+        df = self._load_and_validate_timeframe_data(timeframe)
+        if df is None or df.empty:
+            return None
+
+        time_column = 'datetime' if 'datetime' in df.columns else 'time'
+
+        if time_column == 'time' and df[time_column].dtype == 'int64':
+            # Timestamp format
+            after_timestamp = after_time.timestamp()
+            filtered_df = df[df[time_column] > after_timestamp]
+        else:
+            # Datetime format
+            if df[time_column].dtype == 'object':
+                df[time_column] = pd.to_datetime(df[time_column])
+
+            after_pd = pd.Timestamp(after_time)
+            if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+                after_pd = after_pd.tz_localize('UTC') if after_pd.tz is None else after_pd.tz_convert('UTC')
+            filtered_df = df[df[time_column] > after_pd]
+
+        if filtered_df.empty:
+            return None
+
+        # Nimm die ERSTE Kerze (= älteste nach after_time)
+        first_row = filtered_df.iloc[0]
+        return self._format_candle_data(first_row, timeframe)
+
     def get_candles_before_time(self, timeframe: str, before_time, count: int = 250) -> List[Dict[str, Any]]:
         """
         Lädt historische Kerzen VOR einer bestimmten Zeit - für Lazy Loading

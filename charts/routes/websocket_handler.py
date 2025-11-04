@@ -29,7 +29,9 @@ async def handle_websocket_commands(
     DataIntegrityGuard,
     global_skip_events,
     universal_renderer,
-    debug_control_timeframe
+    debug_control_timeframe,
+    feedback_system,
+    training_service
 ):
     """
     WebSocket Command Handler mit Service-Integration
@@ -551,6 +553,67 @@ async def handle_websocket_commands(
                         'accounts': all_accounts
                     })
 
+                    # ========== TRAINING MODE INTEGRATION ==========
+                    # Wenn Training Mode aktiv: KI analysiert und tradet eventuell
+                    if training_service and training_service.is_active:
+                        try:
+                            # TODO: Market Context von Indicators holen
+                            # Für jetzt: Dummy Context
+                            market_context = {
+                                'current_price': current_price,
+                                'timestamp': int(new_global_time.timestamp()),
+                                'patterns': {
+                                    'in_fvg_zone': False,
+                                    'fvg_distance': 999,
+                                    'near_support_ob': False,
+                                    'near_resistance_ob': False,
+                                    'liquidity_direction': 0,
+                                    'market_structure': 0
+                                },
+                                'session_info': {
+                                    'session': 'unknown',
+                                    'time_in_session': 0,
+                                    'near_open': False,
+                                    'near_close': False
+                                },
+                                'volume': {
+                                    'spike': False,
+                                    'ratio': 1.0
+                                }
+                            }
+
+                            # KI trifft Entscheidung
+                            ai_trade = training_service.on_skip(market_context)
+
+                            if ai_trade:
+                                # KI hat getrade! → Modal automatisch öffnen
+                                logger.info(f"[WS] [AI-TRADE] {ai_trade['action'].upper()} @ ${ai_trade['position']['entry_price']:.2f}")
+
+                                # Broadcast AI Trade Event mit Modal-Trigger
+                                await manager.broadcast({
+                                    'type': 'ai_trade_executed',
+                                    'trade_id': ai_trade['trade_id'],
+                                    'action': ai_trade['action'],
+                                    'position': ai_trade['position'],
+                                    'account_summary': ai_trade['account_summary'],
+                                    'hints': ai_trade['hints'],
+                                    'reasoning': ai_trade['reasoning'],
+                                    'confidence': ai_trade['confidence'],
+                                    'auto_open_modal': True  # ← Trigger für Frontend
+                                })
+
+                                # Update Account Summary nach AI Trade
+                                all_accounts = account_service.get_all_accounts_summary()
+                                await manager.broadcast({
+                                    'type': 'account_update',
+                                    'accounts': all_accounts
+                                })
+
+                        except Exception as e:
+                            logger.error(f"[WS] Training Mode on_skip error: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
+
                     sync_status = unified_time_manager.get_timeframe_sync_status()
 
                     await manager.broadcast({
@@ -728,6 +791,296 @@ async def handle_websocket_commands(
 
                 except Exception as e:
                     logger.error(f"[WS] Client log error: {e}")
+
+
+            # ========== TRADE FEEDBACK COMMAND ==========
+
+            elif command_type == 'trade_feedback':
+                try:
+                    if not feedback_system:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Feedback System nicht verfügbar'
+                        })
+                        continue
+
+                    # Trade Feedback Daten vom Client
+                    feedback_data = data.get('data')
+                    if not feedback_data:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Keine Feedback-Daten übermittelt'
+                        })
+                        continue
+
+                    trade_id = feedback_data.get('trade_id')
+                    ratings = feedback_data.get('ratings', {})
+                    notes = feedback_data.get('notes', '')
+                    overall_score = feedback_data.get('overall_score', 0.0)
+
+                    logger.info(f"[WS] Trade Feedback empfangen für {trade_id}")
+                    logger.info(f"[WS] Ratings: {ratings}")
+                    logger.info(f"[WS] Overall Score: {overall_score}")
+                    logger.info(f"[WS] Notes: {notes[:50]}..." if len(notes) > 50 else f"[WS] Notes: {notes}")
+
+                    # Konvertiere Ratings zu HumanEvaluation
+                    from src.feedback_storage import HumanEvaluation
+
+                    # Ratings sind bereits 0.0-1.0, müssen nicht konvertiert werden
+                    human_eval = HumanEvaluation(
+                        entry_timing=ratings.get('entry_timing', 0.0),
+                        pattern_recognition=ratings.get('pattern_recognition', 0.0),
+                        sl_placement=ratings.get('sl_placement', 0.0),
+                        tp_placement=ratings.get('tp_placement', 0.0),
+                        liquidity_sweeps=ratings.get('liquidity_sweeps', 0.0),
+                        volume_analysis=ratings.get('volume_analysis', 0.0),
+                        overall_score=overall_score,
+                        notes=notes
+                    )
+
+                    # Hole Trade Position Details
+                    # WICHTIG: Position könnte bereits geschlossen sein
+                    # Feedback kann auch nach Trade-Close kommen
+                    active_positions = account_service.get_active_positions()
+                    position = next((p for p in active_positions if p.get('id') == trade_id), None)
+
+                    if not position:
+                        # Position bereits geschlossen oder nicht gefunden
+                        # Speichere Feedback trotzdem für zukünftiges RL Training
+                        logger.warning(f"[WS] Position {trade_id} nicht aktiv - speichere Feedback ohne Position Details")
+
+                        # Minimales TradeRecord für Storage
+                        from src.feedback_storage import TradeRecord
+                        trade_record = TradeRecord(
+                            trade_id=trade_id,
+                            timestamp=datetime.now().isoformat(),
+                            direction='unknown',
+                            entry_price=0.0,
+                            sl_price=0.0,
+                            tp_price=0.0,
+                            outcome='pending',
+                            pnl=0.0,
+                            state_hash='unknown',
+                            evaluation=human_eval
+                        )
+
+                        # Speichere Feedback
+                        feedback_system.storage.save_training_feedback(trade_record)
+                        logger.info(f"[WS] [OK] Feedback gespeichert (Position nicht aktiv)")
+
+                        await websocket.send_json({
+                            'type': 'trade_feedback_saved',
+                            'trade_id': trade_id,
+                            'message': 'Feedback gespeichert (Position bereits geschlossen)'
+                        })
+                        continue
+
+                    # Position aktiv - vollständige Feedback-Analyse
+                    entry_price = position['entry_price']
+                    sl_price = position['sl_price']
+                    tp_price = position['tp_price']
+                    direction = position['direction']
+                    pnl = position.get('pnl', 0.0)
+
+                    # Generiere State Hash für ähnliche Situationen
+                    current_time = unified_time_manager.get_current_time()
+                    state_hash = feedback_system.generate_state_hash_from_context(
+                        timestamp=int(current_time.timestamp()),
+                        entry_price=entry_price,
+                        sl_price=sl_price,
+                        tp_price=tp_price
+                    )
+
+                    # Erstelle TradeRecord
+                    from src.feedback_storage import TradeRecord
+                    trade_record = TradeRecord(
+                        trade_id=trade_id,
+                        timestamp=datetime.now().isoformat(),
+                        direction=direction,
+                        entry_price=entry_price,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        outcome='pending',
+                        pnl=pnl,
+                        state_hash=state_hash,
+                        evaluation=human_eval
+                    )
+
+                    # Speichere Feedback
+                    feedback_system.storage.save_training_feedback(trade_record)
+                    logger.info(f"[WS] [OK] Feedback gespeichert für {trade_id} (State Hash: {state_hash[:8]}...)")
+
+                    # Berechne Feedback Reward für RL Training
+                    feedback_reward = feedback_system.reward_manager.get_component('human').calculate(
+                        state={},
+                        action={},
+                        env_info={'human_feedback': human_eval}
+                    )
+
+                    logger.info(f"[WS] Feedback Reward: {feedback_reward:+.3f}")
+
+                    # Training Mode: KI lernt aus Feedback
+                    if training_service and training_service.is_active:
+                        training_service.on_feedback_received(trade_id, feedback_reward)
+
+                    # Broadcast Feedback Saved Event
+                    await manager.broadcast({
+                        'type': 'trade_feedback_saved',
+                        'trade_id': trade_id,
+                        'overall_score': overall_score,
+                        'feedback_reward': feedback_reward,
+                        'message': 'Feedback erfolgreich gespeichert'
+                    })
+
+                    logger.info(f"[WS] Trade Feedback verarbeitet und gespeichert: {trade_id}")
+
+                except Exception as e:
+                    logger.error(f"[WS] Trade Feedback error: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'Trade Feedback failed: {str(e)}'
+                    })
+
+
+            # ========== DELETE FEEDBACK COMMAND ==========
+
+            elif command_type == 'delete_feedback':
+                try:
+                    if not feedback_system:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Feedback System nicht verfügbar'
+                        })
+                        continue
+
+                    trade_id = data.get('trade_id')
+                    if not trade_id:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Keine Trade ID übermittelt'
+                        })
+                        continue
+
+                    logger.info(f"[WS] Delete Feedback Request für {trade_id}")
+
+                    # Lösche Feedback aus Storage
+                    success = feedback_system.storage.delete_training_feedback(trade_id)
+
+                    if success:
+                        # Broadcast Deletion Event
+                        await manager.broadcast({
+                            'type': 'trade_feedback_deleted',
+                            'trade_id': trade_id,
+                            'message': 'Feedback erfolgreich gelöscht'
+                        })
+
+                        logger.info(f"[WS] [OK] Feedback deleted for {trade_id}")
+                    else:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': f'Feedback für {trade_id} nicht gefunden'
+                        })
+
+                except Exception as e:
+                    logger.error(f"[WS] Delete Feedback error: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'Delete Feedback failed: {str(e)}'
+                    })
+
+
+            # ========== LIST FEEDBACK COMMAND ==========
+
+            elif command_type == 'list_feedback':
+                try:
+                    if not feedback_system:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Feedback System nicht verfügbar'
+                        })
+                        continue
+
+                    limit = data.get('limit', 100)
+                    feedback_list = feedback_system.storage.list_all_feedback(limit=limit)
+
+                    await websocket.send_json({
+                        'type': 'feedback_list',
+                        'feedbacks': feedback_list,
+                        'count': len(feedback_list)
+                    })
+
+                    logger.info(f"[WS] Listed {len(feedback_list)} feedback entries")
+
+                except Exception as e:
+                    logger.error(f"[WS] List Feedback error: {e}")
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'List Feedback failed: {str(e)}'
+                    })
+
+
+            # ========== TOGGLE AI MODE COMMAND ==========
+
+            elif command_type == 'toggle_ai_mode':
+                try:
+                    if not training_service:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Training Service nicht verfügbar'
+                        })
+                        continue
+
+                    # Toggle Training Mode
+                    status = training_service.toggle_mode()
+
+                    # Broadcast zu allen Clients
+                    await manager.broadcast({
+                        'type': 'ai_mode_toggled',
+                        'is_active': status['is_active'],
+                        'session_id': status['session_id'],
+                        'stats': status['stats']
+                    })
+
+                    logger.info(f"[WS] AI Mode toggled: {status['is_active']}")
+
+                except Exception as e:
+                    logger.error(f"[WS] Toggle AI Mode error: {e}")
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'Toggle AI Mode failed: {str(e)}'
+                    })
+
+
+            # ========== GET AI STATUS COMMAND ==========
+
+            elif command_type == 'get_ai_status':
+                try:
+                    if not training_service:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Training Service nicht verfügbar'
+                        })
+                        continue
+
+                    status = training_service.get_status()
+
+                    await websocket.send_json({
+                        'type': 'ai_status',
+                        **status
+                    })
+
+                    logger.info(f"[WS] AI Status sent")
+
+                except Exception as e:
+                    logger.error(f"[WS] Get AI Status error: {e}")
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'Get AI Status failed: {str(e)}'
+                    })
 
 
             # ========== UNKNOWN COMMAND ==========

@@ -1298,6 +1298,7 @@
             const wsUrl = `${protocol}//${window.location.host}/ws`;
 
             ws = new WebSocket(wsUrl);
+            window.chartWs = ws;  // Expose für Training Mode UI
 
             // TEST: Direkter Smart Positioning Test nach 3 Sekunden
             setTimeout(() => {
@@ -1634,6 +1635,11 @@
         // Message Handler
         function handleMessage(message) {
             // console.log('📨 Message received:', message.type);
+
+            // Dispatch custom event for other modules (Training Mode, etc.)
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: message
+            }));
 
             switch(message.type) {
                 case 'initial_data':
@@ -5851,6 +5857,11 @@
             });
         }
 
+        // ⭐ Expose Date Modal functions globally for onclick handlers
+        window.openDateModal = openDateModal;
+        window.closeDateModal = closeDateModal;
+        window.goToSelectedDate = goToSelectedDate;
+
         // Modal schließen bei Escape-Taste
         document.addEventListener('keydown', function(event) {
             if (event.key === 'Escape') {
@@ -6332,6 +6343,21 @@ function addVolumeIndicator() {
         });
 
         console.log('✅ Volume Indikator hinzugefügt');
+    } else {
+        console.error('❌ IndicatorManager nicht verfügbar');
+    }
+}
+
+function addFVGIndicator() {
+    closeIndicatorsModal(); // Close Indicators Modal
+
+    // Add via IndicatorManager mit Default-Config
+    if (window.IndicatorManager) {
+        window.IndicatorManager.addIndicator('FVG', {
+            // Default Config wird in FVGIndicator Konstruktor gesetzt
+        });
+
+        console.log('✅ FVG Indikator hinzugefügt');
     } else {
         console.error('❌ IndicatorManager nicht verfügbar');
     }

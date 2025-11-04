@@ -54,6 +54,12 @@ from charts.services import (
     ConfigService
 )
 
+# RL Feedback System Imports
+from src.multi_feedback_system import MultiFeedbackSystem
+from src.rewards_v2 import create_default_reward_manager
+from src.rl_agent import RLTradingAgent
+from src.training_mode_service import TrainingModeService
+
 # Router imports
 from charts.routes import chart as chart_routes
 from charts.routes import debug as debug_routes
@@ -95,6 +101,9 @@ debug_service: DebugService = None
 position_service: PositionService = None
 account_service: AccountService = None
 config_service: ConfigService = None
+feedback_system: MultiFeedbackSystem = None
+rl_agent: RLTradingAgent = None
+training_service: TrainingModeService = None
 
 # Global Data
 initial_chart_data = []
@@ -180,7 +189,7 @@ def initialize_components():
     global manager, unified_state, unified_time_manager, debug_controller
     global chart_lifecycle_manager, data_validator, price_repository
     global timeframe_data_repository, universal_renderer
-    global chart_service, timeframe_service, navigation_service, debug_service, position_service, account_service, config_service
+    global chart_service, timeframe_service, navigation_service, debug_service, position_service, account_service, config_service, feedback_system, rl_agent, training_service
     global initial_chart_data, global_skip_events, debug_control_timeframe
 
     logger.info("=" * 60)
@@ -192,9 +201,10 @@ def initialize_components():
     csv_loader = CSVLoader()
 
     # Preload all timeframes to prevent first-skip delay
-    logger.info("[INIT] Preloading all timeframes for instant skip performance...")
-    csv_loader.preload_all_timeframes()
-    logger.info("[INIT] ✅ All timeframes preloaded and cached")
+    # TEMPORARILY DISABLED: preload_all_timeframes() hangs server startup
+    # logger.info("[INIT] Preloading all timeframes for instant skip performance...")
+    # csv_loader.preload_all_timeframes()
+    # logger.info("[INIT] ✅ All timeframes preloaded and cached")
 
     # Lade initiale 5m Chart-Daten aus CSV (wie chart_server.py Line 714-747)
     try:
@@ -320,6 +330,47 @@ def initialize_components():
     )
     logger.info(f"[INIT] AccountService initialized with config balances: AI={balances['ai_balance']:,.0f}€, User={balances['user_balance']:,.0f}€")
 
+    # RL Feedback System mit Reward Manager
+    logger.info("[INIT] Creating RL Feedback System...")
+    import pandas as pd
+    from pathlib import Path
+
+    # Lade historische Daten für Context Analysis
+    csv_path = Path("src/data/aggregated/5m/nq-2024.csv")
+    if csv_path.exists():
+        df_full = pd.read_csv(csv_path)
+        logger.info(f"[INIT] Loaded {len(df_full)} rows for feedback context analysis")
+
+        # Erstelle Reward Manager
+        reward_manager = create_default_reward_manager(
+            use_adaptive_norm=True,
+            enable_fvg=True
+        )
+
+        # Erstelle Feedback System
+        feedback_system = MultiFeedbackSystem(
+            df=df_full,
+            reward_manager=reward_manager,
+            storage_path="feedback"
+        )
+        logger.info("[INIT] [OK] Feedback System initialized with MultiFeedbackSystem")
+
+        # RL Agent & Training Mode Service
+        logger.info("[INIT] Creating RL Agent & Training Mode...")
+        rl_agent = RLTradingAgent(feedback_system)
+        training_service = TrainingModeService(
+            rl_agent=rl_agent,
+            feedback_system=feedback_system,
+            position_service=position_service,
+            account_service=account_service
+        )
+        logger.info("[INIT] [OK] Training Mode Service initialized")
+    else:
+        logger.warning(f"[INIT] CSV not found: {csv_path} - Feedback System disabled")
+        feedback_system = None
+        rl_agent = None
+        training_service = None
+
     logger.info("[INIT] ✅ All components initialized successfully")
 
 
@@ -345,7 +396,9 @@ async def websocket_endpoint(websocket: WebSocket):
         DataIntegrityGuard=DataIntegrityGuard,
         global_skip_events=global_skip_events,
         universal_renderer=universal_renderer,
-        debug_control_timeframe=debug_control_timeframe
+        debug_control_timeframe=debug_control_timeframe,
+        feedback_system=feedback_system,
+        training_service=training_service
     )
 
 

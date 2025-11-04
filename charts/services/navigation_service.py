@@ -47,6 +47,8 @@ class NavigationService:
                    visible_candles: int = 200) -> Dict[str, Any]:
         """
         Springt zu einem bestimmten Datum im Chart
+        Falls keine Daten für das Zieldatum existieren (z.B. Wochenende),
+        wird die erste verfügbare Kerze nach dem Zieldatum verwendet.
 
         Args:
             target_date: Ziel-Datum/-Zeit
@@ -58,17 +60,6 @@ class NavigationService:
         """
         print(f"[NavigationService] Go to date: {target_date} ({timeframe})")
 
-        # Update globale Zeit
-        self.unified_time.set_time(target_date, source="goto_date")
-
-        # Update DebugController Start-Zeit
-        self.debug_controller.set_start_time(target_date)
-
-        # CRITICAL: Reset sync_manager positions nach Go To Date
-        if hasattr(self.debug_controller, 'sync_manager') and self.debug_controller.sync_manager:
-            self.debug_controller.sync_manager.set_base_time(target_date)
-            print(f"[NavigationService] Sync manager reset to: {target_date}")
-
         # Berechne Zeit-Bereich
         timeframe_minutes = self.unified_time._get_timeframe_minutes(timeframe)
         lookback_time = target_date - timedelta(minutes=timeframe_minutes * visible_candles)
@@ -78,12 +69,48 @@ class NavigationService:
             timeframe, lookback_time, target_date, max_candles=visible_candles
         )
 
+        # 🔧 FIX: Wenn keine Daten gefunden, finde erste verfügbare Kerze NACH target_date
+        actual_target = target_date
+        if not chart_data or len(chart_data) == 0:
+            print(f"[GOTO-FALLBACK] No data found for {target_date}, searching for next available candle...")
+
+            first_candle = self.timeframe_repo.find_first_candle_after(timeframe, target_date)
+
+            if first_candle:
+                # Konvertiere Kerzenzeit zu datetime
+                if isinstance(first_candle['time'], (int, float)):
+                    from datetime import datetime as dt
+                    actual_target = dt.utcfromtimestamp(first_candle['time'])
+                else:
+                    actual_target = first_candle['time']
+
+                print(f"[GOTO-FALLBACK] Found first available candle at {actual_target}")
+
+                # Lade Daten mit neuem Ziel
+                lookback_time = actual_target - timedelta(minutes=timeframe_minutes * visible_candles)
+                chart_data = self.timeframe_repo.get_candles_for_date_range(
+                    timeframe, lookback_time, actual_target, max_candles=visible_candles
+                )
+            else:
+                print(f"[GOTO-FALLBACK] ERROR: No candles available after {target_date}")
+
+        # Update globale Zeit mit actual_target (nicht original target_date!)
+        self.unified_time.set_time(actual_target, source="goto_date")
+
+        # Update DebugController Start-Zeit
+        self.debug_controller.set_start_time(actual_target)
+
+        # CRITICAL: Reset sync_manager positions nach Go To Date
+        if hasattr(self.debug_controller, 'sync_manager') and self.debug_controller.sync_manager:
+            self.debug_controller.sync_manager.set_base_time(actual_target)
+            print(f"[NavigationService] Sync manager reset to: {actual_target}")
+
         # Validiere
         validated_data = self.validator.sanitize_chart_data(chart_data, source="goto_date")
 
         # Update State
         if self.unified_state:
-            self.unified_state.update_skip_position(target_date, source="goto")
+            self.unified_state.update_skip_position(actual_target, source="goto")
 
         # CRITICAL: Clear skip events bei Go To Date (neuer Kontext)
         self.global_skip_events.clear()
@@ -93,7 +120,7 @@ class NavigationService:
 
         return {
             'chart_data': validated_data,
-            'actual_date': target_date,
+            'actual_date': actual_target,  # Rückgabe des tatsächlich verwendeten Datums
             'candles_count': len(validated_data),
             'success': len(validated_data) > 0
         }

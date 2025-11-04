@@ -1,0 +1,445 @@
+/*
+ * Feedback Modal CSS
+ * 6-Kriterien Trade Bewertung
+ */
+
+/* Modal Overlay */
+.feedback-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(5px);
+    z-index: 10000;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    animation: fadeIn 0.3s ease;
+}
+
+.feedback-modal-overlay.active {
+    display: flex;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Modal Container */
+.feedback-modal {
+    background: #1e1e1e;
+    border: 2px solid #3d3d3d;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    width: 600px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: slideIn 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-50px) scale(0.9);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+/* Header */
+.feedback-modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #3d3d3d;
+    background: linear-gradient(135deg, #2d2d2d 0%, #1e1e1e 100%);
+}
+
+.feedback-modal-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.feedback-modal-title .icon {
+    font-size: 24px;
+}
+
+.feedback-modal-subtitle {
+    margin: 8px 0 0 0;
+    font-size: 14px;
+    color: #888;
+}
+
+/* Trade Info */
+.feedback-trade-info {
+    padding: 16px 24px;
+    background: #252525;
+    border-bottom: 1px solid #3d3d3d;
+}
+
+.trade-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+}
+
+.trade-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.trade-info-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #888;
+}
+
+.trade-info-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.trade-info-value.buy {
+    color: #4caf50;
+}
+
+.trade-info-value.sell {
+    color: #f44336;
+}
+
+.trade-info-value.positive {
+    color: #4caf50;
+}
+
+.trade-info-value.negative {
+    color: #f44336;
+}
+
+/* Modal Body */
+.feedback-modal-body {
+    padding: 24px;
+}
+
+/* Criteria Section */
+.feedback-criteria {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.feedback-criterion {
+    padding: 16px;
+    background: #252525;
+    border: 1px solid #3d3d3d;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+.feedback-criterion:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+}
+
+.criterion-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.criterion-icon {
+    font-size: 20px;
+}
+
+.criterion-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    flex: 1;
+}
+
+.criterion-description {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 12px;
+    padding-left: 30px;
+}
+
+/* Star Rating */
+.star-rating {
+    display: flex;
+    gap: 8px;
+    padding-left: 30px;
+}
+
+.star {
+    font-size: 32px;
+    cursor: pointer;
+    color: #444;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.star:hover,
+.star.active {
+    color: #ffd700;
+    transform: scale(1.1);
+}
+
+.star:active {
+    transform: scale(0.95);
+}
+
+/* Hint Box */
+.criterion-hint {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(76, 175, 80, 0.1);
+    border-left: 3px solid #4caf50;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #aaa;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.criterion-hint.warning {
+    background: rgba(255, 152, 0, 0.1);
+    border-left-color: #ff9800;
+}
+
+.criterion-hint.error {
+    background: rgba(244, 67, 54, 0.1);
+    border-left-color: #f44336;
+}
+
+.criterion-hint .icon {
+    font-size: 14px;
+}
+
+/* Notes Section */
+.feedback-notes {
+    margin-top: 24px;
+}
+
+.feedback-notes label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 8px;
+}
+
+.feedback-notes textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 12px;
+    background: #252525;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    resize: vertical;
+    transition: border-color 0.2s ease;
+}
+
+.feedback-notes textarea:focus {
+    outline: none;
+    border-color: #4caf50;
+}
+
+.feedback-notes textarea::placeholder {
+    color: #666;
+}
+
+/* Overall Score */
+.feedback-overall-score {
+    margin-top: 24px;
+    padding: 20px;
+    background: linear-gradient(135deg, #2d2d2d 0%, #1e1e1e 100%);
+    border: 2px solid #3d3d3d;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.overall-score-label {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.overall-score-value {
+    font-size: 36px;
+    font-weight: 700;
+    color: #4caf50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.overall-score-stars {
+    font-size: 24px;
+    color: #ffd700;
+}
+
+/* Modal Footer */
+.feedback-modal-footer {
+    padding: 20px 24px;
+    border-top: 1px solid #3d3d3d;
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+.btn-secondary {
+    background: #3d3d3d;
+    color: #fff;
+}
+
+.btn-secondary:hover {
+    background: #4a4a4a;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
+    box-shadow: 0 6px 16px rgba(76, 175, 80, 0.4);
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+}
+
+.btn-danger:hover {
+    background: linear-gradient(135deg, #d32f2f 0%, #c62828 100%);
+    box-shadow: 0 6px 16px rgba(244, 67, 54, 0.4);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Notification Button (pulsing) */
+.trade-notification-button {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    padding: 16px 24px;
+    background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(76, 175, 80, 0.4);
+    z-index: 9999;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    animation: pulse 2s infinite;
+}
+
+.trade-notification-button.active {
+    display: flex;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 8px 24px rgba(76, 175, 80, 0.4);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 12px 32px rgba(76, 175, 80, 0.6);
+    }
+}
+
+.trade-notification-button:hover {
+    background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
+    animation: none;
+    transform: scale(1.05);
+}
+
+.trade-notification-button:active {
+    transform: scale(0.98);
+}
+
+/* Scrollbar Styling */
+.feedback-modal::-webkit-scrollbar {
+    width: 8px;
+}
+
+.feedback-modal::-webkit-scrollbar-track {
+    background: #1e1e1e;
+}
+
+.feedback-modal::-webkit-scrollbar-thumb {
+    background: #4a4a4a;
+    border-radius: 4px;
+}
+
+.feedback-modal::-webkit-scrollbar-thumb:hover {
+    background: #5a5a5a;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .feedback-modal {
+        width: 95vw;
+    }
+
+    .trade-info-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .star {
+        font-size: 28px;
+    }
+
+    .overall-score-value {
+        font-size: 28px;
+    }
+}
