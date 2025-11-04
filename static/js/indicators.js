@@ -34,7 +34,8 @@ class BaseIndicator {
         // Merge: Blueprint Defaults + User Config
         this.config = { ...blueprintDefaults, ...config };
 
-        this.visible = true;
+        // CRITICAL: Lese visible aus config (für localStorage-Restore), Fallback zu true
+        this.visible = config.visible !== undefined ? config.visible : true;
         this.series = null; // LightweightCharts Series
         this.data = null;   // Cached calculated data
 
@@ -121,7 +122,7 @@ class BaseIndicator {
     serialize() {
         return {
             type: this.type,
-            config: this.config
+            config: {...this.config, visible: this.visible}
         };
     }
 }
@@ -786,8 +787,10 @@ class SessionIndicator extends BaseIndicator {
             title: 'Sessions'
         });
 
-        // Rendere Session-Boxen (immer!)
-        this.renderHighLowLines(chart, highLows);
+        // Rendere Session-Boxen (nur wenn visible!)
+        if (this.visible) {
+            this.renderHighLowLines(chart, highLows);
+        }
     }
 
     renderHighLowLines(chart, highLows) {
@@ -912,11 +915,44 @@ class SessionIndicator extends BaseIndicator {
         });
         this.highLowLines = [];
 
-        // Neu berechnen und rendern
+        // Neu berechnen und rendern (nur wenn visible!)
         const { sessions, highLows } = this.calculate(allData);
-        if (window.chart) {
+        if (window.chart && this.visible) {
             this.renderHighLowLines(window.chart, highLows);
         }
+    }
+
+    toggleVisibility() {
+        this.visible = !this.visible;
+
+        const candlestickSeries = window.candlestickSeries;
+        if (!candlestickSeries) {
+            console.error('❌ Sessions Toggle: Candlestick Series nicht verfügbar');
+            return;
+        }
+
+        if (this.visible) {
+            // EINSCHALTEN: Neu rendern (erstellt Primitives neu)
+            const candleData = candlestickSeries.data();
+            if (candleData && candleData.length > 0) {
+                const { sessions, highLows } = this.calculate(candleData);
+                this.renderHighLowLines(window.chart, highLows);
+            }
+        } else {
+            // AUSSCHALTEN: Alle Primitives detachen
+            this.highLowLines.forEach(item => {
+                try {
+                    if (item.primitive) {
+                        candlestickSeries.detachPrimitive(item.primitive);
+                    }
+                } catch (e) {
+                    console.warn('⚠️ Fehler beim Detach:', e);
+                }
+            });
+            this.highLowLines = [];
+        }
+
+        console.log(`✅ Sessions Toggle: ${this.visible ? 'ON' : 'OFF'}`);
     }
 
     destroy() {
