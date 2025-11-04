@@ -806,6 +806,11 @@ class SessionIndicator extends BaseIndicator {
             try {
                 // KRITISCH: Detach von candlestickSeries, nicht this.series!
                 if (item.primitive && candlestickSeries) {
+                    // KRITISCH: _visible Flag setzen + Update triggern VOR Detach!
+                    item.primitive._visible = false;
+                    if (item.primitive._requestUpdate) {
+                        item.primitive._requestUpdate();
+                    }
                     candlestickSeries.detachPrimitive(item.primitive);
                 }
                 if (item.series) {
@@ -903,6 +908,11 @@ class SessionIndicator extends BaseIndicator {
             try {
                 // Detach Rectangle Primitives von Candlestick Series
                 if (item.primitive && candlestickSeries) {
+                    // KRITISCH: _visible Flag setzen + Update triggern VOR Detach!
+                    item.primitive._visible = false;
+                    if (item.primitive._requestUpdate) {
+                        item.primitive._requestUpdate();
+                    }
                     candlestickSeries.detachPrimitive(item.primitive);
                 }
                 // Remove Border Line Series
@@ -943,6 +953,12 @@ class SessionIndicator extends BaseIndicator {
             this.highLowLines.forEach(item => {
                 try {
                     if (item.primitive) {
+                        // CRITICAL FIX: Leere die PaneViews BEVOR detach!
+                        item.primitive._paneViews = [];
+                        item.primitive._visible = false;
+                        if (item.primitive._requestUpdate) {
+                            item.primitive._requestUpdate();
+                        }
                         candlestickSeries.detachPrimitive(item.primitive);
                     }
                 } catch (e) {
@@ -962,6 +978,11 @@ class SessionIndicator extends BaseIndicator {
             try {
                 // Detach Rectangle Primitives von Candlestick Series
                 if (item.primitive && candlestickSeries) {
+                    // KRITISCH: _visible Flag setzen + Update triggern VOR Detach!
+                    item.primitive._visible = false;
+                    if (item.primitive._requestUpdate) {
+                        item.primitive._requestUpdate();
+                    }
                     candlestickSeries.detachPrimitive(item.primitive);
                 }
                 // Remove Border Line Series
