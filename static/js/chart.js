@@ -5224,14 +5224,14 @@
             const dateInput = document.getElementById('goToDateInput');
 
             // Setze ein verfügbares Datum als Default (Dezember 2024)
-            // Die CSV-Daten gehen von 31. Dezember 2024 rückwärts
+            // Die CSV-Daten umfassen das gesamte Jahr 2024 (01.01. - 31.12.)
             const defaultDate = new Date('2024-12-25'); // Ein Datum das in den Daten ist
             const dateString = defaultDate.toISOString().split('T')[0];
             dateInput.value = dateString;
 
-            // Setze min/max Werte für verfügbare Daten (ungefähr)
-            dateInput.setAttribute('min', '2024-12-01'); // Ca. Startdatum der Daten
-            dateInput.setAttribute('max', '2024-12-30'); // Enddatum der Daten
+            // Setze min/max Werte für verfügbare Daten (gesamtes Jahr 2024)
+            dateInput.setAttribute('min', '2024-01-01'); // Startdatum: 1. Januar 2024
+            dateInput.setAttribute('max', '2024-12-31'); // Enddatum: 31. Dezember 2024
 
             modal.style.display = 'flex';
             dateInput.focus();
