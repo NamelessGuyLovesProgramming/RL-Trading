@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/debug", tags=["debug"])
 
 def setup_debug_routes(app, debug_service, navigation_service,
                        unified_time_manager, manager, debug_controller,
-                       global_skip_events, debug_control_timeframe, account_service):
+                       global_skip_events, debug_control_timeframe, account_service, config_service):
     """
     Registriert Debug-Routes am FastAPI App
 
@@ -26,6 +26,7 @@ def setup_debug_routes(app, debug_service, navigation_service,
         global_skip_events: Global skip events list
         debug_control_timeframe: Debug control timeframe reference
         account_service: AccountService-Instanz
+        config_service: ConfigService-Instanz
     """
 
     # REFACTOR PHASE 4: Skip-Endpoint (bereits auf NavigationService migriert)
@@ -171,6 +172,153 @@ def setup_debug_routes(app, debug_service, navigation_service,
             return {"status": "error", "message": str(e)}
 
 
+    # ⚡ PERFORMANCE: Batch-Skip Endpoint für High-Speed Playback
+    @router.post("/skip_batch")
+    async def debug_skip_batch(request: dict):
+        """⚡ Führt mehrere Skips in einem Request aus (Performance-Optimierung)"""
+        try:
+            count = request.get("count", 1)
+            skip_timeframe = debug_control_timeframe
+
+            print(f"[SKIP-BATCH] Request: {count} skips for {skip_timeframe}")
+
+            if count < 1:
+                return {"status": "error", "message": "Count must be >= 1"}
+
+            if count > 100:  # Safety limit
+                return {"status": "error", "message": "Count too large (max 100)"}
+
+            candles = []
+            last_candle = None
+            last_candle_type = None
+
+            # Führe N Skips durch (ohne Position Checks)
+            for i in range(count):
+                skip_result = navigation_service.skip_forward(skip_timeframe)
+
+                if not skip_result['success']:
+                    print(f"[SKIP-BATCH] Stopped at {i+1}/{count}: {skip_result.get('error')}")
+                    break
+
+                last_candle = skip_result['candle']
+                last_candle_type = skip_result['candle_type']
+                candles.append(last_candle)
+
+                # Update chart state
+                if hasattr(manager, 'chart_state') and 'data' in manager.chart_state:
+                    manager.chart_state['data'].append(last_candle)
+
+            if not candles:
+                return {"status": "error", "message": "No candles skipped"}
+
+            new_global_time = unified_time_manager.get_current_time()
+
+            # ⚡ OPTIMIZATION: Position Check NUR für LETZTE Kerze!
+            current_price = last_candle['close']
+            candle_high = last_candle['high']
+            candle_low = last_candle['low']
+
+            active_positions = account_service.get_active_positions()
+            positions_to_close = []
+
+            for position in active_positions:
+                position_id = position['id']
+                account_type = position.get('account_type', 'user')
+                direction = position['direction']
+                sl = position['sl_price']
+                tp = position['tp_price']
+
+                # SL/TP Check
+                sl_hit = False
+                tp_hit = False
+                close_price = None
+                close_reason = None
+
+                if direction == 'long':
+                    if candle_low <= sl:
+                        sl_hit = True
+                        close_price = sl
+                        close_reason = 'sl'
+                    elif candle_high >= tp:
+                        tp_hit = True
+                        close_price = tp
+                        close_reason = 'tp'
+                else:  # short
+                    if candle_high >= sl:
+                        sl_hit = True
+                        close_price = sl
+                        close_reason = 'sl'
+                    elif candle_low <= tp:
+                        tp_hit = True
+                        close_price = tp
+                        close_reason = 'tp'
+
+                if sl_hit or tp_hit:
+                    positions_to_close.append({
+                        'position_id': position_id,
+                        'close_price': close_price,
+                        'close_reason': close_reason,
+                        'account_type': account_type
+                    })
+
+            # Close Positionen
+            for close_info in positions_to_close:
+                result = account_service.close_position(
+                    close_info['position_id'],
+                    close_info['close_price'],
+                    close_info['account_type']
+                )
+
+                if result['success']:
+                    await manager.broadcast({
+                        'type': 'position_closed',
+                        'position_id': close_info['position_id'],
+                        'close_price': close_info['close_price'],
+                        'close_reason': close_info['close_reason'],
+                        'pnl': result.get('pnl', 0)
+                    })
+
+            # Account Update Broadcast (falls Positionen geschlossen)
+            if positions_to_close:
+                await manager.broadcast({
+                    'type': 'account_update',
+                    'ai': account_service.get_account_balance('ai'),
+                    'user': account_service.get_account_balance('user')
+                })
+
+            # ⚡ OPTIMIZATION: NUR 1 Broadcast für alle Kerzen
+            sync_status = unified_time_manager.get_timeframe_sync_status()
+
+            await manager.broadcast({
+                'type': 'batch_skip_event',
+                'candles': candles,
+                'count': len(candles),
+                'final_candle': last_candle,
+                'candle_type': last_candle_type,
+                'debug_time': new_global_time.isoformat(),
+                'timeframe': skip_timeframe,
+                'system_type': 'navigation_service',
+                'sync_status': sync_status,
+                'global_time': new_global_time.isoformat()
+            })
+
+            print(f"[SKIP-BATCH] SUCCESS: Skipped {len(candles)} candles -> {new_global_time.strftime('%H:%M:%S')}")
+
+            return {
+                "status": "success",
+                "candles": candles,
+                "count": len(candles),
+                "final_time": new_global_time.isoformat(),
+                "timeframe": skip_timeframe
+            }
+
+        except Exception as e:
+            print(f"[ERROR] Batch-Skip-Fehler: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
+
     # REFACTOR PHASE 4: GoTo-Endpoint (bereits auf NavigationService migriert)
     @router.post("/go_to_date")
     async def debug_go_to_date(date_data: dict):
@@ -222,14 +370,34 @@ def setup_debug_routes(app, debug_service, navigation_service,
                 'source': 'go_to_date_sync'
             })
 
+            # Sichere actual_date Extraktion
+            actual_date_for_broadcast = target_date
+            if 'actual_date' in goto_result and goto_result['actual_date']:
+                try:
+                    actual_date_for_broadcast = goto_result['actual_date'].isoformat()
+                except:
+                    actual_date_for_broadcast = str(goto_result['actual_date'])
+
             await manager.broadcast({
                 'type': 'go_to_date_complete',
                 'data': chart_data,
                 'date': target_date,
-                'actual_date': goto_result['actual_date'].isoformat()
+                'actual_date': actual_date_for_broadcast
             })
 
             print(f"[GOTO-SERVICE] SUCCESS: {len(chart_data)} candles loaded for {target_date}")
+
+            # AUTO-SAVE: Zeit persistieren für Neustart
+            try:
+                actual_date_obj = goto_result.get('actual_date')
+                if actual_date_obj:
+                    saved_time = actual_date_obj.isoformat() if hasattr(actual_date_obj, 'isoformat') else str(actual_date_obj)
+                    config_service.update_time_config(initial_go_to_date=saved_time)
+                    print(f"[GOTO-PERSISTENCE] Time saved: {saved_time}")
+                else:
+                    print(f"[GOTO-PERSISTENCE] WARNING: No actual_date in goto_result")
+            except Exception as persist_error:
+                print(f"[GOTO-PERSISTENCE] WARNING: Could not save time: {persist_error}")
 
             return {
                 "status": "success",
@@ -237,7 +405,7 @@ def setup_debug_routes(app, debug_service, navigation_service,
                 "data": chart_data,
                 "count": len(chart_data),
                 "target_date": target_date,
-                "actual_date": goto_result['actual_date'].isoformat(),
+                "actual_date": saved_time,
                 "system": "navigation_service"
             }
         except Exception as e:
@@ -245,6 +413,53 @@ def setup_debug_routes(app, debug_service, navigation_service,
             import traceback
             traceback.print_exc()
             return {"status": "error", "message": f"Go To Date Fehler: {str(e)}"}
+
+
+    # Reset Time Persistence - Zurück zum Datenende
+    @router.post("/reset_time")
+    async def debug_reset_time():
+        """Löscht gespeicherte Zeit und kehrt zum Datenende zurück"""
+        try:
+            # Lösche gespeicherte Zeit aus Config
+            config_service.update_time_config(initial_go_to_date=None)
+            print(f"[RESET-TIME] Persistence cleared - zurück zum Datenende")
+
+            # Lade letzte verfügbare Daten
+            from datetime import datetime
+            current_timeframe = manager.chart_state['interval']
+
+            # NavigationService verwendet das Datenende als Default
+            goto_result = navigation_service.go_to_date(
+                target_date=datetime(2024, 12, 31),  # Datenende
+                timeframe=current_timeframe,
+                visible_candles=200
+            )
+
+            if goto_result['success']:
+                chart_data = goto_result['chart_data']
+                manager.chart_state['data'] = chart_data
+
+                # Broadcast Update
+                await manager.broadcast({
+                    'type': 'go_to_date_complete',
+                    'data': chart_data,
+                    'date': '2024-12-31',
+                    'actual_date': goto_result['actual_date'].isoformat()
+                })
+
+                return {
+                    "status": "success",
+                    "message": "Zeit zurückgesetzt - am Datenende",
+                    "actual_date": goto_result['actual_date'].isoformat()
+                }
+            else:
+                return {"status": "error", "message": "Fehler beim Zurücksetzen"}
+
+        except Exception as e:
+            print(f"[ERROR] Reset Time Fehler: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"status": "error", "message": f"Reset Fehler: {str(e)}"}
 
 
     # REFACTOR PHASE 4: Set Speed (bereits auf DebugService migriert)

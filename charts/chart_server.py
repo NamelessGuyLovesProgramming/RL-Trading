@@ -373,6 +373,36 @@ def initialize_components():
 
     logger.info("[INIT] ✅ All components initialized successfully")
 
+    # PERSISTENCE: Lade gespeicherte Zeit beim Server-Start
+    time_config = config_service.get_time_config()
+    saved_time = time_config.get('initial_go_to_date')
+
+    if saved_time:
+        try:
+            logger.info(f"[INIT] Restoring saved time: {saved_time}")
+
+            # Parse ISO-Format
+            target_datetime = datetime.fromisoformat(saved_time.replace('Z', '+00:00'))
+
+            # Lade Chart-Daten für gespeicherte Zeit
+            goto_result = navigation_service.go_to_date(
+                target_date=target_datetime,
+                timeframe='5m',
+                visible_candles=200
+            )
+
+            if goto_result['success']:
+                # Update chart_state mit gespeicherten Daten
+                manager.chart_state['data'] = goto_result['chart_data']
+                logger.info(f"[INIT] ✅ Restored to saved time: {goto_result['actual_date']}")
+            else:
+                logger.warning(f"[INIT] Could not restore saved time, using default")
+        except Exception as e:
+            logger.error(f"[INIT] Error restoring saved time: {e}")
+            logger.info("[INIT] Falling back to default (data end)")
+    else:
+        logger.info("[INIT] No saved time found - starting at data end")
+
 
 # ===== WebSocket Endpoint =====
 @app.websocket("/ws")
@@ -425,7 +455,8 @@ async def startup_event():
         debug_controller=debug_controller,
         global_skip_events=global_skip_events,
         debug_control_timeframe=debug_control_timeframe,
-        account_service=account_service
+        account_service=account_service,
+        config_service=config_service
     )
 
     account_routes.setup_account_routes(

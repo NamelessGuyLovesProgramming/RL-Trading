@@ -160,35 +160,49 @@ class TimeframeDataRepository:
         if df is None or df.empty:
             return []
 
-        # Datums-Filterung
-        time_column = 'datetime' if 'datetime' in df.columns else 'time'
-        if time_column == 'time' and df[time_column].dtype == 'int64':
-            # Timestamp format
-            start_timestamp = start_date.timestamp()
+        # Datums-Filterung - Check ob datetime als Index gesetzt ist
+        if isinstance(df.index, pd.DatetimeIndex):
+            # DataFrame hat datetime als Index (von CSVLoader)
+            start_pd = pd.Timestamp(start_date)
+            if hasattr(df.index.dtype, 'tz') and df.index.dtype.tz is not None:
+                start_pd = start_pd.tz_localize('UTC') if start_pd.tz is None else start_pd.tz_convert('UTC')
+
             if end_date:
-                end_timestamp = end_date.timestamp()
-                filtered_df = df[(df[time_column] >= start_timestamp) & (df[time_column] <= end_timestamp)]
+                end_pd = pd.Timestamp(end_date)
+                if hasattr(df.index.dtype, 'tz') and df.index.dtype.tz is not None:
+                    end_pd = end_pd.tz_localize('UTC') if end_pd.tz is None else end_pd.tz_convert('UTC')
+                filtered_df = df[(df.index >= start_pd) & (df.index <= end_pd)]
             else:
-                filtered_df = df[df[time_column] >= start_timestamp]
-        else:
-            # Datetime format - Konvertiere zu Pandas Timestamps für Vergleich
+                filtered_df = df[df.index >= start_pd]
+
+        elif 'datetime' in df.columns:
+            time_column = 'datetime'
             if df[time_column].dtype == 'object':
                 df[time_column] = pd.to_datetime(df[time_column])
 
-            # CRITICAL: Konvertiere start_date und end_date zu Pandas Timestamps
             start_pd = pd.Timestamp(start_date)
-            # Make timezone-aware if DataFrame column is timezone-aware
             if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
                 start_pd = start_pd.tz_localize('UTC') if start_pd.tz is None else start_pd.tz_convert('UTC')
 
             if end_date:
                 end_pd = pd.Timestamp(end_date)
-                # Make timezone-aware if DataFrame column is timezone-aware
                 if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
                     end_pd = end_pd.tz_localize('UTC') if end_pd.tz is None else end_pd.tz_convert('UTC')
                 filtered_df = df[(df[time_column] >= start_pd) & (df[time_column] <= end_pd)]
             else:
                 filtered_df = df[df[time_column] >= start_pd]
+
+        elif 'time' in df.columns and df['time'].dtype == 'int64':
+            # Timestamp format
+            start_timestamp = start_date.timestamp()
+            if end_date:
+                end_timestamp = end_date.timestamp()
+                filtered_df = df[(df['time'] >= start_timestamp) & (df['time'] <= end_timestamp)]
+            else:
+                filtered_df = df[df['time'] >= start_timestamp]
+        else:
+            print(f"[ERROR] Unsupported DataFrame format. Index type: {type(df.index)}, Columns: {list(df.columns)}")
+            return []
 
         # REFACTOR PHASE 3 FIX: Nimm LETZTE max_candles für Zeit-Synchronisation
         if len(filtered_df) > max_candles:
@@ -220,21 +234,29 @@ class TimeframeDataRepository:
         if df is None or df.empty:
             return None
 
-        time_column = 'datetime' if 'datetime' in df.columns else 'time'
+        # Support DateTime Index (from CSVLoader)
+        if isinstance(df.index, pd.DatetimeIndex):
+            after_pd = pd.Timestamp(after_time)
+            if hasattr(df.index.dtype, 'tz') and df.index.dtype.tz is not None:
+                after_pd = after_pd.tz_localize('UTC') if after_pd.tz is None else after_pd.tz_convert('UTC')
+            filtered_df = df[df.index > after_pd]
 
-        if time_column == 'time' and df[time_column].dtype == 'int64':
-            # Timestamp format
-            after_timestamp = after_time.timestamp()
-            filtered_df = df[df[time_column] > after_timestamp]
-        else:
-            # Datetime format
-            if df[time_column].dtype == 'object':
-                df[time_column] = pd.to_datetime(df[time_column])
+        elif 'datetime' in df.columns:
+            if df['datetime'].dtype == 'object':
+                df['datetime'] = pd.to_datetime(df['datetime'])
 
             after_pd = pd.Timestamp(after_time)
-            if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+            if hasattr(df['datetime'].dtype, 'tz') and df['datetime'].dtype.tz is not None:
                 after_pd = after_pd.tz_localize('UTC') if after_pd.tz is None else after_pd.tz_convert('UTC')
-            filtered_df = df[df[time_column] > after_pd]
+            filtered_df = df[df['datetime'] > after_pd]
+
+        elif 'time' in df.columns and df['time'].dtype == 'int64':
+            # Timestamp format
+            after_timestamp = after_time.timestamp()
+            filtered_df = df[df['time'] > after_timestamp]
+        else:
+            print(f"[ERROR] find_first_candle_after: Unsupported DataFrame format")
+            return None
 
         if filtered_df.empty:
             return None
@@ -266,22 +288,32 @@ class TimeframeDataRepository:
             return []
 
         # Filtere alle Kerzen VOR before_time
-        time_column = 'datetime' if 'datetime' in df.columns else 'time'
-
-        if time_column == 'time' and df[time_column].dtype == 'int64':
-            # Timestamp format
-            before_timestamp = before_time.timestamp()
-            filtered_df = df[df[time_column] < before_timestamp]
-        else:
-            # Datetime format
-            if df[time_column].dtype == 'object':
-                df[time_column] = pd.to_datetime(df[time_column])
-
+        # ⚡ PERFORMANCE: Check if datetime is the index (binary search optimization)
+        if df.index.name == 'datetime':
+            # Use the index for filtering (optimized path)
             before_pd = pd.Timestamp(before_time)
-            # Make timezone-aware if DataFrame column is timezone-aware
-            if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+            # Make timezone-aware if DataFrame index is timezone-aware
+            if hasattr(df.index.dtype, 'tz') and df.index.dtype.tz is not None:
                 before_pd = before_pd.tz_localize('UTC') if before_pd.tz is None else before_pd.tz_convert('UTC')
-            filtered_df = df[df[time_column] < before_pd]
+            filtered_df = df[df.index < before_pd]
+        else:
+            # Legacy code for column-based datetime/time
+            time_column = 'datetime' if 'datetime' in df.columns else 'time'
+
+            if time_column == 'time' and df[time_column].dtype == 'int64':
+                # Timestamp format
+                before_timestamp = before_time.timestamp()
+                filtered_df = df[df[time_column] < before_timestamp]
+            else:
+                # Datetime format
+                if df[time_column].dtype == 'object':
+                    df[time_column] = pd.to_datetime(df[time_column])
+
+                before_pd = pd.Timestamp(before_time)
+                # Make timezone-aware if DataFrame column is timezone-aware
+                if hasattr(df[time_column].dtype, 'tz') and df[time_column].dtype.tz is not None:
+                    before_pd = before_pd.tz_localize('UTC') if before_pd.tz is None else before_pd.tz_convert('UTC')
+                filtered_df = df[df[time_column] < before_pd]
 
         # Nimm die LETZTEN count Kerzen aus den gefilterten (= die neuesten VOR before_time)
         if len(filtered_df) > count:
@@ -354,8 +386,13 @@ class TimeframeDataRepository:
 
     def _format_candle_data(self, row, timeframe: str) -> Dict[str, Any]:
         """Formatiert Pandas Row zu Standard Candle Dict"""
-        # Zeitstempel normalisieren
-        if 'datetime' in row.index:
+        # ⚡ PERFORMANCE: Check if row.name is the datetime (indexed DataFrame)
+        if isinstance(row.name, pd.Timestamp):
+            # Index-based DataFrame: datetime is row.name
+            time_value = row.name
+            timestamp = time_value.timestamp()
+        elif 'datetime' in row.index:
+            # Column-based DataFrame: datetime is in row
             time_value = row['datetime']
             if isinstance(time_value, str):
                 time_value = pd.to_datetime(time_value)

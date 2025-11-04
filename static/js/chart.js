@@ -2172,6 +2172,80 @@
                     }
                     break;
 
+                case 'batch_skip_event':
+                    // ⚡ Batch Skip Event: Process multiple candles from batch request
+                    if (isInitialized && message.candles && Array.isArray(message.candles) && message.candles.length > 0) {
+                        console.log(`⚡ [BATCH-SKIP] Processing ${message.count} candles`);
+
+                        // ⚡ PERFORMANCE: Update chart with all candles
+                        message.candles.forEach((candle, index) => {
+                            if (validateCandle(candle)) {
+                                const validatedCandle = {
+                                    time: candle.time,
+                                    open: parseFloat(candle.open),
+                                    high: parseFloat(candle.high),
+                                    low: parseFloat(candle.low),
+                                    close: parseFloat(candle.close),
+                                    volume: parseInt(candle.volume) || 0
+                                };
+                                candlestickSeries.update(validatedCandle);
+
+                                // Update last candle data on each iteration
+                                window.lastCandleClose = validatedCandle.close;
+                                window.lastCandle = validatedCandle;
+                            }
+                        });
+
+                        // ⚡ OPTIMIZATION: Check limit orders only on FINAL candle
+                        if (window.lastCandle && typeof checkLimitOrders === 'function') {
+                            checkLimitOrders(window.lastCandle);
+                        }
+
+                        // 💰 Update PnL for all active positions (using final candle)
+                        const currentPrice = window.lastCandleClose;
+                        if (window.positionLines) {
+                            Object.keys(window.positionLines).forEach(positionId => {
+                                const posData = window.positionLines[positionId];
+                                if (posData && posData.position) {
+                                    const position = posData.position;
+                                    const direction = position.direction || 'long';
+                                    const entry = position.entry_price;
+                                    const size = position.size || 1;
+
+                                    // Calculate unrealized PnL
+                                    let pnl = 0;
+                                    if (direction === 'long') {
+                                        pnl = (currentPrice - entry) * size;
+                                    } else {
+                                        pnl = (entry - currentPrice) * size;
+                                    }
+
+                                    // Store updated PnL
+                                    posData.unrealizedPnL = pnl;
+                                }
+                            });
+
+                            // Render PnL labels on Canvas
+                            renderLivePnLLabels();
+                        }
+
+                        // Update chart time with final candle
+                        if (message.final_candle && message.final_candle.time) {
+                            updateChartTime(message.final_candle.time);
+                        }
+
+                        console.log(`⚡ [BATCH-SKIP] Completed: ${message.count} candles, Final Time: ${message.final_time}`);
+
+                        // Update document title
+                        document.title = `${message.timeframe} Batch Skip (${message.count} candles)`;
+
+                        // Set skip event completion flag
+                        window.skipEventJustCompleted = true;
+                    } else {
+                        console.error('❌ [BATCH-SKIP] Invalid batch data:', message);
+                    }
+                    break;
+
                 case 'unified_timeframe_changed':
                     // SUPER-DEFENSIVE Unified Timeframe Change Handler
                     console.log('[UNIFIED-TF] Timeframe Change Event:', message.timeframe, '- Data:', message.data?.length || 0, 'candles');
@@ -5184,6 +5258,27 @@
             });
         }
 
+        // ⚡ PERFORMANCE: Batch Debug Skip Handler
+        function handleDebugBatchSkip(count) {
+            console.log(`⚡ DEBUG BATCH SKIP: ${count} Kerzen`);
+            serverLog(`⚡ handleDebugBatchSkip called: ${count} skips`);
+
+            fetch('/api/debug/skip_batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ count: count })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(`✅ Batch Skip Response: ${data.count} candles`);
+                serverLog('✅ Batch Skip successful', { count: data.count });
+            })
+            .catch(error => {
+                console.error('❌ Batch Skip Error:', error);
+                serverLog('❌ Batch Skip failed', error);
+            });
+        }
+
         // Auto-Forward Timer Functions
         function startAutoForward() {
             // Stoppe existierenden Timer falls vorhanden
@@ -5196,22 +5291,35 @@
             const sliderIndex = speedSlider ? parseInt(speedSlider.value) : 3; // Default Index 3 = 2x
             const speed = SPEED_VALUES[sliderIndex];
 
-            // Berechne Interval: 1 Sekunde / Speed (in Millisekunden)
-            // Bei 0.3x Speed = 3333ms (1 Kerze alle 3.3 Sekunden)
-            // Bei 1x Speed = 1000ms (1 Kerze pro Sekunde)
-            // Bei 2x Speed = 500ms (2 Kerzen pro Sekunde)
-            // Bei 5x Speed = 200ms (5 Kerzen pro Sekunde)
-            // Bei 20x Speed = 50ms (20 Kerzen pro Sekunde)
-            const intervalMs = 1000 / speed;
+            // ⚡ PERFORMANCE: Bei hohen Speeds (>=5x) nutze Batch-Requests
+            const useBatchMode = speed >= 5;
+            const batchSize = useBatchMode ? Math.min(Math.floor(speed / 2), 10) : 1; // Max 10 pro Batch
 
-            console.log(`⏰ Auto-Forward gestartet: ${speed}x Speed (alle ${intervalMs}ms)`);
-            serverLog(`⏰ Auto-Forward Timer started: ${speed}x`, { intervalMs });
+            if (useBatchMode) {
+                // Bei hohen Speeds: Batch-Modus
+                // Beispiel: 10x Speed -> 5 Kerzen pro Request, alle 500ms
+                // Beispiel: 20x Speed -> 10 Kerzen pro Request, alle 500ms
+                const intervalMs = (1000 / speed) * batchSize;
 
-            // Starte Timer
-            autoForwardTimer = setInterval(() => {
-                console.log('⏭️ Auto-Forward: Sending Skip...');
-                handleDebugSkip();
-            }, intervalMs);
+                console.log(`⚡ Auto-Forward (BATCH): ${speed}x Speed, ${batchSize} Kerzen pro Request, alle ${Math.round(intervalMs)}ms`);
+                serverLog(`⚡ Auto-Forward BATCH started: ${speed}x`, { batchSize, intervalMs });
+
+                autoForwardTimer = setInterval(() => {
+                    console.log(`⚡ Auto-Forward BATCH: Sending ${batchSize} skips...`);
+                    handleDebugBatchSkip(batchSize);
+                }, intervalMs);
+            } else {
+                // Bei niedrigen Speeds: Einzelne Requests
+                const intervalMs = 1000 / speed;
+
+                console.log(`⏰ Auto-Forward: ${speed}x Speed (alle ${intervalMs}ms)`);
+                serverLog(`⏰ Auto-Forward started: ${speed}x`, { intervalMs });
+
+                autoForwardTimer = setInterval(() => {
+                    console.log('⏭️ Auto-Forward: Sending Skip...');
+                    handleDebugSkip();
+                }, intervalMs);
+            }
         }
 
         function stopAutoForward() {
@@ -5921,10 +6029,41 @@
             });
         }
 
+        // Reset Time - Zurück zum Datenende
+        function resetTimeToDataEnd() {
+            console.log('[RESET-TIME] Resetting to data end...');
+            serverLog('[RESET-TIME] User requested reset to data end');
+
+            // API Call zum Backend
+            fetch('/api/debug/reset_time', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('✅ Reset Time Response:', data);
+                serverLog('[SUCCESS] Reset Time successful: ' + data.message, data);
+
+                if (data.status === 'success') {
+                    console.log('[CHART] Chart zurückgesetzt zum Datenende');
+                    // WebSocket sendet automatisch go_to_date_complete Event
+                } else {
+                    console.error('❌ Reset Time failed:', data.message);
+                    alert('Fehler: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('❌ Reset Time Error:', error);
+                serverLog('❌ Reset Time failed', error);
+                alert('Fehler beim Reset: ' + error.message);
+            });
+        }
+
         // ⭐ Expose Date Modal functions globally for onclick handlers
         window.openDateModal = openDateModal;
         window.closeDateModal = closeDateModal;
         window.goToSelectedDate = goToSelectedDate;
+        window.resetTimeToDataEnd = resetTimeToDataEnd;
 
         // Modal schließen bei Escape-Taste
         document.addEventListener('keydown', function(event) {
@@ -6089,6 +6228,15 @@
                 // console.log('✅ Go To Date Button event listener attached');
             } else {
                 console.error('❌ Go To Date Button not found!');
+            }
+
+            // Reset Time Button - Zurück zum Datenende
+            const resetTimeBtn = document.getElementById('resetTimeBtn');
+            if (resetTimeBtn) {
+                resetTimeBtn.addEventListener('click', resetTimeToDataEnd);
+                console.log('✅ Reset Time Button event listener attached');
+            } else {
+                console.error('❌ Reset Time Button not found!');
             }
 
             console.log('🛠️ Debug Controls Event Handlers konsolidiert und initialized');
