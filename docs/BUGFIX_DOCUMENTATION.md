@@ -1,5 +1,54 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Go To Date - Monat/Jahr Auswahl gesperrt - 04.11.2025 📅
+
+### Problem:
+Im "Go To Date" Modal war nur der **Tag änderbar**, Monat und Jahr waren **disabled/ausgegraut**. User konnte nicht zu anderen Monaten navigieren (nur innerhalb Dezember 2024).
+
+**Symptome:**
+```
+Sichtbar: 25.12.2024
+- Tag: änderbar (1-30) ✓
+- Monat: DISABLED (nur 12) ❌
+- Jahr: disabled (nur 2024) ✓
+```
+
+### Root Cause:
+Hardcoded `min`/`max` Attribute im Date-Input waren zu eng gesetzt:
+```javascript
+// static/js/chart.js Zeile 5233-5234 (VORHER)
+dateInput.setAttribute('min', '2024-12-01'); // Nur Dezember!
+dateInput.setAttribute('max', '2024-12-30');
+```
+
+→ Browser interpretiert: "Wenn min/max im selben Monat/Jahr, dann sperre Monat/Jahr-Auswahl"
+
+**Verfügbare Daten:** 01.01.2024 - 31.12.2024 (ganzes Jahr!)
+**Code sagte:** Nur 01.12.2024 - 30.12.2024 ❌
+
+### Fix:
+Min/Max auf das **komplette verfügbare Jahr 2024** erweitert.
+
+**Fix Location:**
+```javascript
+// static/js/chart.js Zeile 5233-5234 (NACHHER)
+dateInput.setAttribute('min', '2024-01-01'); // Ganzes Jahr!
+dateInput.setAttribute('max', '2024-12-31');
+```
+
+### Ergebnis:
+✅ Alle Monate 1-12 sind jetzt wählbar
+✅ Go To Date funktioniert für ganzes Jahr 2024
+✅ Jahr bleibt korrekt auf 2024 locked (nur 2024 Daten vorhanden)
+
+### Prevention:
+- **Option A (aktuell):** Bei neuen Jahresdaten die Hardcoded-Werte anpassen
+- **Option B (future):** Dynamische Date-Range vom Server per API abfragen → automatisch korrekt
+
+**Commit:** `1a4f6b6` - fix: Go To Date - Monat Auswahl aktiviert (ganzes Jahr 2024)
+
+---
+
 ## TradingView Legend Ghost-Bug bei Indikator Settings-Änderung - 02.11.2025 👻
 
 ### Problem:
