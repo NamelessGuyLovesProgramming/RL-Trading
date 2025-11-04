@@ -435,6 +435,11 @@ class RectanglePaneView {
     }
 
     renderer() {
+        // Wenn nicht sichtbar, nichts rendern
+        if (!this._source._visible) {
+            return null;
+        }
+
         return new RectanglePaneRenderer(
             this._p1,
             this._p2,
@@ -463,6 +468,7 @@ class SessionRectangle {
         this.series = series;
         this._paneViews = [new RectanglePaneView(this)];
         this._requestUpdate = null;
+        this._visible = true; // Sichtbarkeits-Flag (Standard: sichtbar)
     }
 
     updateAllViews() {
@@ -1792,6 +1798,541 @@ class SessionHighLowIndicator extends BaseIndicator {
 }
 
 // ============================================================
+// FVG INDICATOR - Fair Value Gap
+// ============================================================
+
+class FVGIndicator extends BaseIndicator {
+    constructor(id, config = {}) {
+        // Default Config
+        const defaultConfig = {
+            bullishColor: 'rgba(0, 255, 0, 0.15)',
+            bearishColor: 'rgba(255, 0, 0, 0.15)',
+            minGapSize: 0, // Minimale Gap-Größe in Punkten (0 = alle)
+            boxDisplayLength: 50 // Wie viele Kerzen die Box lang ist (0 = bis Chart-Ende)
+        };
+
+        super(id, 'FVG', { ...defaultConfig, ...config });
+
+        this.fvgBoxes = []; // Array of {primitive, type, top, bottom, startTime, endTime}
+        this.candlestickSeries = null;
+    }
+
+    calculate(data) {
+        // FVG Erkennung: 3-Kerzen Muster
+        if (!data || data.length < 3) {
+            console.warn('⚠️ FVG: Nicht genug Daten für FVG-Analyse');
+            return [];
+        }
+
+        const fvgs = [];
+
+        // Iteriere durch Daten (Start bei Index 1, Ende bei length-1 für 3-Kerzen Fenster)
+        for (let i = 1; i < data.length - 1; i++) {
+            const prev = data[i - 1];
+            const curr = data[i];
+            const next = data[i + 1];
+
+            // Bullish FVG: prev.high < next.low (Lücke nach oben)
+            if (prev.high < next.low) {
+                const gapSize = next.low - prev.high;
+
+                if (gapSize >= this.config.minGapSize) {
+                    fvgs.push({
+                        type: 'bullish',
+                        top: next.low,
+                        bottom: prev.high,
+                        startTime: curr.time,
+                        endTime: null, // Wird später gesetzt (aktuellste Kerze)
+                        filled: false
+                    });
+                }
+            }
+
+            // Bearish FVG: prev.low > next.high (Lücke nach unten)
+            if (prev.low > next.high) {
+                const gapSize = prev.low - next.high;
+
+                if (gapSize >= this.config.minGapSize) {
+                    fvgs.push({
+                        type: 'bearish',
+                        top: prev.low,
+                        bottom: next.high,
+                        startTime: curr.time,
+                        endTime: null,
+                        filled: false
+                    });
+                }
+            }
+        }
+
+        console.log(`✅ FVG berechnet: ${fvgs.length} FVGs gefunden`);
+        this.data = fvgs;
+        return fvgs;
+    }
+
+    render(chart) {
+        if (!chart) {
+            console.error('❌ FVG render: Chart nicht verfügbar');
+            return;
+        }
+
+        // Hole Candlestick Series
+        this.candlestickSeries = window.candlestickSeries;
+        if (!this.candlestickSeries) {
+            console.error('❌ FVG render: Candlestick Series nicht verfügbar');
+            return;
+        }
+
+        // Hole Chart-Daten
+        const candleData = this.candlestickSeries.data();
+        if (!candleData || candleData.length === 0) {
+            console.warn('⚠️ FVG render: Keine Chart-Daten verfügbar');
+            return;
+        }
+
+        // Berechne FVGs
+        const fvgs = this.calculate(candleData);
+
+        // Rendere FVG Boxen
+        this.renderFVGBoxes(chart, fvgs, candleData);
+    }
+
+    renderFVGBoxes(chart, fvgs, candleData) {
+        // Cleanup alte Boxen
+        this.clearFVGBoxes();
+
+        if (!fvgs || fvgs.length === 0) {
+            return;
+        }
+
+        // Letzte Kerzenzeit
+        const lastCandleTime = candleData[candleData.length - 1].time;
+
+        // Prüfe welche FVGs gefüllt wurden (Preis durch Gap gelaufen)
+        fvgs.forEach(fvg => {
+            if (!fvg.filled) {
+                // Finde alle Kerzen NACH der FVG-Entstehung
+                const candlesAfterFVG = candleData.filter(c => c.time > fvg.startTime);
+
+                for (const candle of candlesAfterFVG) {
+                    // Bullish FVG: Gefüllt wenn Preis unter bottom fällt
+                    if (fvg.type === 'bullish' && candle.low <= fvg.bottom) {
+                        fvg.filled = true;
+                        break;
+                    }
+                    // Bearish FVG: Gefüllt wenn Preis über top steigt
+                    if (fvg.type === 'bearish' && candle.high >= fvg.top) {
+                        fvg.filled = true;
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Nur OFFENE FVGs rendern
+        const openFVGs = fvgs.filter(fvg => !fvg.filled);
+        const filledFVGs = fvgs.filter(fvg => fvg.filled);
+
+        console.log(`📊 FVG Status: ${fvgs.length} Total | ${filledFVGs.length} Filled ❌ | ${openFVGs.length} Open ✅`);
+
+        let renderedCount = 0;
+        openFVGs.forEach((fvg, index) => {
+            // Berechne endTime basierend auf boxDisplayLength
+            let endTime = lastCandleTime;
+
+            if (this.config.boxDisplayLength > 0) {
+                // Finde Index der FVG-Start-Kerze
+                const startIndex = candleData.findIndex(c => c.time === fvg.startTime);
+                if (startIndex !== -1) {
+                    // Berechne End-Index: FVG-Start + boxDisplayLength Kerzen
+                    const endIndex = Math.min(startIndex + this.config.boxDisplayLength, candleData.length - 1);
+                    endTime = candleData[endIndex].time;
+                }
+            }
+            // Wenn boxDisplayLength = 0, geht die Box bis zum Chart-Ende (lastCandleTime)
+
+            const fillColor = fvg.type === 'bullish'
+                ? this.config.bullishColor
+                : this.config.bearishColor;
+
+            const p1 = { time: fvg.startTime, price: fvg.bottom };
+            const p2 = { time: endTime, price: fvg.top };
+
+            // Erstelle Rectangle Primitive
+            const rectangle = new SessionRectangle(
+                p1,
+                p2,
+                fillColor,
+                chart,
+                this.candlestickSeries,
+                null, // Kein Label für FVG
+                null
+            );
+
+            try {
+                this.candlestickSeries.attachPrimitive(rectangle);
+                this.fvgBoxes.push({
+                    primitive: rectangle,
+                    type: fvg.type,
+                    top: fvg.top,
+                    bottom: fvg.bottom,
+                    startTime: fvg.startTime
+                });
+                renderedCount++;
+            } catch (e) {
+                console.error(`❌ FVG: Fehler beim Attach von Box #${index + 1}:`, e);
+            }
+        });
+
+        console.log(`✅ FVG gerendert: ${renderedCount} Boxen (Box-Länge: ${this.config.boxDisplayLength === 0 ? 'Unbegrenzt' : this.config.boxDisplayLength + ' Kerzen'})`);
+    }
+
+    clearFVGBoxes() {
+        if (!this.candlestickSeries || !this.fvgBoxes || this.fvgBoxes.length === 0) {
+            return;
+        }
+
+        // Speichere requestUpdate für später
+        let requestUpdate = null;
+
+        this.fvgBoxes.forEach(box => {
+            try {
+                // Speichere requestUpdate vom ersten Primitive
+                if (!requestUpdate && box.primitive._requestUpdate) {
+                    requestUpdate = box.primitive._requestUpdate;
+                }
+                this.candlestickSeries.detachPrimitive(box.primitive);
+            } catch (e) {
+                console.warn('⚠️ FVG: Fehler beim Detach:', e);
+            }
+        });
+
+        this.fvgBoxes = [];
+
+        // Force Chart Update nach dem Detach
+        if (requestUpdate) {
+            requestUpdate();
+        }
+    }
+
+    update(candle, allData) {
+        if (!this.visible || !allData) {
+            return;
+        }
+
+        // 🔥 KOMPLETTER RELOAD (Go To Date / Timeframe Switch)
+        if (!candle && allData.length > 0) {
+            console.log('🔄 FVG: Kompletter Reload erkannt - vollständiges Re-Render');
+
+            // Update candlestickSeries reference (könnte sich geändert haben)
+            this.candlestickSeries = window.candlestickSeries;
+
+            if (!this.candlestickSeries) {
+                console.warn('⚠️ FVG Update: Candlestick Series nicht verfügbar');
+                return;
+            }
+
+            // Berechne FVGs neu
+            const fvgs = this.calculate(allData);
+
+            // Rendere alle FVGs neu
+            this.renderFVGBoxes(window.chart, fvgs, allData);
+            return;
+        }
+
+        // 🔄 INKREMENTELLES UPDATE (einzelne Kerze)
+        if (!this.candlestickSeries || !candle) {
+            return;
+        }
+
+        // Prüfe ob FVGs gefüllt wurden
+        let needsRerender = false;
+        const currentPrice = candle.close;
+
+        this.data.forEach(fvg => {
+            if (!fvg.filled) {
+                // Check if price completely filled the gap
+                // Bullish FVG: filled wenn Preis unter bottom fällt
+                // Bearish FVG: filled wenn Preis über top steigt
+
+                if (fvg.type === 'bullish' && currentPrice < fvg.bottom) {
+                    fvg.filled = true;
+                    needsRerender = true;
+                } else if (fvg.type === 'bearish' && currentPrice > fvg.top) {
+                    fvg.filled = true;
+                    needsRerender = true;
+                }
+            }
+        });
+
+        // Bei neuer Kerze: Prüfe auf neue FVGs
+        if (allData.length >= 3) {
+            const newFVGs = this.calculate(allData);
+
+            // Wenn neue FVGs gefunden: Re-render
+            if (newFVGs.length !== this.data.length) {
+                this.data = newFVGs;
+                needsRerender = true;
+            }
+        }
+
+        // Re-render wenn nötig
+        if (needsRerender && window.chart) {
+            this.renderFVGBoxes(window.chart, this.data, allData);
+        }
+    }
+
+    destroy() {
+        this.clearFVGBoxes();
+        this.candlestickSeries = null;
+        this.data = null;
+        console.log(`🗑️ FVG(${this.id}) zerstört`);
+    }
+
+    getDisplayName() {
+        return 'FVG';
+    }
+
+    // Settings für FVG
+    getSettingsHTML() {
+        return `
+            <style>
+                .fvg-settings-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 20px;
+                }
+                .fvg-section {
+                    background: rgba(255, 255, 255, 0.03);
+                    border-radius: 8px;
+                    padding: 15px;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                }
+                .fvg-section-title {
+                    font-weight: bold;
+                    font-size: 14px;
+                    margin-bottom: 12px;
+                    color: #fff;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                .fvg-slider-container {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    margin-top: 8px;
+                }
+                .fvg-slider {
+                    flex: 1;
+                    height: 6px;
+                    -webkit-appearance: none;
+                    appearance: none;
+                    background: rgba(255, 255, 255, 0.1);
+                    outline: none;
+                    border-radius: 3px;
+                }
+                .fvg-slider::-webkit-slider-thumb {
+                    -webkit-appearance: none;
+                    appearance: none;
+                    width: 16px;
+                    height: 16px;
+                    background: #00fbff;
+                    cursor: pointer;
+                    border-radius: 50%;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                }
+                .fvg-slider::-moz-range-thumb {
+                    width: 16px;
+                    height: 16px;
+                    background: #00fbff;
+                    cursor: pointer;
+                    border-radius: 50%;
+                    border: none;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                }
+                .fvg-value-display {
+                    min-width: 60px;
+                    text-align: center;
+                    font-weight: bold;
+                    color: #00fbff;
+                    font-size: 14px;
+                    background: rgba(0, 251, 255, 0.1);
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                }
+                .fvg-color-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 15px;
+                    margin-top: 10px;
+                }
+                .fvg-color-item {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                .fvg-color-preview {
+                    width: 100%;
+                    height: 40px;
+                    border-radius: 6px;
+                    border: 2px solid rgba(255, 255, 255, 0.2);
+                    cursor: pointer;
+                    transition: border-color 0.2s;
+                }
+                .fvg-color-preview:hover {
+                    border-color: #00fbff;
+                }
+                .fvg-info-box {
+                    background: rgba(0, 251, 255, 0.05);
+                    border-left: 3px solid #00fbff;
+                    padding: 10px 12px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    color: rgba(255, 255, 255, 0.8);
+                    margin-top: 8px;
+                }
+            </style>
+
+            <div class="fvg-settings-container">
+                <!-- Detection Section -->
+                <div class="fvg-section">
+                    <div class="fvg-section-title">
+                        <span>🔍</span>
+                        <span>FVG Erkennung</span>
+                    </div>
+
+                    <label style="color: rgba(255,255,255,0.9); font-size: 13px;">Minimale Gap-Größe (Punkte):</label>
+                    <div class="fvg-slider-container">
+                        <input type="range" id="edit_fvg_minGapSize" class="fvg-slider"
+                               value="${this.config.minGapSize}" min="0" max="50" step="1"
+                               oninput="document.getElementById('fvg_minGapSize_display').textContent = this.value + ' Punkte'">
+                        <div class="fvg-value-display" id="fvg_minGapSize_display">${this.config.minGapSize} Punkte</div>
+                    </div>
+                    <div class="fvg-info-box">
+                        💡 <strong>Tipp:</strong> Bei 0 werden alle FVGs erkannt. Höhere Werte filtern kleine, unwichtige Gaps.
+                    </div>
+                </div>
+
+                <!-- Display Section -->
+                <div class="fvg-section">
+                    <div class="fvg-section-title">
+                        <span>📏</span>
+                        <span>Anzeige-Optionen</span>
+                    </div>
+
+                    <label style="color: rgba(255,255,255,0.9); font-size: 13px;">FVG Box-Anzeigelänge (Kerzen):</label>
+                    <div class="fvg-slider-container">
+                        <input type="range" id="edit_fvg_boxDisplayLength" class="fvg-slider"
+                               value="${this.config.boxDisplayLength}" min="0" max="200" step="10"
+                               oninput="document.getElementById('fvg_boxDisplayLength_display').textContent = this.value === '0' ? 'Bis Chart-Ende' : this.value + ' Kerzen'">
+                        <div class="fvg-value-display" id="fvg_boxDisplayLength_display">${this.config.boxDisplayLength === 0 ? 'Bis Chart-Ende' : this.config.boxDisplayLength + ' Kerzen'}</div>
+                    </div>
+                    <div class="fvg-info-box">
+                        💡 <strong>Info:</strong> Wie viele Kerzen lang die FVG-Box nach rechts gezeichnet wird. Alle offenen FVGs werden immer angezeigt!
+                    </div>
+                </div>
+
+                <!-- Colors Section -->
+                <div class="fvg-section">
+                    <div class="fvg-section-title">
+                        <span>🎨</span>
+                        <span>Farben</span>
+                    </div>
+
+                    <div class="fvg-color-grid">
+                        <div class="fvg-color-item">
+                            <label style="color: rgba(255,255,255,0.9); font-size: 13px; font-weight: 600;">
+                                🟢 Bullish FVG
+                            </label>
+                            <input type="color" id="edit_fvg_bullishColor" class="fvg-color-preview"
+                                   value="${this.rgbaToHex(this.config.bullishColor)}"
+                                   style="background: ${this.config.bullishColor};">
+                            <small style="color: rgba(255,255,255,0.6); font-size: 11px;">Support-Zonen</small>
+                        </div>
+
+                        <div class="fvg-color-item">
+                            <label style="color: rgba(255,255,255,0.9); font-size: 13px; font-weight: 600;">
+                                🔴 Bearish FVG
+                            </label>
+                            <input type="color" id="edit_fvg_bearishColor" class="fvg-color-preview"
+                                   value="${this.rgbaToHex(this.config.bearishColor)}"
+                                   style="background: ${this.config.bearishColor};">
+                            <small style="color: rgba(255,255,255,0.6); font-size: 11px;">Resistance-Zonen</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    rgbaToHex(rgba) {
+        // Extrahiere RGB aus rgba String (quick & dirty)
+        if (rgba.startsWith('#')) return rgba;
+
+        const match = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (match) {
+            const r = parseInt(match[1]).toString(16).padStart(2, '0');
+            const g = parseInt(match[2]).toString(16).padStart(2, '0');
+            const b = parseInt(match[3]).toString(16).padStart(2, '0');
+            return `#${r}${g}${b}`;
+        }
+        return '#00ff00';
+    }
+
+    applySettings() {
+        this.config.minGapSize = parseFloat(document.getElementById('edit_fvg_minGapSize')?.value) || 0;
+        this.config.boxDisplayLength = parseInt(document.getElementById('edit_fvg_boxDisplayLength')?.value) || 50;
+
+        // Konvertiere Hex zu RGBA
+        const bullishHex = document.getElementById('edit_fvg_bullishColor')?.value || '#00ff00';
+        const bearishHex = document.getElementById('edit_fvg_bearishColor')?.value || '#ff0000';
+
+        this.config.bullishColor = this.hexToRgba(bullishHex, 0.15);
+        this.config.bearishColor = this.hexToRgba(bearishHex, 0.15);
+
+        // Re-render
+        const candleData = window.candlestickSeries?.data();
+        if (candleData && candleData.length > 0) {
+            this.calculate(candleData);
+            this.render(window.chart);
+        }
+    }
+
+    hexToRgba(hex, alpha) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    toggleVisibility() {
+        this.visible = !this.visible;
+
+        // FVG verwendet Primitives (SessionRectangle) mit _visible Flag
+        if (!this.candlestickSeries || !this.fvgBoxes || this.fvgBoxes.length === 0) {
+            console.warn('⚠️ FVG: Keine FVG Boxen zum Togglen verfügbar');
+            return;
+        }
+
+        // Setze _visible Flag für alle FVG Boxen
+        this.fvgBoxes.forEach(box => {
+            if (box.primitive) {
+                box.primitive._visible = this.visible;
+                box.primitive.updateAllViews(); // Update Views
+            }
+        });
+
+        // Force Chart Update durch requestUpdate() wenn verfügbar
+        if (this.fvgBoxes.length > 0 && this.fvgBoxes[0].primitive._requestUpdate) {
+            this.fvgBoxes[0].primitive._requestUpdate();
+        }
+
+        console.log(`👁️ ${this.type}(${this.id}) Visibility: ${this.visible} (${this.fvgBoxes.length} Boxen)`);
+    }
+}
+
+// ============================================================
 // INDICATOR MANAGER - Singleton Pattern
 // ============================================================
 
@@ -2368,6 +2909,7 @@ manager.registerIndicator('EMA', EMAIndicator);
 manager.registerIndicator('SESSION', SessionIndicator);
 manager.registerIndicator('VOLUME', VolumeIndicator);
 manager.registerIndicator('SESSION_HL', SessionHighLowIndicator);
+manager.registerIndicator('FVG', FVGIndicator);
 
 // Make globally available
 window.IndicatorManager = manager;
