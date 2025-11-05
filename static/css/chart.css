@@ -769,3 +769,129 @@
         .color-input:hover {
             border-color: #505050;
         }
+
+        /* ========================================
+         * RL Agent Vision Monitor
+         * ======================================== */
+
+        .rl-vision-monitor {
+            position: fixed;
+            top: 300px;
+            right: 15px;
+            width: 280px;
+            background: rgba(20, 20, 20, 0.95);
+            border: 1px solid #333;
+            border-radius: 8px;
+            z-index: 900;
+            font-size: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+
+        .rl-vision-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(40, 40, 40, 0.8);
+            border-bottom: 1px solid #333;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .rl-vision-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .rl-vision-toggle {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+        }
+
+        .rl-vision-toggle:hover {
+            color: #fff;
+        }
+
+        .rl-vision-content {
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .rl-vision-section {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border-bottom: 1px solid #2a2a2a;
+            padding-bottom: 8px;
+        }
+
+        .rl-vision-section:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .rl-vision-label {
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .rl-vision-value {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #ccc;
+            padding-left: 4px;
+        }
+
+        .rl-vision-detail {
+            font-size: 11px;
+            color: #888;
+            padding-left: 20px;
+        }
+
+        .status-indicator {
+            font-size: 14px;
+        }
+
+        /* Status Colors */
+        .rl-vision-value.active {
+            color: #089981;
+            font-weight: 600;
+        }
+
+        .rl-vision-value.active .status-indicator {
+            color: #089981;
+        }
+
+        .rl-vision-value.warning {
+            color: #ffae00;
+            font-weight: 600;
+        }
+
+        .rl-vision-value.warning .status-indicator {
+            color: #ffae00;
+        }
+
+        /* Minimize Animation */
+        .rl-vision-monitor.minimized .rl-vision-content {
+            display: none;
+        }
+
+        .rl-vision-monitor.minimized {
+            width: auto;
+        }

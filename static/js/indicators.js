@@ -39,7 +39,7 @@ class BaseIndicator {
         this.series = null; // LightweightCharts Series
         this.data = null;   // Cached calculated data
 
-        console.log(`📊 Indikator erstellt: ${type} (ID: ${id})`, this.config);
+        // Indikator erstellt
     }
 
     // Abstract Methods - MÜSSEN von Subclasses implementiert werden
@@ -1187,6 +1187,33 @@ class VolumeIndicator extends BaseIndicator {
     getDisplayName() {
         return 'Volume';
     }
+
+    getCurrentState() {
+        // Volume Spike Detection für RL Agent
+        if (!this.data || this.data.length < 20) {
+            return { spike: false, ratio: 1.0, current_volume: 0 };
+        }
+
+        // Letztes Volume
+        const currentVolume = this.data[this.data.length - 1].value;
+
+        // Durchschnitt der letzten 20 Kerzen (ohne aktuelle)
+        const recentVolumes = this.data.slice(-21, -1).map(v => v.value);
+        const avgVolume = recentVolumes.reduce((sum, v) => sum + v, 0) / recentVolumes.length;
+
+        // Ratio berechnen
+        const ratio = avgVolume > 0 ? currentVolume / avgVolume : 1.0;
+
+        // Spike = Ratio > 1.5x
+        const spike = ratio > 1.5;
+
+        return {
+            spike,
+            ratio: parseFloat(ratio.toFixed(2)),
+            current_volume: currentVolume,
+            avg_volume: Math.round(avgVolume)
+        };
+    }
 }
 
 // ============================================================
@@ -1225,6 +1252,11 @@ class SessionHighLowIndicator extends BaseIndicator {
         this.completedSessions = [];    // [{sessionId, type, high, low, endTime}]
         this.lineSeries = [];           // Aktive LineSeries (extend right only)
         this.priceLines = [];           // Price Lines für Breakout Detection
+
+        // Break Tracking (für First Break Detection)
+        this.lastSessionId = null;      // Track aktuelle Session
+        this.sessionHighBroken = false; // Wurde Session High bereits gebrochen?
+        this.sessionLowBroken = false;  // Wurde Session Low bereits gebrochen?
         this.lastPrice = null;          // Letzter Preis für Breakout-Detection
         this.chart = null;              // Chart-Referenz für LineSeries
     }
@@ -1473,9 +1505,7 @@ class SessionHighLowIndicator extends BaseIndicator {
 
             const isBroken = !!brokenCandle;
 
-            if (isBroken) {
-                console.log(`   ❌ HIGH ${price.toFixed(2)} durchbrochen bei ${new Date(brokenCandle.time * 1000).toISOString()}`);
-            }
+            // Session high broken (logged silently)
 
             return !isBroken; // Nur ungebrochene Levels zurückgeben
         });
@@ -1492,9 +1522,7 @@ class SessionHighLowIndicator extends BaseIndicator {
 
             const isBroken = !!brokenCandle;
 
-            if (isBroken) {
-                console.log(`   ❌ LOW ${price.toFixed(2)} durchbrochen bei ${new Date(brokenCandle.time * 1000).toISOString()}`);
-            }
+            // Session low broken (logged silently)
 
             return !isBroken; // Nur ungebrochene Levels zurückgeben
         });
@@ -1899,6 +1927,160 @@ class SessionHighLowIndicator extends BaseIndicator {
             this.updateLineSeries(currentPrice, candleData);
         }
     }
+
+    getCurrentState(currentPrice) {
+        // Session High/Low Detection für RL Agent
+        if (!this.completedSessions || this.completedSessions.length === 0) {
+            return {
+                near_session_high: false,
+                near_session_low: false,
+                session_high_broken: false,
+                session_low_broken: false,
+                session_high_price: null,
+                session_low_price: null,
+                current_session: null
+            };
+        }
+
+        // Hole aktuelle Kerze (brauchen high/low/close)
+        const candleData = window.candlestickSeries?.data();
+        if (!candleData || candleData.length === 0) {
+            return {
+                near_session_high: false,
+                near_session_low: false,
+                session_high_broken: false,
+                session_low_broken: false,
+                session_high_price: null,
+                session_low_price: null,
+                current_session: null
+            };
+        }
+
+        const currentCandle = candleData[candleData.length - 1];
+        if (!currentPrice) {
+            currentPrice = currentCandle.close;
+        }
+
+        // Finde AKTUELLE Session (kann laufend oder abgeschlossen sein)
+        // Prüfe zuerst: In welcher Session sind wir gerade?
+        const currentTime = currentCandle.time;
+        const currentDate = new Date(currentTime * 1000);
+        const offsetMinutes = this.config.utcOffset * 60;
+        const localDate = new Date(currentDate.getTime() + offsetMinutes * 60 * 1000);
+
+        const hours = localDate.getUTCHours();
+        const minutes = localDate.getUTCMinutes();
+        const totalMinutes = hours * 60 + minutes;
+
+        // Helper: Zeit zu Minuten
+        const timeToMinutes = (timeStr) => {
+            const [h, m] = timeStr.split(':').map(Number);
+            return h * 60 + m;
+        };
+
+        const asianMinutes = { start: timeToMinutes(this.config.asianStart), end: timeToMinutes(this.config.asianEnd) };
+        const europeanMinutes = { start: timeToMinutes(this.config.europeanStart), end: timeToMinutes(this.config.europeanEnd) };
+        const americanMinutes = { start: timeToMinutes(this.config.americanStart), end: timeToMinutes(this.config.americanEnd) };
+
+        let currentSessionType = null;
+        if (totalMinutes >= asianMinutes.start && totalMinutes < asianMinutes.end) {
+            currentSessionType = 'asian';
+        } else if (totalMinutes >= europeanMinutes.start && totalMinutes < europeanMinutes.end) {
+            currentSessionType = 'european';
+        } else if (totalMinutes >= americanMinutes.start && totalMinutes < americanMinutes.end) {
+            currentSessionType = 'american';
+        }
+
+        // Suche die passende Session: Entweder abgeschlossen ODER finde aktuelle Session aus Ranges
+        let lastSession = null;
+
+        // Versuche zuerst: Finde abgeschlossene Session vom aktuellen Typ
+        for (let i = this.completedSessions.length - 1; i >= 0; i--) {
+            if (this.completedSessions[i].type === currentSessionType) {
+                lastSession = this.completedSessions[i];
+                break;
+            }
+        }
+
+        // Fallback: Wenn keine passende abgeschlossene Session, nehme letzte verfügbare
+        if (!lastSession && this.completedSessions.length > 0) {
+            lastSession = this.completedSessions[this.completedSessions.length - 1];
+        }
+
+        if (!lastSession) {
+            return {
+                near_session_high: false,
+                near_session_low: false,
+                session_high_broken: false,
+                session_low_broken: false,
+                session_high_first_break: false,
+                session_low_first_break: false,
+                session_high_price: null,
+                session_low_price: null,
+                current_session: null
+            };
+        }
+
+        const sessionHigh = lastSession.high;
+        const sessionLow = lastSession.low;
+
+        // Session ID für Break Tracking (Session-Typ + Endzeit)
+        const sessionId = `${lastSession.type}_${lastSession.endTime}`;
+
+        // Reset Break Flags bei neuer Session
+        if (this.lastSessionId !== sessionId) {
+            this.lastSessionId = sessionId;
+            this.sessionHighBroken = false;
+            this.sessionLowBroken = false;
+            console.log(`🔄 [Session HL] Neue Session erkannt: ${sessionId} - Break Flags resetted`);
+        }
+
+        // Threshold: 0.15% vom Preis
+        const threshold = currentPrice * 0.0015; // 0.15%
+
+        // Distance Checks (basierend auf CLOSE für "near")
+        const distanceToHigh = Math.abs(currentPrice - sessionHigh);
+        const distanceToLow = Math.abs(currentPrice - sessionLow);
+
+        const nearHigh = distanceToHigh <= threshold;
+        const nearLow = distanceToLow <= threshold;
+
+        // Breakout Checks: Prüfe HIGH/LOW der Kerze (Dochte zählen!)
+        const highBroken = currentCandle.high > sessionHigh;
+        const lowBroken = currentCandle.low < sessionLow;
+
+        // First Break Detection
+        let highFirstBreak = false;
+        let lowFirstBreak = false;
+
+        if (highBroken && !this.sessionHighBroken) {
+            // Erstes Mal Session High gebrochen!
+            highFirstBreak = true;
+            this.sessionHighBroken = true;
+            console.log(`🔥 [Session HL] FIRST BREAK: Session High gebrochen! Price: ${currentCandle.high} > ${sessionHigh}`);
+        }
+
+        if (lowBroken && !this.sessionLowBroken) {
+            // Erstes Mal Session Low gebrochen!
+            lowFirstBreak = true;
+            this.sessionLowBroken = true;
+            console.log(`🔥 [Session HL] FIRST BREAK: Session Low gebrochen! Price: ${currentCandle.low} < ${sessionLow}`);
+        }
+
+        return {
+            near_session_high: nearHigh,
+            near_session_low: nearLow,
+            session_high_broken: highBroken,
+            session_low_broken: lowBroken,
+            session_high_first_break: highFirstBreak,   // ✅ NEU
+            session_low_first_break: lowFirstBreak,     // ✅ NEU
+            session_high_price: sessionHigh,
+            session_low_price: sessionLow,
+            current_session: currentSessionType || 'unknown',  // ✅ FIX: Aktuelle Session statt letzte abgeschlossene
+            distance_to_high: distanceToHigh,
+            distance_to_low: distanceToLow
+        };
+    }
 }
 
 // ============================================================
@@ -2019,13 +2201,13 @@ class FVGIndicator extends BaseIndicator {
                 const candlesAfterFVG = candleData.filter(c => c.time > fvg.startTime);
 
                 for (const candle of candlesAfterFVG) {
-                    // Bullish FVG: Gefüllt wenn Preis unter bottom fällt
-                    if (fvg.type === 'bullish' && candle.low <= fvg.bottom) {
+                    // Bullish FVG: Gefüllt nur wenn CLOSE unter bottom schließt (nicht nur Docht!)
+                    if (fvg.type === 'bullish' && candle.close < fvg.bottom) {
                         fvg.filled = true;
                         break;
                     }
-                    // Bearish FVG: Gefüllt wenn Preis über top steigt
-                    if (fvg.type === 'bearish' && candle.high >= fvg.top) {
+                    // Bearish FVG: Gefüllt nur wenn CLOSE über top schließt (nicht nur Docht!)
+                    if (fvg.type === 'bearish' && candle.close > fvg.top) {
                         fvg.filled = true;
                         break;
                     }
@@ -2423,6 +2605,91 @@ class FVGIndicator extends BaseIndicator {
 
         console.log(`👁️ ${this.type}(${this.id}) Visibility: ${this.visible} (${this.fvgBoxes.length} Boxen)`);
     }
+
+    getCurrentState(currentPrice) {
+        // FVG Zone Detection für RL Agent
+        // WICHTIG: Nutze this.data (calculated FVGs), nicht fvgBoxes (rendered boxes)!
+        if (!this.data || this.data.length === 0) {
+            console.log('[FVG getCurrentState] Keine FVG Daten verfügbar');
+            return {
+                in_fvg: false,
+                fvg_type: null,
+                fvg_top: null,
+                fvg_bottom: null,
+                distance_to_fvg: null
+            };
+        }
+
+        // Hole aktuellen Preis
+        if (!currentPrice) {
+            const candleData = window.candlestickSeries?.data();
+            if (!candleData || candleData.length === 0) {
+                console.log('[FVG getCurrentState] Keine Candle-Daten verfügbar');
+                return {
+                    in_fvg: false,
+                    fvg_type: null,
+                    fvg_top: null,
+                    fvg_bottom: null,
+                    distance_to_fvg: null
+                };
+            }
+            currentPrice = candleData[candleData.length - 1].close;
+        }
+
+        console.log(`[FVG getCurrentState] Prüfe ${this.data.length} FVG Daten bei Preis ${currentPrice}`);
+
+        // Prüfe nur OFFENE FVGs (nicht gefüllte)
+        const openFVGs = this.data.filter(fvg => !fvg.filled);
+        console.log(`[FVG getCurrentState] ${openFVGs.length} offene FVGs gefunden`);
+
+        // Prüfe ob Preis in einer FVG Zone ist
+        for (const fvg of openFVGs) {
+            const top = fvg.top;
+            const bottom = fvg.bottom;
+
+            console.log(`[FVG] FVG: ${fvg.type} | Top: ${top} | Bottom: ${bottom} | Preis: ${currentPrice} | In Range: ${currentPrice >= bottom && currentPrice <= top}`);
+
+            // Ist Preis innerhalb der Zone?
+            if (currentPrice >= bottom && currentPrice <= top) {
+                console.log(`✅ [FVG] Preis IN FVG Zone! Type: ${fvg.type}`);
+                return {
+                    in_fvg: true,
+                    fvg_type: fvg.type, // 'bullish' or 'bearish'
+                    fvg_top: top,
+                    fvg_bottom: bottom,
+                    distance_to_fvg: 0
+                };
+            }
+        }
+
+        console.log('[FVG] Preis NICHT in FVG Zone');
+
+        // Nicht in FVG → finde nächste FVG
+        let closestDistance = Infinity;
+        let closestFVG = null;
+
+        for (const fvg of openFVGs) {
+            const top = fvg.top;
+            const bottom = fvg.bottom;
+
+            // Distanz zur Zone (Mitte)
+            const zoneMid = (top + bottom) / 2;
+            const distance = Math.abs(currentPrice - zoneMid);
+
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestFVG = fvg;
+            }
+        }
+
+        return {
+            in_fvg: false,
+            fvg_type: closestFVG?.type || null,
+            fvg_top: closestFVG?.top || null,
+            fvg_bottom: closestFVG?.bottom || null,
+            distance_to_fvg: closestDistance !== Infinity ? closestDistance : null
+        };
+    }
 }
 
 // ============================================================
@@ -2456,7 +2723,7 @@ class IndicatorManager {
     // Registry: Indikator-Typen registrieren
     registerIndicator(type, indicatorClass) {
         this.registry.set(type, indicatorClass);
-        console.log(`📋 Indikator registriert: ${type}`);
+        // Indikator registriert
     }
 
     // Indikator hinzufügen
@@ -2648,7 +2915,7 @@ class IndicatorManager {
             );
 
             localStorage.setItem('rl-trading-indicators', JSON.stringify(state));
-            console.log(`💾 ${state.length} Indikatoren gespeichert`);
+            // Indikatoren gespeichert
         } catch (e) {
             console.error('❌ Fehler beim Speichern der Indikatoren:', e);
         }
@@ -2715,7 +2982,7 @@ class IndicatorManager {
             // Jetzt EINMALIG speichern mit den geladenen Indikatoren
             this.saveState();
 
-            console.log(`✅ ${uniqueState.length} Indikatoren wiederhergestellt`);
+            // Indikatoren wiederhergestellt
         } catch (e) {
             console.error('❌ Fehler beim Laden der Indikatoren:', e);
         }
@@ -2754,7 +3021,7 @@ class IndicatorManager {
             container.appendChild(label);
         });
 
-        console.log(`🏷️ ${this.activeIndicators.size} Labels gerendert`);
+        // Labels gerendert
     }
 
     // UI: Einzelnes Label updaten (ohne DOM-Neubildung → verhindert Event-Propagation)
@@ -3019,6 +3286,81 @@ class IndicatorManager {
         this.closeSettingsModal();
 
         console.log(`✅ Custom Settings angewendet für ${indicator.getDisplayName()}`);
+    }
+
+    // ========================================
+    // API: Get Market Context for AI
+    // ========================================
+    getMarketContext(currentPrice, currentTime) {
+        // Initialize context with defaults
+        const context = {
+            // FVG
+            in_fvg: false,
+            fvg_type: null,
+
+            // Session High/Low
+            near_session_high: false,
+            near_session_low: false,
+            session_high_broken: false,
+            session_low_broken: false,
+            session_high_first_break: false,    // ✅ NEU
+            session_low_first_break: false,     // ✅ NEU
+            session_high_price: null,
+            session_low_price: null,
+            current_session: null,
+
+            // Volume
+            volume_spike: false,
+            volume_ratio: 1.0,
+
+            // Metadata
+            current_price: currentPrice,
+            current_time: currentTime
+        };
+
+        // Iterate through active indicators and call getCurrentState()
+        for (const [id, indicator] of this.activeIndicators) {
+            if (!indicator.visible) continue; // Skip hidden indicators
+
+            try {
+                // FVG Indicator
+                if (indicator.type === 'FVG' && typeof indicator.getCurrentState === 'function') {
+                    const fvgState = indicator.getCurrentState(currentPrice);
+                    context.in_fvg = fvgState.in_fvg;
+                    context.fvg_type = fvgState.fvg_type;
+                }
+
+                // Session High/Low Indicator
+                if (indicator.type === 'SESSION_HL' && typeof indicator.getCurrentState === 'function') {
+                    const sessionState = indicator.getCurrentState(currentPrice);
+                    context.near_session_high = sessionState.near_session_high;
+                    context.near_session_low = sessionState.near_session_low;
+                    context.session_high_broken = sessionState.session_high_broken;
+                    context.session_low_broken = sessionState.session_low_broken;
+                    context.session_high_first_break = sessionState.session_high_first_break;  // ✅ NEU
+                    context.session_low_first_break = sessionState.session_low_first_break;    // ✅ NEU
+                    context.session_high_price = sessionState.session_high_price;
+                    context.session_low_price = sessionState.session_low_price;
+                    context.current_session = sessionState.current_session;
+                }
+
+                // Volume Indicator
+                if (indicator.type === 'VOLUME' && typeof indicator.getCurrentState === 'function') {
+                    const volumeState = indicator.getCurrentState();
+                    context.volume_spike = volumeState.spike;
+                    context.volume_ratio = volumeState.ratio;
+                }
+            } catch (error) {
+                console.warn(`[IndicatorManager] Error getting state from ${indicator.type}:`, error);
+            }
+        }
+
+        // Update Monitor Panel
+        if (typeof window.updateRLVisionMonitor === 'function') {
+            window.updateRLVisionMonitor(context);
+        }
+
+        return context;
     }
 
     // Cleanup: Alle Indikatoren entfernen

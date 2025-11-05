@@ -111,9 +111,28 @@ class RLTradingAgent:
             long_score += 0.3
             reasoning.append("FVG Zone erkannt")
 
-        # Support Order Block
+        # Session Low = Strong Support
+        near_session_low = patterns.get('near_session_low', False)
+        if near_session_low:
+            long_score += 0.25
+            reasoning.append("Nahe Session Low (Support)")
+
+        # Session Low Broken - First Break wichtiger als Re-Test
+        session_low_broken = patterns.get('session_low_broken', False)
+        session_low_first_break = patterns.get('session_low_first_break', False)
+
+        if session_low_first_break:
+            # FIRST BREAK = Liquidität abgeholt (wichtig!)
+            long_score += 0.3
+            reasoning.append("Session Low First Break (Liquidity)")
+        elif session_low_broken:
+            # Re-Test (weniger wichtig)
+            long_score += 0.1
+            reasoning.append("Session Low Re-Test")
+
+        # Support Order Block (legacy)
         if near_support_ob:
-            long_score += 0.2
+            long_score += 0.15
             reasoning.append("Nahe Support OB")
 
         # Bullish Market Structure
@@ -126,22 +145,42 @@ class RLTradingAgent:
             long_score += 0.15
             reasoning.append("Bullish Liquidity")
 
-        # Volume Spike
-        if volume_spike and volume_ratio > 1.5:
-            long_score += 0.1
+        # Volume Spike with higher ratio = stronger signal
+        if volume_spike:
+            volume_weight = min(volume_ratio / 10.0, 0.2)  # Max 0.2
+            long_score += volume_weight
             reasoning.append(f"Volume Spike ({volume_ratio:.1f}x)")
 
         # Session Timing (avoid session close)
-        if session in ['london', 'ny'] and not near_close:
+        if session in ['london', 'ny', 'european'] and not near_close:
             long_score += 0.1
             reasoning.append(f"Gute Session ({session})")
 
 
         # ========== SHORT SIGNALS ==========
 
-        # Resistance Order Block
+        # Session High = Strong Resistance
+        near_session_high = patterns.get('near_session_high', False)
+        if near_session_high:
+            short_score += 0.25
+            reasoning.append("Nahe Session High (Resistance)")
+
+        # Session High Broken - First Break wichtiger als Re-Test
+        session_high_broken = patterns.get('session_high_broken', False)
+        session_high_first_break = patterns.get('session_high_first_break', False)
+
+        if session_high_first_break:
+            # FIRST BREAK = Liquidität abgeholt (wichtig!)
+            short_score += 0.3
+            reasoning.append("Session High First Break (Liquidity)")
+        elif session_high_broken:
+            # Re-Test (weniger wichtig)
+            short_score += 0.1
+            reasoning.append("Session High Re-Test")
+
+        # Resistance Order Block (legacy)
         if near_resistance_ob:
-            short_score += 0.2
+            short_score += 0.15
             reasoning.append("Nahe Resistance OB")
 
         # Bearish Market Structure
@@ -155,8 +194,9 @@ class RLTradingAgent:
             reasoning.append("Bearish Liquidity")
 
         # Volume Spike (can be bearish too)
-        if volume_spike and volume_ratio > 1.5:
-            short_score += 0.1
+        if volume_spike:
+            volume_weight = min(volume_ratio / 10.0, 0.2)  # Max 0.2
+            short_score += volume_weight
 
 
         # ========== DECISION ==========

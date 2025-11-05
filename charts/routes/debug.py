@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/debug", tags=["debug"])
 
 def setup_debug_routes(app, debug_service, navigation_service,
                        unified_time_manager, manager, debug_controller,
-                       global_skip_events, debug_control_timeframe, account_service, config_service):
+                       global_skip_events, debug_control_timeframe, account_service, config_service, training_mode_service=None):
     """
     Registriert Debug-Routes am FastAPI App
 
@@ -27,14 +27,98 @@ def setup_debug_routes(app, debug_service, navigation_service,
         debug_control_timeframe: Debug control timeframe reference
         account_service: AccountService-Instanz
         config_service: ConfigService-Instanz
+        training_mode_service: TrainingModeService-Instanz (optional)
     """
+
+    def _build_market_context(candle: Dict[str, Any], timestamp: int, indicator_data: Dict = None) -> Dict[str, Any]:
+        """
+        Baut Market Context für RL Agent aus Candle-Daten und Indikator-Daten
+
+        Args:
+            candle: Aktuelle Kerze mit OHLCV
+            timestamp: Unix timestamp
+            indicator_data: Indikator-Daten vom Frontend (optional)
+
+        Returns:
+            Market Context Dictionary
+        """
+        # Default values
+        in_fvg = False
+        fvg_distance = 999
+        near_session_high = False
+        near_session_low = False
+        session_high_broken = False
+        session_low_broken = False
+        session_high_first_break = False
+        session_low_first_break = False
+        volume_spike = False
+        volume_ratio = 1.0
+        current_session = 'unknown'
+
+        # Use indicator data if available (NEW field names)
+        if indicator_data:
+            in_fvg = indicator_data.get('in_fvg', False)
+            near_session_high = indicator_data.get('near_session_high', False)
+            near_session_low = indicator_data.get('near_session_low', False)
+            session_high_broken = indicator_data.get('session_high_broken', False)
+            session_low_broken = indicator_data.get('session_low_broken', False)
+            session_high_first_break = indicator_data.get('session_high_first_break', False)
+            session_low_first_break = indicator_data.get('session_low_first_break', False)
+            volume_spike = indicator_data.get('volume_spike', False)
+            volume_ratio = indicator_data.get('volume_ratio', 1.0)
+            current_session = indicator_data.get('current_session', 'unknown')
+
+            # FVG distance (approximation based on FVG type)
+            if in_fvg:
+                fvg_distance = 0.001  # Very close (inside FVG)
+            else:
+                fvg_distance = indicator_data.get('distance_to_fvg', 999) or 999
+
+        return {
+            'current_price': candle['close'],
+            'timestamp': timestamp,
+            'patterns': {
+                'in_fvg_zone': in_fvg,
+                'fvg_distance': fvg_distance,
+                'near_support_ob': near_session_low,  # Session Low = Support
+                'near_resistance_ob': near_session_high,  # Session High = Resistance
+                'near_session_high': near_session_high,
+                'near_session_low': near_session_low,
+                'session_high_broken': session_high_broken,
+                'session_low_broken': session_low_broken,
+                'session_high_first_break': session_high_first_break,  # ✅ NEU
+                'session_low_first_break': session_low_first_break,    # ✅ NEU
+                'liquidity_direction': 1 if near_session_low else (-1 if near_session_high else 0),
+                'market_structure': 0  # TODO: Could be derived from session high/low
+            },
+            'session_info': {
+                'session': current_session,
+                'time_in_session': 0,
+                'near_open': False,
+                'near_close': False
+            },
+            'volume': {
+                'spike': volume_spike,
+                'ratio': volume_ratio
+            }
+        }
 
     # REFACTOR PHASE 4: Skip-Endpoint (bereits auf NavigationService migriert)
     @router.post("/skip")
-    async def debug_skip():
+    async def debug_skip(request: Request):
         """Skip-Operation über NavigationService"""
         # Variables passed as closure from setup_debug_routes
         try:
+            # Parse request body for indicator data
+            try:
+                body = await request.json() if request.headers.get('content-type') == 'application/json' else {}
+            except:
+                body = {}
+            indicator_data = body.get('indicator_data', None)
+
+            if indicator_data:
+                print(f"[SKIP-SERVICE] Indicator Data received: {indicator_data}")
+
             skip_timeframe = debug_control_timeframe
             chart_timeframe = manager.chart_state.get('interval', '5m')
 
@@ -127,6 +211,18 @@ def setup_debug_routes(app, debug_service, navigation_service,
                         'account_type': account_type
                     })
 
+                    # 🤖 AI TRADE FEEDBACK: Wenn AI Trade geschlossen wurde → Feedback Modal öffnen
+                    if position_id.startswith('ai_'):
+                        print(f"[AI-TRADING] 🎯 AI Trade closed - Opening Feedback Modal for {position_id}")
+                        await manager.broadcast({
+                            'type': 'ai_position_closed',
+                            'trade_id': position_id,
+                            'close_price': close_price,
+                            'close_reason': reason,
+                            'realized_pnl': close_result['realized_pnl'],
+                            'outcome': 'win' if close_result['realized_pnl'] > 0 else 'loss'
+                        })
+
             # Broadcast updated accounts after PnL updates
             if active_positions:  # Nur wenn Positionen existieren
                 all_accounts = account_service.get_all_accounts_summary()
@@ -134,6 +230,24 @@ def setup_debug_routes(app, debug_service, navigation_service,
                     'type': 'account_update',
                     'accounts': all_accounts
                 })
+
+            # ═══════════════════════════════════════════════════════
+            # 🤖 AI TRADING INTEGRATION
+            # ═══════════════════════════════════════════════════════
+            # Wenn Training Mode aktiv → AI trifft Trade-Entscheidung
+            if training_mode_service and training_mode_service.is_active:
+                print(f"[AI-TRADING] Training Mode active - Building market context...")
+
+                # Build Market Context für AI (mit Indikator-Daten vom Frontend)
+                market_context = _build_market_context(candle, int(new_global_time.timestamp()), indicator_data)
+
+                # AI trifft Entscheidung
+                ai_decision = training_mode_service.on_skip(market_context)
+
+                # Wenn AI traded → Log only (Feedback Modal erst bei Position Close!)
+                if ai_decision:
+                    print(f"[AI-TRADING] ✅ Trade executed: {ai_decision['action'].upper()} @ {ai_decision['position']['entry_price']}")
+                    print(f"[AI-TRADING] Trade ID: {ai_decision['trade_id']} - Waiting for SL/TP hit for feedback...")
 
             timeframe_display = {
                 '1m': "1min", '2m': "2min", '3m': "3min", '5m': "5min",

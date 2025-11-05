@@ -462,7 +462,7 @@
                             }
                         }
 
-                        console.log(`🔄 Deduplication: ${newHistoricalData.length + currentData.length} → ${combinedData.length} candles (removed ${newHistoricalData.length + currentData.length - combinedData.length} duplicates)`);
+                        // Deduplication applied silently
 
                         // Update Chart
                         this.candlestickSeries.setData(combinedData);
@@ -475,7 +475,7 @@
                         }));
                         // Prepend new historical volume data (older data comes first)
                         window.volumeDataCache = [...newVolumeData, ...window.volumeDataCache];
-                        console.log(`💾 Volume Cache updated: +${newVolumeData.length} historical entries (Total: ${window.volumeDataCache.length})`);
+                        // Volume cache updated
 
                         // Update oldestLoadedTime
                         if (newHistoricalData.length > 0) {
@@ -689,7 +689,7 @@
             // ⭐ SOFORT setzen (nicht am Ende!) → verhindert Race Condition
             isInitialized = true;
 
-            console.log('🔧 initChart() aufgerufen');
+            // console.log('🔧 initChart() aufgerufen');
 
             const chartContainer = document.getElementById('chart_container');
             console.log('🔧 Chart Container:', chartContainer);
@@ -1902,25 +1902,15 @@
 
                 case 'go_to_date_complete':
                     if (isInitialized && message.data) {
-                        console.log('[GO TO DATE] Memory-Performance Complete: Loading', message.data.length, 'candles');
-                        console.log('[GO TO DATE] Target Date:', message.target_date);
-                        console.log('[GO TO DATE] Performance Mode:', message.performance);
-
-                        // Verwende visible_range Info vom Server falls verfügbar
-                        if (message.visible_range) {
-                            console.log('[GO TO DATE] Server Visible Range:', message.visible_range);
-                        }
+                        // Memory-Performance Complete silently
 
                         // Lösche alle bestehenden Position-Overlays
                         clearAllPositions();
 
                         // 🚀 CRITICAL FIX: Browser-Cache Invalidation nach GoTo-Operationen
                         // Verhindert veraltete Skip-Kerzen bei TF-Wechseln
-                        const cacheCountBefore = window.timeframeCache.size;
                         window.timeframeCache.clear();
                         window.lastGoToDate = message.target_date; // Server-State für Cache-Validation
-                        console.log(`[CACHE-INVALIDATION] Browser-Cache cleared: ${cacheCountBefore} entries removed`);
-                        console.log(`[CACHE-INVALIDATION] Grund: GoTo-Operation zu ${message.target_date}`);
 
                         // Setze neue validierte historische Chart-Daten
                         const validatedHistoricalData = validateCandleData(message.data);
@@ -1935,14 +1925,12 @@
                         // 📊 BUGFIX: Update Indikatoren nach Go To Date
                         if (window.IndicatorManager) {
                             window.IndicatorManager.syncWithTimeframe(extendedHistoricalData);
-                            console.log('📊 Indikatoren nach Go To Date aktualisiert');
                         }
 
                         // 🔥 LAZY LOAD RESET: Verhindert Mischen alter/neuer Daten nach Go To Date
                         if (window.lazyLoadSystem) {
                             window.lazyLoadSystem.oldestLoadedTime = null;
                             window.lazyLoadSystem.currentCandles = extendedHistoricalData.length;
-                            console.log('🔄 Lazy Load State nach Go To Date zurückgesetzt');
                         }
 
                         if (validatedHistoricalData.length !== message.data.length) {
@@ -1967,12 +1955,10 @@
                                 // Verwende vom Memory Cache berechnete Range
                                 startIndex = message.visible_range.start;
                                 endIndex = message.visible_range.end;
-                                console.log('[POSITIONING] Server-calculated range:', startIndex, '-', endIndex);
                             } else {
                                 // Fallback: Standardberechnung (letzten 50 von 200)
                                 startIndex = Math.max(0, totalCandles - visibleCandles);
                                 endIndex = totalCandles - 1;
-                                console.log('[POSITIONING] Fallback range:', startIndex, '-', endIndex);
                             }
 
                             // Zeitbereich für die sichtbaren Kerzen
@@ -1986,10 +1972,6 @@
                                 from: startTime - margin,
                                 to: endTime + margin
                             });
-
-                            console.log(`[GO TO DATE] Positioning: ${visibleCandles} von ${totalCandles} Kerzen angezeigt (Chart gefüllt)`);
-                            console.log(`[GO TO DATE] Sichtbare Kerzen: Index ${startIndex}-${endIndex}`);
-                            console.log(`[GO TO DATE] Zeitbereich: ${new Date(startTime * 1000).toISOString()} bis ${new Date(endTime * 1000).toISOString()}`);
                         }
 
                         // Update Titel mit neuen Informationen
@@ -1997,9 +1979,6 @@
 
                         // ADAPTIVE TIMEOUT FIX: Setze Go To Date Status für längere Timeouts
                         window.current_go_to_date = message.target_date;
-
-                        // Server-Log für Debug
-                        console.log('[GO TO DATE] Complete: Chart repositioniert, bereit für Skip-Button Navigation');
 
                     } else {
                         console.error('[GO TO DATE] Complete failed: Chart not initialized or no data');
@@ -2128,10 +2107,6 @@
                             checkLimitOrders(validatedCandle);
                         }
 
-                        console.log('[UNIFIED] Skip Event:', message.timeframe, '- Candle:', message.candle.time);
-                        console.log('[UNIFIED] Candle Type:', message.candle_type);
-                        console.log('[UNIFIED] Debug Time:', message.debug_time);
-
                         // 💰 Update PnL for all active positions
                         const currentPrice = validatedCandle.close;
                         if (window.positionLines) {
@@ -2175,7 +2150,6 @@
                 case 'batch_skip_event':
                     // ⚡ Batch Skip Event: Process multiple candles from batch request
                     if (isInitialized && message.candles && Array.isArray(message.candles) && message.candles.length > 0) {
-                        console.log(`⚡ [BATCH-SKIP] Processing ${message.count} candles`);
 
                         // ⚡ PERFORMANCE: Update chart with all candles
                         message.candles.forEach((candle, index) => {
@@ -2233,8 +2207,6 @@
                         if (message.final_candle && message.final_candle.time) {
                             updateChartTime(message.final_candle.time);
                         }
-
-                        console.log(`⚡ [BATCH-SKIP] Completed: ${message.count} candles, Final Time: ${message.final_time}`);
 
                         // Update document title
                         document.title = `${message.timeframe} Batch Skip (${message.count} candles)`;
@@ -2858,7 +2830,7 @@
 
                 window.pnlLabelsCanvas = canvas;
                 window.pnlLabelsCtx = canvas.getContext('2d');
-                console.log('[PnL] Canvas overlay created');
+                // Canvas overlay created
             }
 
             if (!window.positionLines || Object.keys(window.positionLines).length === 0) {
@@ -5002,7 +4974,7 @@
         }
 
         function clearAllPositions() {
-            console.log('[CLEAR ALL] Button geklickt via onclick - FORCE DEAKTIVIERE TOOL');
+            // Clear all - deactivate position tool
 
             try {
                 // Deaktiviere beide Position Tools komplett
@@ -5014,7 +4986,7 @@
                     positionTool.classList.remove('active');
                     positionTool.style.background = '#333';
                     positionTool.style.color = '#fff';
-                    console.log('[SUCCESS] Long Position Tool deaktiviert via onclick');
+                    // Long tool deactivated
                 } else {
                     console.error('[ERROR] positionBoxTool Element nicht gefunden beim Clear!');
                 }
@@ -5024,7 +4996,7 @@
                     shortTool.classList.remove('active');
                     shortTool.style.background = '#333';
                     shortTool.style.color = '#fff';
-                    console.log('[SUCCESS] Short Position Tool deaktiviert via onclick');
+                    // Short tool deactivated
                 } else {
                     console.error('[ERROR] shortPositionTool Element nicht gefunden beim Clear!');
                 }
@@ -5032,7 +5004,6 @@
                 // Versuche Position Box zu entfernen (falls vorhanden)
                 if (typeof removeCurrentPositionBox === 'function') {
                     removeCurrentPositionBox();
-                    console.log('[SUCCESS] Position Box entfernt');
                 } else {
                     console.log('⚠️ removeCurrentPositionBox function not available yet');
                 }
@@ -5243,9 +5214,29 @@
             console.log(`${skipMessage} - Button clicked!`);
             serverLog('🔧 handleDebugSkip called');
 
+            // Get current price for indicator context
+            let currentPrice = null;
+            let currentTime = null;
+            if (window.candlestickSeries) {
+                const candleData = window.candlestickSeries.data();
+                if (candleData && candleData.length > 0) {
+                    const latestCandle = candleData[candleData.length - 1];
+                    currentPrice = latestCandle.close;
+                    currentTime = latestCandle.time;
+                }
+            }
+
+            // Get indicator context for AI
+            let indicatorData = null;
+            if (currentPrice && window.IndicatorManager) {
+                indicatorData = window.IndicatorManager.getMarketContext(currentPrice, currentTime);
+                console.log('📊 Indicator Context:', indicatorData);
+            }
+
             fetch('/api/debug/skip', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ indicator_data: indicatorData })
             })
             .then(response => response.json())
             .then(data => {
@@ -5391,7 +5382,6 @@
 
         // Go To Date Modal Functions
         function openDateModal() {
-            console.log('[GO TO DATE] Opening Modal...');
             const modal = document.getElementById('dateModal');
             const dateInput = document.getElementById('goToDateInput');
 
@@ -5410,7 +5400,6 @@
         }
 
         function closeDateModal() {
-            console.log('[GO TO DATE] Closing Modal...');
             const modal = document.getElementById('dateModal');
             modal.style.display = 'none';
         }
@@ -5984,7 +5973,6 @@
                 });
             }
 
-            console.log('[GO TO DATE] Request:', selectedDate);
             serverLog('[GO TO DATE] Request: ' + selectedDate);
 
             // 💾 Speichere aktuellen Autoscale-Zustand NUR beim ersten Go To (nicht überschreiben!)
@@ -6015,7 +6003,7 @@
                 serverLog('[SUCCESS] Go To Date successful: ' + data.message, data);
 
                 if (data.status === 'success') {
-                    console.log('[CHART] Chart wird zu neuem Datum reinitialisiert...');
+                    // Chart wird zu neuem Datum reinitialisiert
                     // WebSocket wird automatisch das chart_reinitialize Event senden
                 } else {
                     console.error('❌ Go To Date failed:', data.message);
@@ -6031,7 +6019,6 @@
 
         // Reset Time - Zurück zum Datenende
         function resetTimeToDataEnd() {
-            console.log('[RESET-TIME] Resetting to data end...');
             serverLog('[RESET-TIME] User requested reset to data end');
 
             // API Call zum Backend
@@ -6045,7 +6032,7 @@
                 serverLog('[SUCCESS] Reset Time successful: ' + data.message, data);
 
                 if (data.status === 'success') {
-                    console.log('[CHART] Chart zurückgesetzt zum Datenende');
+                    // Chart zurückgesetzt zum Datenende
                     // WebSocket sendet automatisch go_to_date_complete Event
                 } else {
                     console.error('❌ Reset Time failed:', data.message);
@@ -6234,7 +6221,7 @@
             const resetTimeBtn = document.getElementById('resetTimeBtn');
             if (resetTimeBtn) {
                 resetTimeBtn.addEventListener('click', resetTimeToDataEnd);
-                console.log('✅ Reset Time Button event listener attached');
+                // console.log('✅ Reset Time Button event listener attached');
             } else {
                 console.error('❌ Reset Time Button not found!');
             }
@@ -6653,3 +6640,199 @@ function updateAssetName(assetSymbol) {
         console.log(`🔍 Asset-Name aktualisiert: ${assetSymbol}`);
     }
 }
+
+// ========================================
+// RL Agent Vision Monitor
+// ========================================
+
+function updateRLVisionMonitor(context) {
+    if (!context) return;
+
+    // FVG
+    const fvgElem = document.getElementById('vision-in-fvg');
+    if (fvgElem) {
+        if (context.in_fvg) {
+            fvgElem.innerHTML = `<span class="status-indicator">✅</span> In FVG (${context.fvg_type})`;
+            fvgElem.classList.add('active');
+        } else {
+            fvgElem.innerHTML = `<span class="status-indicator">❌</span> Not in FVG`;
+            fvgElem.classList.remove('active');
+        }
+    }
+
+    // Session High
+    const nearHighElem = document.getElementById('vision-near-high');
+    if (nearHighElem) {
+        if (context.near_session_high) {
+            nearHighElem.innerHTML = `<span class="status-indicator">✅</span> Near High`;
+            nearHighElem.classList.add('active');
+        } else {
+            nearHighElem.innerHTML = `<span class="status-indicator">❌</span> Not near`;
+            nearHighElem.classList.remove('active');
+        }
+    }
+
+    const highBrokenElem = document.getElementById('vision-high-broken');
+    if (highBrokenElem) {
+        if (context.session_high_broken) {
+            highBrokenElem.innerHTML = `<span class="status-indicator">🔥</span> High Broken`;
+            highBrokenElem.classList.add('warning');
+        } else {
+            highBrokenElem.innerHTML = `<span class="status-indicator">❌</span> Not broken`;
+            highBrokenElem.classList.remove('warning');
+        }
+    }
+
+    // Session Low
+    const nearLowElem = document.getElementById('vision-near-low');
+    if (nearLowElem) {
+        if (context.near_session_low) {
+            nearLowElem.innerHTML = `<span class="status-indicator">✅</span> Near Low`;
+            nearLowElem.classList.add('active');
+        } else {
+            nearLowElem.innerHTML = `<span class="status-indicator">❌</span> Not near`;
+            nearLowElem.classList.remove('active');
+        }
+    }
+
+    const lowBrokenElem = document.getElementById('vision-low-broken');
+    if (lowBrokenElem) {
+        if (context.session_low_broken) {
+            lowBrokenElem.innerHTML = `<span class="status-indicator">🔥</span> Low Broken`;
+            lowBrokenElem.classList.add('warning');
+        } else {
+            lowBrokenElem.innerHTML = `<span class="status-indicator">❌</span> Not broken`;
+            lowBrokenElem.classList.remove('warning');
+        }
+    }
+
+    // Volume
+    const volumeSpikeElem = document.getElementById('vision-volume-spike');
+    const volumeRatioElem = document.getElementById('vision-volume-ratio');
+    if (volumeSpikeElem) {
+        if (context.volume_spike) {
+            volumeSpikeElem.innerHTML = `<span class="status-indicator">🔥</span> Volume Spike!`;
+            volumeSpikeElem.classList.add('warning');
+        } else {
+            volumeSpikeElem.innerHTML = `<span class="status-indicator">❌</span> No spike`;
+            volumeSpikeElem.classList.remove('warning');
+        }
+    }
+    if (volumeRatioElem) {
+        volumeRatioElem.textContent = `Ratio: ${context.volume_ratio}x`;
+    }
+
+    // Session Info
+    const sessionElem = document.getElementById('vision-session');
+    if (sessionElem) {
+        sessionElem.textContent = context.current_session || 'Unknown';
+    }
+
+    // Current Price
+    const priceElem = document.getElementById('vision-price');
+    if (priceElem && context.current_price) {
+        priceElem.textContent = `$${context.current_price.toFixed(2)}`;
+    }
+}
+
+// Toggle RL Vision Monitor
+document.addEventListener('DOMContentLoaded', function() {
+    const toggleBtn = document.getElementById('toggleRLVision');
+    const monitor = document.getElementById('rlVisionMonitor');
+
+    if (toggleBtn && monitor) {
+        toggleBtn.addEventListener('click', function() {
+            monitor.classList.toggle('minimized');
+            toggleBtn.textContent = monitor.classList.contains('minimized') ? '+' : '−';
+            toggleBtn.title = monitor.classList.contains('minimized') ? 'Maximize' : 'Minimize';
+        });
+    }
+});
+
+// Expose function globally
+window.updateRLVisionMonitor = updateRLVisionMonitor;
+
+// ===== RL AGENT VISION DRAGGABLE =====
+document.addEventListener('DOMContentLoaded', function() {
+    const panel = document.getElementById('rlVisionMonitor');
+    const header = panel.querySelector('.rl-vision-header');
+
+    if (!panel || !header) return;
+
+    let isDragging = false;
+    let currentX;
+    let currentY;
+    let initialX;
+    let initialY;
+    let xOffset = 0;
+    let yOffset = 0;
+
+    // Load saved position from localStorage
+    const savedPos = localStorage.getItem('rlVisionPosition');
+    if (savedPos) {
+        const pos = JSON.parse(savedPos);
+        panel.style.top = pos.top;
+        panel.style.right = 'auto'; // Disable right positioning
+        panel.style.left = pos.left;
+        xOffset = pos.xOffset || 0;
+        yOffset = pos.yOffset || 0;
+    }
+
+    // Change cursor on header hover
+    header.style.cursor = 'move';
+
+    header.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
+
+    function dragStart(e) {
+        // Don't drag if clicking toggle button
+        if (e.target.id === 'toggleRLVision') return;
+
+        initialX = e.clientX - xOffset;
+        initialY = e.clientY - yOffset;
+
+        isDragging = true;
+        panel.style.transition = 'none'; // Disable transitions while dragging
+    }
+
+    function drag(e) {
+        if (isDragging) {
+            e.preventDefault();
+
+            currentX = e.clientX - initialX;
+            currentY = e.clientY - initialY;
+
+            xOffset = currentX;
+            yOffset = currentY;
+
+            // Apply transform
+            setTranslate(currentX, currentY, panel);
+        }
+    }
+
+    function dragEnd(e) {
+        if (isDragging) {
+            initialX = currentX;
+            initialY = currentY;
+
+            isDragging = false;
+
+            // Calculate and save final position
+            const rect = panel.getBoundingClientRect();
+            const position = {
+                top: rect.top + 'px',
+                left: rect.left + 'px',
+                xOffset: xOffset,
+                yOffset: yOffset
+            };
+            localStorage.setItem('rlVisionPosition', JSON.stringify(position));
+
+            console.log('[RL Vision] Position gespeichert:', position);
+        }
+    }
+
+    function setTranslate(xPos, yPos, el) {
+        el.style.transform = `translate(${xPos}px, ${yPos}px)`;
+    }
+});
