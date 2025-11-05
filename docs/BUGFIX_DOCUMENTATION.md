@@ -5544,3 +5544,133 @@ msgid=5906: 🔄 Label updated für SESSION_1 (visible: false)
 ✅ **FVG Toggle:** Profitiert ebenfalls von genereller Lösung
 ✅ **Code-Qualität:** Wiederverwendbare `requestChartUpdate()` für alle Primitives
 ✅ **UX:** Sofortiges visuelles Feedback bei allen Indikator-Toggles
+
+---
+
+## RL Agent Vision Monitor - FVG Detection 1 Candle verzögert - 05.11.2025 👁️
+
+### Problem:
+RL Agent Vision Monitor zeigte FVG-Status **1 Candle zu spät** an:
+- User ist in bearish FVG → Monitor zeigt "Not in FVG" ❌
+- Nach Skip → Monitor zeigt erst "FVG (bearish)" ✅
+- **Symptom:** Vision Monitor hinkt 1 Candle hinterher
+
+### Root Cause:
+**Timing-Problem: getMarketContext() wird VOR Skip aufgerufen, nicht NACH**
+
+**Problem Flow:**
+```
+1. Skip Button Click → getMarketContext() mit ALTER Candle
+2. fetch('/api/debug/skip') → Server antwortet mit unified_skip_event
+3. unified_skip_event → Indikatoren neu berechnen (syncWithTimeframe)
+4. ❌ Vision Monitor wird NICHT aktualisiert!
+5. Nächster Skip → getMarketContext() mit neuer Candle → jetzt erst korrekt
+```
+
+**Code-Path (VORHER):**
+```javascript
+// static/js/chart.js:5263-5280
+function handleDebugSkip() {
+    // 1. Hole ALTE Candle
+    const latestCandle = candleData[candleData.length - 1];
+
+    // 2. getMarketContext() mit ALTER Candle
+    indicatorData = window.IndicatorManager.getMarketContext(currentPrice, currentTime);
+
+    // 3. Skip Request
+    fetch('/api/debug/skip', ...)
+}
+
+// static/js/chart.js:1809-1841
+case 'unified_skip_event':
+    candlestickSeries.update(message.candle);  // Neue Candle
+
+    if (window.IndicatorManager) {
+        window.IndicatorManager.syncWithTimeframe(candleData);  // Neu berechnen
+        // ❌ FEHLT: Vision Monitor Update!
+    }
+    break;
+```
+
+### Fix:
+**Vision Monitor NACH unified_skip_event aktualisieren**
+
+**Fix Location 1:** `static/js/chart.js:1822-1826`
+```javascript
+case 'unified_skip_event':
+    if (window.IndicatorManager) {
+        const candleData = window.candlestickSeries.data();
+        window.IndicatorManager.syncWithTimeframe(candleData);
+
+        // 🔄 UPDATE: Vision Monitor mit aktuellen Daten
+        const currentPrice = message.candle.close;
+        const currentTime = message.candle.time;
+        const context = window.IndicatorManager.getMarketContext(currentPrice, currentTime);
+        console.log('👁️ Vision Monitor aktualisiert nach unified_skip_event');
+    }
+    break;
+```
+
+**Fix Location 2:** `static/js/chart.js:2162-2170` (zweiter unified_skip_event Handler)
+```javascript
+// 📊 Sync Indikatoren mit kompletten Chart-Daten
+if (window.IndicatorManager) {
+    const candleData = window.candlestickSeries.data();
+    window.IndicatorManager.syncWithTimeframe(candleData);
+
+    // 🔄 UPDATE: Vision Monitor mit aktuellen Daten
+    const context = window.IndicatorManager.getMarketContext(validatedCandle.close, validatedCandle.time);
+    console.log('👁️ Vision Monitor aktualisiert nach unified_skip_event');
+}
+```
+
+### Why Option A (Vision Monitor Update NACH Skip):
+**Nachhaltiger für echte Marktdaten:**
+
+**Bei ECHTEN Marktdaten:**
+```
+1. Neue Candle kommt via WebSocket
+2. Chart aktualisiert
+3. Indikatoren neu berechnen (syncWithTimeframe)
+4. Vision Monitor aktualisieren ← WICHTIG!
+5. RL Agent schaut auf aktuelle Daten
+6. RL Agent trifft Entscheidung (Buy/Sell/Hold)
+```
+
+**Vorteile:**
+- Jede neue Candle triggert automatisch Vision Update
+- RL Agent sieht immer aktuelle Daten
+- Gleicher Flow für Demo + Live Mode
+- Minimale Änderungen am bestehenden Code
+
+### Testing:
+**Browser Test (http://localhost:8003):**
+
+✅ **Vorher:**
+```
+Preis in bearish FVG @ $18,734
+Vision Monitor: "Not in FVG" ❌
+Skip → Vision Monitor: "FVG (bearish)" ✅ (1 Candle zu spät!)
+```
+
+✅ **Nachher:**
+```
+Preis in bearish FVG @ $18,734
+Vision Monitor: "FVG (bearish)" ✅ (sofort korrekt!)
+Console: '👁️ Vision Monitor aktualisiert nach unified_skip_event'
+```
+
+### Files Changed:
+- `static/js/chart.js:1822-1826` - Erster unified_skip_event Handler
+- `static/js/chart.js:2162-2170` - Zweiter unified_skip_event Handler
+
+### Prevention:
+1. **IMMER Vision Monitor NACH Indikator-Sync** aktualisieren
+2. **Jeder unified_skip_event Handler** muss Vision Monitor Update enthalten
+3. **getMarketContext() Timing** - nach Daten-Updates, nicht vorher
+
+### Impact:
+✅ **RL Agent Vision:** Echtzeit-Anzeige ohne Verzögerung
+✅ **FVG Detection:** Sofort korrekt bei Skip
+✅ **Live Trading Ready:** Gleicher Flow wie bei echten Marktdaten
+✅ **User Experience:** Vertrauen in Indikator-Anzeige wiederhergestellt

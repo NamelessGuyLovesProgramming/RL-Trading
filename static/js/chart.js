@@ -1818,6 +1818,12 @@
                             const candleData = window.candlestickSeries.data();
                             window.IndicatorManager.syncWithTimeframe(candleData);
                             console.log('📊 Indikatoren synchronisiert nach unified_skip_event');
+
+                            // 🔄 Update Vision Monitor mit aktuellen Daten (FIX: Vision Monitor war 1 Candle hinterher)
+                            const currentPrice = message.candle.close;
+                            const currentTime = message.candle.time;
+                            const context = window.IndicatorManager.getMarketContext(currentPrice, currentTime);
+                            console.log('👁️ Vision Monitor aktualisiert nach unified_skip_event');
                         }
 
                         console.log('🔄 Unified Skip:', message.timeframe, '- Candle:', message.candle.time);
@@ -2151,6 +2157,16 @@
                         // ⭐ Check limit orders on new candle (Skip Event)
                         if (typeof checkLimitOrders === 'function') {
                             checkLimitOrders(validatedCandle);
+                        }
+
+                        // 📊 Sync Indikatoren mit kompletten Chart-Daten
+                        if (window.IndicatorManager) {
+                            const candleData = window.candlestickSeries.data();
+                            window.IndicatorManager.syncWithTimeframe(candleData);
+
+                            // 🔄 Update Vision Monitor mit aktuellen Daten (FIX: Vision Monitor war 1 Candle hinterher)
+                            const context = window.IndicatorManager.getMarketContext(validatedCandle.close, validatedCandle.time);
+                            console.log('👁️ Vision Monitor aktualisiert nach unified_skip_event');
                         }
 
                         // 💰 Update PnL for all active positions
