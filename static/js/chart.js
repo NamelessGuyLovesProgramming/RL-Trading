@@ -1735,6 +1735,12 @@
                         candlestickSeries.update(message.candle);
                         updateChartTime(message.candle.time);
                         console.log('➡️ Candle added:', message.candle);
+
+                        // 📊 Sync Indikatoren mit kompletten Chart-Daten (komplette Neuberechnung)
+                        if (window.IndicatorManager) {
+                            const candleData = window.candlestickSeries.data();
+                            window.IndicatorManager.syncWithTimeframe(candleData);
+                        }
                     }
                     break;
 
@@ -1747,6 +1753,12 @@
                         console.log('📊 Candle Type:', message.candle_type || message.result_type);
                         console.log('🕒 Debug Time:', message.debug_time);
                         console.log('📈 Timeframe:', message.timeframe);
+
+                        // 📊 Sync Indikatoren mit kompletten Chart-Daten (komplette Neuberechnung)
+                        if (window.IndicatorManager) {
+                            const candleData = window.candlestickSeries.data();
+                            window.IndicatorManager.syncWithTimeframe(candleData);
+                        }
 
                         // Visual feedback für incomplete candles (if needed)
                         if (message.candle_type === 'incomplete_candle') {
@@ -1762,6 +1774,12 @@
                     if (isInitialized && message.candle) {
                         // Update Chart mit primary candle
                         candlestickSeries.update(message.candle);
+
+                        // 📊 Sync Indikatoren mit kompletten Chart-Daten (komplette Neuberechnung)
+                        if (window.IndicatorManager) {
+                            const candleData = window.candlestickSeries.data();
+                            window.IndicatorManager.syncWithTimeframe(candleData);
+                        }
 
                         console.log('🔄 Multi-TF Skip:', message.timeframe, '- Candle:', message.candle.time);
                         console.log('📊 Type:', message.candle_type);
@@ -1785,6 +1803,34 @@
 
                     } else {
                         console.log('❌ Multi-TF Skip fehlgeschlagen:', !isInitialized ? 'Chart nicht initialisiert' : 'Fehlende Kerze');
+                    }
+                    break;
+
+                case 'unified_skip_event':
+                    // UNIFIED: Navigation Service Skip Event (neues System)
+                    if (isInitialized && message.candle) {
+                        // Update Chart mit candle
+                        candlestickSeries.update(message.candle);
+                        updateChartTime(message.candle.time);
+
+                        // 📊 Sync Indikatoren mit kompletten Chart-Daten (komplette Neuberechnung)
+                        if (window.IndicatorManager) {
+                            const candleData = window.candlestickSeries.data();
+                            window.IndicatorManager.syncWithTimeframe(candleData);
+                            console.log('📊 Indikatoren synchronisiert nach unified_skip_event');
+                        }
+
+                        console.log('🔄 Unified Skip:', message.timeframe, '- Candle:', message.candle.time);
+                        console.log('📊 Type:', message.candle_type);
+                        console.log('⏰ Global Time:', message.global_time);
+
+                        // Sync Status anzeigen (optional)
+                        if (message.sync_status) {
+                            console.log('🌐 Sync Status:', message.sync_status);
+                        }
+
+                    } else {
+                        console.log('❌ Unified Skip fehlgeschlagen:', !isInitialized ? 'Chart nicht initialisiert' : 'Fehlende Kerze');
                     }
                     break;
 

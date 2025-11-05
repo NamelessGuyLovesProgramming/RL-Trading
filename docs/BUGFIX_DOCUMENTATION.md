@@ -1,5 +1,72 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Skip-Button Indikatoren Re-Rendering - 05.11.2025 🎨
+
+### Problem:
+Nach Skip werden neue Bars angezeigt, aber **Indikatoren werden NICHT neu gezeichnet** (FVG Boxen, Session Lines, Volume). Erst nach F5 (Browser Reload) erscheinen die Indikatoren wieder.
+
+### Root Cause:
+**WebSocket Message Type Mismatch:**
+- Server sendet: `unified_skip_event` (neues Navigation Service System)
+- Client hatte NUR Handler für: `debug_skip`, `debug_skip_sync` (altes System)
+- → WebSocket-Messages wurden ignoriert, keine Indikator-Synchronisation
+
+### Investigation:
+1. **Server-Logs zeigen:** `Broadcast: unified_skip_event` wird gesendet
+2. **Client Console:** KEINE Logs für "Indikatoren-Sync" nach Skip
+3. **Code-Analyse:** `handleMessage()` hatte keinen Case für `unified_skip_event`
+
+### Fix:
+**Neuen WebSocket Handler hinzugefügt** (`static/js/chart.js:1809-1835`):
+
+```javascript
+case 'unified_skip_event':
+    // UNIFIED: Navigation Service Skip Event (neues System)
+    if (isInitialized && message.candle) {
+        // Update Chart mit candle
+        candlestickSeries.update(message.candle);
+        updateChartTime(message.candle.time);
+
+        // 📊 Sync Indikatoren mit kompletten Chart-Daten (komplette Neuberechnung)
+        if (window.IndicatorManager) {
+            const candleData = window.candlestickSeries.data();
+            window.IndicatorManager.syncWithTimeframe(candleData);
+            console.log('📊 Indikatoren synchronisiert nach unified_skip_event');
+        }
+
+        console.log('🔄 Unified Skip:', message.timeframe, '- Candle:', message.candle.time);
+    }
+    break;
+```
+
+**Warum `syncWithTimeframe()` statt `updateAllIndicators()`:**
+- `updateAllIndicators()`: Inkrementelles Update für 1 neue Candle
+- `syncWithTimeframe()`: **Komplette Neuberechnung** aller Indikatoren über alle Candles
+- Nach Skip brauchen wir komplette Neuberechnung (FVG Detection, Session Analysis, etc.)
+
+### Files Changed:
+- `static/js/chart.js:1809-1835` - Neuer `unified_skip_event` Handler
+
+### Test Results:
+**Vorher:**
+- Skip → Neue Bars ✅
+- Indikatoren ❌ (bleiben auf alter Position)
+- Console: Keine Sync-Logs
+
+**Nachher:**
+- Skip → Neue Bars ✅
+- Indikatoren ✅ (neu gezeichnet: 24 FVG Boxen, Session Lines, Volume)
+- Console: `✅ 4 Indikatoren synchronisiert` + `📊 Indikatoren synchronisiert nach unified_skip_event`
+
+### Impact:
+✅ Skip Button - Indikatoren rendern neu
+✅ Play Mode - Indikatoren rendern neu (automatisch)
+✅ Live Market Data - Ready (wenn implementiert)
+
+**Kein F5 mehr nötig!**
+
+---
+
 ## Play Button Speed-Slider - Custom Speed Mapping - 04.11.2025 ⚡
 
 ### Feature Request:
