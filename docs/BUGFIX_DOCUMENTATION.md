@@ -1,5 +1,91 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Session H/L "Near" Detection - Falsche Levels - 05.11.2025 🎯
+
+### Problem:
+**"Near High" und "Near Low" evaluieren die falschen Session-Werte:**
+- Zeigt "Near High" ✅ obwohl nächste sichtbare High-Linie weit weg ist
+- Zeigt "High Broken" 🔥 obwohl keine der sichtbaren Linien durchbrochen wurde
+- Grund: Evaluiert **gestrige Session vom gleichen Typ** statt **nächste sichtbare Linie**
+
+### Root Cause:
+**Session-Typ-basierte Selektion statt Distanz-basiert:**
+
+**ALT (Zeilen 1997-2003):**
+```javascript
+// Sucht nach letzter abgeschlossener Session vom GLEICHEN Typ
+for (let i = this.completedSessions.length - 1; i >= 0; i--) {
+    if (this.completedSessions[i].type === currentSessionType) {  // ❌ FALSCH
+        lastSession = this.completedSessions[i];
+        break;
+    }
+}
+```
+
+**Beispiel-Szenario:**
+- Aktuelle Zeit: Asian Session (01:05)
+- `currentSessionType` = "asian"
+- Code nimmt: Gestrige Asian Session High/Low
+- **Problem**: Preis ist 100+ Punkte von gestern entfernt, aber zeigt "Near" weil gestrige Asian Session zufällig nahe war
+
+**Was es hätte machen sollen:**
+- Nimm die **nächste sichtbare Session H/L Linie** (egal von welcher Session)
+- Das sind die Linien die der `SESSION_HL` Indikator auf dem Chart zeigt (max 5 Linien)
+
+### Fix:
+**Nutze `getVisibleLevels()` statt Session-Typ-Filter:**
+
+```javascript
+// 🔥 NEU: Hole die sichtbaren Levels (= die Linien die auf dem Chart gezeigt werden)
+const { highs, lows } = this.getVisibleLevels(currentPrice);
+
+// Nächstes High (über dem Preis) und nächstes Low (unter dem Preis)
+const nextHigh = highs.length > 0 ? highs[0] : null; // highs[0] = nächstes High
+const nextLow = lows.length > 0 ? lows[0] : null;    // lows[0] = nächstes Low
+
+// Distance Checks
+if (nextHigh) {
+    sessionHigh = nextHigh.price;
+    distanceToHigh = Math.abs(currentPrice - sessionHigh);
+    nearHigh = distanceToHigh <= threshold;
+}
+```
+
+**Was `getVisibleLevels()` macht:**
+1. Filtert Highs ÜBER dem Preis, sortiert aufsteigend → `highs[0]` = nächstes High
+2. Filtert Lows UNTER dem Preis, sortiert absteigend → `lows[0]` = nächstes Low
+3. Limitiert auf max 5 Linien (config: `maxLinesAbove`/`maxLinesBelow`)
+
+### Files Changed:
+- `static/js/indicators.js:1994-2110` - `getCurrentState()` Methode komplett umgeschrieben
+
+### Test Results:
+**Vorher:**
+- Preis: $18734.50
+- Zeigt: "Near High" ✅ (gestrige Asian Session @ $18750)
+- Realität: Nächste sichtbare High-Linie ist American Session @ $18857 (122 Punkte entfernt!)
+
+**Nachher:**
+- Preis: $18734.50
+- Nächstes High: $18857.00 (American Session) - 122 Punkte entfernt
+- Nächstes Low: $18589.75 (European Session) - 145 Punkte entfernt
+- Threshold: ~28 Punkte (0.15%)
+- **Ergebnis**: ❌ Not near (korrekt!)
+
+Console Log zeigt:
+```
+📊 Final Visible Levels: 2 Highs über 18734.50, 4 Lows darunter
+🔄 [Session HL] Neues High Level: american_1725982200 @ 18857.00
+🔄 [Session HL] Neues Low Level: european_1725958800 @ 18589.75
+```
+
+### Prevention:
+- "Near" Detection muss IMMER die sichtbaren Chart-Levels nutzen
+- Nie Session-Typ-basiert filtern - nur Distanz-basiert
+- Nutze vorhandene `getVisibleLevels()` Methode statt eigene Logik
+
+---
+
 ## Skip-Button Indikatoren Re-Rendering - 05.11.2025 🎨
 
 ### Problem:

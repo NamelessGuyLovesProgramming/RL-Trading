@@ -1991,23 +1991,11 @@ class SessionHighLowIndicator extends BaseIndicator {
             currentSessionType = 'american';
         }
 
-        // Suche die passende Session: Entweder abgeschlossen ODER finde aktuelle Session aus Ranges
-        let lastSession = null;
+        // 🔥 NEU: Hole die sichtbaren Levels (= die Linien die auf dem Chart gezeigt werden)
+        const { highs, lows } = this.getVisibleLevels(currentPrice);
 
-        // Versuche zuerst: Finde abgeschlossene Session vom aktuellen Typ
-        for (let i = this.completedSessions.length - 1; i >= 0; i--) {
-            if (this.completedSessions[i].type === currentSessionType) {
-                lastSession = this.completedSessions[i];
-                break;
-            }
-        }
-
-        // Fallback: Wenn keine passende abgeschlossene Session, nehme letzte verfügbare
-        if (!lastSession && this.completedSessions.length > 0) {
-            lastSession = this.completedSessions[this.completedSessions.length - 1];
-        }
-
-        if (!lastSession) {
+        // Wenn keine Levels verfügbar → return false für alles
+        if (highs.length === 0 && lows.length === 0) {
             return {
                 near_session_high: false,
                 near_session_low: false,
@@ -2017,54 +2005,94 @@ class SessionHighLowIndicator extends BaseIndicator {
                 session_low_first_break: false,
                 session_high_price: null,
                 session_low_price: null,
-                current_session: null
+                current_session: currentSessionType || 'unknown'
             };
         }
 
-        const sessionHigh = lastSession.high;
-        const sessionLow = lastSession.low;
-
-        // Session ID für Break Tracking (Session-Typ + Endzeit)
-        const sessionId = `${lastSession.type}_${lastSession.endTime}`;
-
-        // Reset Break Flags bei neuer Session
-        if (this.lastSessionId !== sessionId) {
-            this.lastSessionId = sessionId;
-            this.sessionHighBroken = false;
-            this.sessionLowBroken = false;
-            console.log(`🔄 [Session HL] Neue Session erkannt: ${sessionId} - Break Flags resetted`);
-        }
+        // Nächstes High (über dem Preis) und nächstes Low (unter dem Preis)
+        const nextHigh = highs.length > 0 ? highs[0] : null; // highs[0] = nächstes High
+        const nextLow = lows.length > 0 ? lows[0] : null;    // lows[0] = nächstes Low
 
         // Threshold: 0.15% vom Preis
         const threshold = currentPrice * 0.0015; // 0.15%
 
-        // Distance Checks (basierend auf CLOSE für "near")
-        const distanceToHigh = Math.abs(currentPrice - sessionHigh);
-        const distanceToLow = Math.abs(currentPrice - sessionLow);
+        // ========================================
+        // NEAR HIGH CHECK
+        // ========================================
+        let nearHigh = false;
+        let sessionHigh = null;
+        let distanceToHigh = null;
 
-        const nearHigh = distanceToHigh <= threshold;
-        const nearLow = distanceToLow <= threshold;
+        if (nextHigh) {
+            sessionHigh = nextHigh.price;
+            distanceToHigh = Math.abs(currentPrice - sessionHigh);
+            nearHigh = distanceToHigh <= threshold;
+        }
 
-        // Breakout Checks: Prüfe HIGH/LOW der Kerze (Dochte zählen!)
-        const highBroken = currentCandle.high > sessionHigh;
-        const lowBroken = currentCandle.low < sessionLow;
+        // ========================================
+        // NEAR LOW CHECK
+        // ========================================
+        let nearLow = false;
+        let sessionLow = null;
+        let distanceToLow = null;
 
-        // First Break Detection
+        if (nextLow) {
+            sessionLow = nextLow.price;
+            distanceToLow = Math.abs(currentPrice - sessionLow);
+            nearLow = distanceToLow <= threshold;
+        }
+
+        // ========================================
+        // BREAKOUT CHECKS (Prüfe HIGH/LOW der Kerze - Dochte zählen!)
+        // ========================================
+        const highBroken = nextHigh ? (currentCandle.high > nextHigh.price) : false;
+        const lowBroken = nextLow ? (currentCandle.low < nextLow.price) : false;
+
+        // ========================================
+        // FIRST BREAK DETECTION
+        // ========================================
+        // Track Break Flags per Level (nicht per Session)
+        const highLevelId = nextHigh ? nextHigh.sessionId : null;
+        const lowLevelId = nextLow ? nextLow.sessionId : null;
+
         let highFirstBreak = false;
         let lowFirstBreak = false;
 
-        if (highBroken && !this.sessionHighBroken) {
-            // Erstes Mal Session High gebrochen!
-            highFirstBreak = true;
-            this.sessionHighBroken = true;
-            console.log(`🔥 [Session HL] FIRST BREAK: Session High gebrochen! Price: ${currentCandle.high} > ${sessionHigh}`);
+        // Initialisiere Break Tracking Variablen falls noch nicht vorhanden
+        if (typeof this.lastHighLevelId === 'undefined') this.lastHighLevelId = null;
+        if (typeof this.lastLowLevelId === 'undefined') this.lastLowLevelId = null;
+        if (typeof this.highLevelBroken === 'undefined') this.highLevelBroken = false;
+        if (typeof this.lowLevelBroken === 'undefined') this.lowLevelBroken = false;
+
+        // Reset Break Flags wenn sich das Level ändert
+        if (this.lastHighLevelId !== highLevelId) {
+            this.lastHighLevelId = highLevelId;
+            this.highLevelBroken = false;
+            if (highLevelId && nextHigh) {
+                console.log(`🔄 [Session HL] Neues High Level: ${highLevelId} @ ${nextHigh.price.toFixed(2)}`);
+            }
         }
 
-        if (lowBroken && !this.sessionLowBroken) {
-            // Erstes Mal Session Low gebrochen!
+        if (this.lastLowLevelId !== lowLevelId) {
+            this.lastLowLevelId = lowLevelId;
+            this.lowLevelBroken = false;
+            if (lowLevelId && nextLow) {
+                console.log(`🔄 [Session HL] Neues Low Level: ${lowLevelId} @ ${nextLow.price.toFixed(2)}`);
+            }
+        }
+
+        // First Break Detection für High
+        if (highBroken && !this.highLevelBroken && nextHigh) {
+            highFirstBreak = true;
+            this.highLevelBroken = true;
+            console.log(`🔥 [Session HL] FIRST BREAK: High Level gebrochen! Price: ${currentCandle.high} > ${nextHigh.price}`);
+        }
+
+        // First Break Detection für Low
+        if (lowBroken && !this.lowLevelBroken && nextLow) {
             lowFirstBreak = true;
-            this.sessionLowBroken = true;
-            console.log(`🔥 [Session HL] FIRST BREAK: Session Low gebrochen! Price: ${currentCandle.low} < ${sessionLow}`);
+            this.lowLevelBroken = true;
+            console.log(`🔥 [Session HL] FIRST BREAK: Low Level gebrochen! Price: ${currentCandle.low} < ${nextLow.price}`);
         }
 
         return {
@@ -2072,11 +2100,11 @@ class SessionHighLowIndicator extends BaseIndicator {
             near_session_low: nearLow,
             session_high_broken: highBroken,
             session_low_broken: lowBroken,
-            session_high_first_break: highFirstBreak,   // ✅ NEU
-            session_low_first_break: lowFirstBreak,     // ✅ NEU
+            session_high_first_break: highFirstBreak,
+            session_low_first_break: lowFirstBreak,
             session_high_price: sessionHigh,
             session_low_price: sessionLow,
-            current_session: currentSessionType || 'unknown',  // ✅ FIX: Aktuelle Session statt letzte abgeschlossene
+            current_session: currentSessionType || 'unknown',
             distance_to_high: distanceToHigh,
             distance_to_low: distanceToLow
         };
