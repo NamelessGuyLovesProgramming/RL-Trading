@@ -1261,7 +1261,7 @@ class SessionHighLowIndicator extends BaseIndicator {
         this.chart = null;              // Chart-Referenz für LineSeries
 
         // Trigger-History: Welche Levels wurden bereits geloggt?
-        // [{price, type: 'high'|'low', nearLogged: bool, brokenLogged: bool}]
+        // [{price, type: 'high'|'low', brokenLogged: bool}]
         this.triggeredLevels = [];
 
         // Broken State Tracking (Bugfix: Mehrfach-Aktivierung)
@@ -2394,8 +2394,7 @@ class SessionHighLowIndicator extends BaseIndicator {
             };
         }
 
-        // Fixed Thresholds (absolute Punkte, nicht prozentual)
-        const nearThreshold = 35;    // 35 Punkte für "near"
+        // Fixed Threshold (absolute Punkte, nicht prozentual)
         const brokenThreshold = 50;  // 50 Punkte für "broken" Anzeige
 
         // Sortiere Highs/Lows nach Distanz zum Preis (nächstes zuerst)
@@ -2473,6 +2472,7 @@ class SessionHighLowIndicator extends BaseIndicator {
 
         // ========================================
         // BROKEN DETECTION - State Tracking: Einmal aus = für immer blockiert
+        // BUGFIX: Deaktivierungs-Check AUSSERHALB von Distance-Check!
         // ========================================
         let highBroken = false;
         let lowBroken = false;
@@ -2480,15 +2480,15 @@ class SessionHighLowIndicator extends BaseIndicator {
         let lowFirstBreak = false;
 
         // BROKEN HIGH CHECK
-        if (nextHigh && distanceToHigh <= brokenThreshold) {
-            const isBroken = brokenHighs.some(h => Math.abs(h.price - nextHigh.price) < 0.1);
+        if (nextHigh) {
             const priceKey = nextHigh.price.toFixed(2);
+            const isBroken = brokenHighs.some(h => Math.abs(h.price - nextHigh.price) < 0.1);
 
-            if (isBroken) {
-                // Level ist durchbrochen
+            // AKTIVIERUNGS-CHECK: Nur wenn Level durchbrochen UND in Display-Range
+            if (isBroken && distanceToHigh <= brokenThreshold) {
                 if (this.hadBrokenHighs.has(priceKey)) {
                     // War schon mal aktiv + deaktiviert → PERMANENT BLOCKIERT
-                    console.log(`🚫 [Broken High] PERMANENT BLOCKIERT für ${priceKey} (war schon aktiv)`);
+                    console.log(`🚫 [Broken High] PERMANENT BLOCKIERT für ${priceKey}`);
                 } else {
                     // Darf aktivieren
                     highBroken = true;
@@ -2501,27 +2501,27 @@ class SessionHighLowIndicator extends BaseIndicator {
                         console.log(`🔔 [Broken High] AKTIVIERT für ${priceKey} (First Break)`);
                     }
                 }
-            } else {
-                // Level ist NICHT durchbrochen → Check ob Deaktivierung
-                if (this.currentBrokenHighs.has(priceKey)) {
-                    // War gerade aktiv, jetzt nicht mehr → DEAKTIVIERUNG!
-                    this.currentBrokenHighs.delete(priceKey);
-                    this.hadBrokenHighs.add(priceKey);
-                    console.log(`⚠️ [Broken High] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
-                }
+            }
+
+            // DEAKTIVIERUNGS-CHECK: IMMER prüfen, unabhängig von Distance!
+            if (this.currentBrokenHighs.has(priceKey) && !isBroken) {
+                // War gerade aktiv, jetzt nicht mehr durchbrochen → DEAKTIVIERUNG!
+                this.currentBrokenHighs.delete(priceKey);
+                this.hadBrokenHighs.add(priceKey);
+                console.log(`⚠️ [Broken High] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
             }
         }
 
         // BROKEN LOW CHECK
-        if (nextLow && distanceToLow <= brokenThreshold) {
-            const isBroken = brokenLows.some(l => Math.abs(l.price - nextLow.price) < 0.1);
+        if (nextLow) {
             const priceKey = nextLow.price.toFixed(2);
+            const isBroken = brokenLows.some(l => Math.abs(l.price - nextLow.price) < 0.1);
 
-            if (isBroken) {
-                // Level ist durchbrochen
+            // AKTIVIERUNGS-CHECK: Nur wenn Level durchbrochen UND in Display-Range
+            if (isBroken && distanceToLow <= brokenThreshold) {
                 if (this.hadBrokenLows.has(priceKey)) {
                     // War schon mal aktiv + deaktiviert → PERMANENT BLOCKIERT
-                    console.log(`🚫 [Broken Low] PERMANENT BLOCKIERT für ${priceKey} (war schon aktiv)`);
+                    console.log(`🚫 [Broken Low] PERMANENT BLOCKIERT für ${priceKey}`);
                 } else {
                     // Darf aktivieren
                     lowBroken = true;
@@ -2534,14 +2534,14 @@ class SessionHighLowIndicator extends BaseIndicator {
                         console.log(`🔔 [Broken Low] AKTIVIERT für ${priceKey} (First Break)`);
                     }
                 }
-            } else {
-                // Level ist NICHT durchbrochen → Check ob Deaktivierung
-                if (this.currentBrokenLows.has(priceKey)) {
-                    // War gerade aktiv, jetzt nicht mehr → DEAKTIVIERUNG!
-                    this.currentBrokenLows.delete(priceKey);
-                    this.hadBrokenLows.add(priceKey);
-                    console.log(`⚠️ [Broken Low] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
-                }
+            }
+
+            // DEAKTIVIERUNGS-CHECK: IMMER prüfen, unabhängig von Distance!
+            if (this.currentBrokenLows.has(priceKey) && !isBroken) {
+                // War gerade aktiv, jetzt nicht mehr durchbrochen → DEAKTIVIERUNG!
+                this.currentBrokenLows.delete(priceKey);
+                this.hadBrokenLows.add(priceKey);
+                console.log(`⚠️ [Broken Low] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
             }
         }
 
