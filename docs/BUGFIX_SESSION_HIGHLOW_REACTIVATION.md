@@ -20,11 +20,11 @@ Der RL Agent bekommt das gleiche Signal mehrfach für das identische Level, was 
 
 Die Detection-Logik in `static/js/indicators.js` prüft nur den **aktuellen Zustand**:
 - Level durchbrochen + `distance <= 50 Punkte` → `broken_low = TRUE`
-- Nicht durchbrochen ODER `distance > 50 Punkte` → `broken_low = FALSE`
+- Preis verlässt Zone ODER Session endet → `broken_low = FALSE`
 
-Es gibt kein "Gedächtnis" über vergangene Aktivierungen. Bei jeder Rückkehr zum Level wird die Bedingung erneut geprüft und aktiviert.
+Es gibt kein "Gedächtnis" über vergangene Aktivierungen. Bei jeder Rückkehr in die Zone wird die Bedingung erneut geprüft und aktiviert.
 
-**Code Location:** `SessionHighLowIndicator.getCurrentState()` Lines 2474-2546
+**Code Location:** `SessionHighLowIndicator.getCurrentState()` Lines 2482-2548
 
 ---
 
@@ -47,11 +47,11 @@ this.hadBrokenHighs = new Set();      // Levels die broken_high hatten (blockier
 this.hadBrokenLows = new Set();       // Levels die broken_low hatten (blockiert)
 ```
 
-**Lifecycle:**
-1. **Erste Aktivierung:** Level durchbrochen UND nicht in `had` → Aktiviere + In `current` eintragen
-2. **Aktiv bleiben:** Level durchbrochen UND in `current` → Bleibt aktiv
-3. **Deaktivierung:** Level nicht mehr durchbrochen UND in `current` → Move zu `had` (permanent!)
-4. **Blockierung:** Level durchbrochen ABER in `had` → Blockieren
+**Lifecycle (Liq Zone Logik):**
+1. **Erste Aktivierung:** Level durchbrochen UND in 50pt-Zone UND nicht in `had` → Aktiviere + In `current` eintragen
+2. **Aktiv bleiben:** In 50pt-Zone UND in `current` → Bleibt aktiv (egal ob über/unter Level!)
+3. **Deaktivierung:** Preis >50pt weg (Zone verlassen) UND in `current` → Move zu `had` (permanent!)
+4. **Blockierung:** In Zone ABER in `had` → Blockieren
 5. **Session Ende:** Line verschwindet → Aus allen Listen entfernen
 
 ### Warum Sets statt Arrays?
@@ -113,48 +113,47 @@ if (nextLow) {
 
 ---
 
-#### 3. getCurrentState() - Broken High Check (Line 2474-2513)
+#### 3. getCurrentState() - Broken High Check (Line 2482-2514)
 
-**Neue State-Tracking Logik:**
+**Neue Liq Zone Logik:**
 ```javascript
-// BROKEN HIGH CHECK
-if (nextHigh && distanceToHigh <= brokenThreshold) {
-    const isBroken = brokenHighs.some(h => Math.abs(h.price - nextHigh.price) < 0.1);
+// BROKEN HIGH CHECK (Liq Zone um Level nach Durchbruch)
+if (nextHigh) {
     const priceKey = nextHigh.price.toFixed(2);
+    const isBroken = brokenHighs.some(h => Math.abs(h.price - nextHigh.price) < 0.1);
+    const inZone = distanceToHigh <= brokenThreshold; // In 50-Punkte Zone
 
-    if (isBroken) {
-        // Level ist durchbrochen
+    // AKTIVIERUNGS-CHECK: Level durchbrochen UND in Zone
+    if (isBroken && inZone) {
         if (this.hadBrokenHighs.has(priceKey)) {
-            // War schon mal aktiv + deaktiviert → PERMANENT BLOCKIERT
             console.log(`🚫 [Broken High] PERMANENT BLOCKIERT für ${priceKey}`);
         } else {
-            // Darf aktivieren
             highBroken = true;
             this.currentBrokenHighs.add(priceKey);
             console.log(`🔔 [Broken High] AKTIVIERT für ${priceKey} (First Break)`);
         }
-    } else {
-        // Level ist NICHT durchbrochen → Check ob Deaktivierung
-        if (this.currentBrokenHighs.has(priceKey)) {
-            // War gerade aktiv, jetzt nicht mehr → DEAKTIVIERUNG!
-            this.currentBrokenHighs.delete(priceKey);
-            this.hadBrokenHighs.add(priceKey);
-            console.log(`⚠️ [Broken High] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
-        }
+    }
+
+    // DEAKTIVIERUNGS-CHECK: Preis verlässt die Zone (>50 Punkte weg)!
+    if (this.currentBrokenHighs.has(priceKey) && !inZone) {
+        this.currentBrokenHighs.delete(priceKey);
+        this.hadBrokenHighs.add(priceKey);
+        console.log(`⚠️ [Broken High] DEAKTIVIERT für ${priceKey} (Distance: ${distanceToHigh}pts) → PERMANENT BLOCKIERT!`);
     }
 }
 ```
 
 **Key Points:**
-- Prüft `hadBrokenHighs` → permanent blockiert
-- Prüft `currentBrokenHighs` → aktiv bleiben oder deaktivieren
-- Deaktivierung: Move von `current` → `had`
+- `inZone` = Distance <= 50 Punkte (unabhängig ob über/unter Level)
+- Aktivierung: Durchbrochen UND in Zone UND nicht in `had`
+- Bleibt aktiv: Solange in Zone (auch wenn Preis über Level zurückgeht!)
+- Deaktivierung: Preis verlässt Zone (>50pts) → Move zu `had`
 
 ---
 
-#### 4. getCurrentState() - Broken Low Check (Line 2516-2546)
+#### 4. getCurrentState() - Broken Low Check (Line 2516-2548)
 
-Analog zu Broken High Check (siehe oben), verwendet `currentBrokenLows` und `hadBrokenLows`.
+Analog zu Broken High Check (siehe oben), verwendet `currentBrokenLows` und `hadBrokenLows` mit Liq Zone Logik.
 
 ---
 
@@ -246,20 +245,21 @@ Bei Chart-Reset oder Go To Date sind die alten Levels nicht mehr relevant → Fr
 
 ## Test Case
 
-### Szenario: 11.09.2024 - Doppeltes Durchbrechen US Session Low
+### Szenario: 11.09.2024 - Liq Zone um US Session Low
 
 **Asset:** NQ=F (NASDAQ-100 Futures)
-**Session Low:** 19500 (US Session)
+**Session Low:** 18747 (Asian Session)
 
 **Timeline:**
 
 | Zeit  | Preis | Zustand | Erwartetes Verhalten |
 |-------|-------|---------|----------------------|
-| 00:15 | 19600 | - | Session Low wird gebildet |
-| 00:30 | 19480 | Broken | **broken_low = TRUE** (First Break) ✅ |
-| 01:00 | 19600 | Nicht broken | broken_low = FALSE → Move zu `had` ⚠️ |
-| 03:40 | 19490 | Broken | **broken_low = FALSE** (blockiert!) ✅ |
-| 07:00 | - | - | Session endet → Cleanup |
+| 00:15 | 18800 | - | Session Low wird gebildet |
+| 00:30 | 18730 | In Zone (17pts unter) | **broken_low = TRUE** (First Break) ✅ |
+| 01:00 | 18760 | In Zone (13pts über) | **broken_low = TRUE** (bleibt aktiv!) ✅ |
+| 01:30 | 18800 | Außerhalb (53pts) | broken_low = FALSE → Move zu `had` ⚠️ |
+| 01:35 | 18750 | In Zone (3pts über) | **broken_low = FALSE** (blockiert!) ✅ |
+| 09:00 | - | - | Session endet → Cleanup |
 
 ### Test-Durchführung
 
@@ -510,5 +510,9 @@ console.log(currentValidLowPrices);  // Set(2) { "19650.00", "19500.00" }
 **Severity:** Medium (verwirrt RL Agent Training, aber kein Crash)
 **Impact:** Verbesserte Signal-Qualität für RL Agent
 
-**Design Decision:** Near Detection entfernt - RL Agent fokussiert nur auf echte Breakouts (broken)
-**Tested by:** Manueller Test mit 11.09.2024 Daten
+**Design Decision:**
+- Near Detection entfernt - RL Agent fokussiert nur auf Liq Zones
+- Broken = Liq Zone (50pt um durchbrochenes Level)
+- Bleibt aktiv auch wenn Preis zurück über/unter Level geht (solange in Zone!)
+
+**Tested by:** Manueller Test mit 11.09.2024 Daten (Low @ 18747)

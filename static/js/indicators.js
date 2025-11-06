@@ -2479,13 +2479,14 @@ class SessionHighLowIndicator extends BaseIndicator {
         let highFirstBreak = false;
         let lowFirstBreak = false;
 
-        // BROKEN HIGH CHECK
+        // BROKEN HIGH CHECK (Liq Zone um Level nach Durchbruch)
         if (nextHigh) {
             const priceKey = nextHigh.price.toFixed(2);
             const isBroken = brokenHighs.some(h => Math.abs(h.price - nextHigh.price) < 0.1);
+            const inZone = distanceToHigh <= brokenThreshold; // In 50-Punkte Zone
 
-            // AKTIVIERUNGS-CHECK: Nur wenn Level durchbrochen UND in Display-Range
-            if (isBroken && distanceToHigh <= brokenThreshold) {
+            // AKTIVIERUNGS-CHECK: Level durchbrochen UND in Zone
+            if (isBroken && inZone) {
                 if (this.hadBrokenHighs.has(priceKey)) {
                     // War schon mal aktiv + deaktiviert → PERMANENT BLOCKIERT
                     console.log(`🚫 [Broken High] PERMANENT BLOCKIERT für ${priceKey}`);
@@ -2503,22 +2504,23 @@ class SessionHighLowIndicator extends BaseIndicator {
                 }
             }
 
-            // DEAKTIVIERUNGS-CHECK: IMMER prüfen, unabhängig von Distance!
-            if (this.currentBrokenHighs.has(priceKey) && !isBroken) {
-                // War gerade aktiv, jetzt nicht mehr durchbrochen → DEAKTIVIERUNG!
+            // DEAKTIVIERUNGS-CHECK: Preis verlässt die Zone (>50 Punkte weg)!
+            if (this.currentBrokenHighs.has(priceKey) && !inZone) {
+                // War gerade aktiv, jetzt außerhalb Zone → DEAKTIVIERUNG!
                 this.currentBrokenHighs.delete(priceKey);
                 this.hadBrokenHighs.add(priceKey);
-                console.log(`⚠️ [Broken High] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
+                console.log(`⚠️ [Broken High] DEAKTIVIERT für ${priceKey} (Distance: ${distanceToHigh.toFixed(0)}pts) → PERMANENT BLOCKIERT!`);
             }
         }
 
-        // BROKEN LOW CHECK
+        // BROKEN LOW CHECK (Liq Zone um Level nach Durchbruch)
         if (nextLow) {
             const priceKey = nextLow.price.toFixed(2);
             const isBroken = brokenLows.some(l => Math.abs(l.price - nextLow.price) < 0.1);
+            const inZone = distanceToLow <= brokenThreshold; // In 50-Punkte Zone
 
-            // AKTIVIERUNGS-CHECK: Nur wenn Level durchbrochen UND in Display-Range
-            if (isBroken && distanceToLow <= brokenThreshold) {
+            // AKTIVIERUNGS-CHECK: Level durchbrochen UND in Zone
+            if (isBroken && inZone) {
                 if (this.hadBrokenLows.has(priceKey)) {
                     // War schon mal aktiv + deaktiviert → PERMANENT BLOCKIERT
                     console.log(`🚫 [Broken Low] PERMANENT BLOCKIERT für ${priceKey}`);
@@ -2536,12 +2538,12 @@ class SessionHighLowIndicator extends BaseIndicator {
                 }
             }
 
-            // DEAKTIVIERUNGS-CHECK: IMMER prüfen, unabhängig von Distance!
-            if (this.currentBrokenLows.has(priceKey) && !isBroken) {
-                // War gerade aktiv, jetzt nicht mehr durchbrochen → DEAKTIVIERUNG!
+            // DEAKTIVIERUNGS-CHECK: Preis verlässt die Zone (>50 Punkte weg)!
+            if (this.currentBrokenLows.has(priceKey) && !inZone) {
+                // War gerade aktiv, jetzt außerhalb Zone → DEAKTIVIERUNG!
                 this.currentBrokenLows.delete(priceKey);
                 this.hadBrokenLows.add(priceKey);
-                console.log(`⚠️ [Broken Low] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
+                console.log(`⚠️ [Broken Low] DEAKTIVIERT für ${priceKey} (Distance: ${distanceToLow.toFixed(0)}pts) → PERMANENT BLOCKIERT!`);
             }
         }
 
