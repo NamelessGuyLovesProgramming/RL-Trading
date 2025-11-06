@@ -1895,6 +1895,18 @@
 
                         candlestickSeries.setData(extendedGoToData);
 
+                        // 🧹 BUGFIX: Clear Session H/L Tracking Lists bei Chart Reinitialize
+                        if (window.IndicatorManager) {
+                            const sessionHLIndicator = window.IndicatorManager.indicators.find(i => i.type === 'SESSION_HL');
+                            if (sessionHLIndicator && sessionHLIndicator.indicator) {
+                                sessionHLIndicator.indicator.currentBrokenHighs.clear();
+                                sessionHLIndicator.indicator.currentBrokenLows.clear();
+                                sessionHLIndicator.indicator.hadBrokenHighs.clear();
+                                sessionHLIndicator.indicator.hadBrokenLows.clear();
+                                console.log('🧹 [Chart Reinitialize] Session H/L Tracking Lists geleert');
+                            }
+                        }
+
                         if (validatedGoToData.length !== message.data.length) {
                             console.warn(`⚠️ ${message.data.length - validatedGoToData.length} invalid candles removed from go_to_date`);
                         }
@@ -1977,6 +1989,16 @@
                         // 📊 BUGFIX: Update Indikatoren nach Go To Date
                         if (window.IndicatorManager) {
                             window.IndicatorManager.syncWithTimeframe(extendedHistoricalData);
+
+                            // 🧹 BUGFIX: Clear Session H/L Tracking Lists bei Go To Date
+                            const sessionHLIndicator = window.IndicatorManager.indicators.find(i => i.type === 'SESSION_HL');
+                            if (sessionHLIndicator && sessionHLIndicator.indicator) {
+                                sessionHLIndicator.indicator.currentBrokenHighs.clear();
+                                sessionHLIndicator.indicator.currentBrokenLows.clear();
+                                sessionHLIndicator.indicator.hadBrokenHighs.clear();
+                                sessionHLIndicator.indicator.hadBrokenLows.clear();
+                                console.log('🧹 [Go To Date] Session H/L Tracking Lists geleert');
+                            }
                         }
 
                         // 🔥 LAZY LOAD RESET: Verhindert Mischen alter/neuer Daten nach Go To Date
@@ -6817,9 +6839,8 @@ window.updateRLVisionMonitor = updateRLVisionMonitor;
 // ===== RL AGENT VISION DRAGGABLE =====
 document.addEventListener('DOMContentLoaded', function() {
     const panel = document.getElementById('rlVisionMonitor');
-    const header = panel.querySelector('.rl-vision-header');
 
-    if (!panel || !header) return;
+    if (!panel) return;
 
     let isDragging = false;
     let currentX;
@@ -6840,10 +6861,8 @@ document.addEventListener('DOMContentLoaded', function() {
         yOffset = pos.yOffset || 0;
     }
 
-    // Change cursor on header hover
-    header.style.cursor = 'move';
-
-    header.addEventListener('mousedown', dragStart);
+    // Make entire panel draggable (cursor: move is set in CSS)
+    panel.addEventListener('mousedown', dragStart);
     document.addEventListener('mousemove', drag);
     document.addEventListener('mouseup', dragEnd);
 

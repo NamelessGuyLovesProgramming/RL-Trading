@@ -1259,6 +1259,17 @@ class SessionHighLowIndicator extends BaseIndicator {
         this.sessionLowBroken = false;  // Wurde Session Low bereits gebrochen?
         this.lastPrice = null;          // Letzter Preis für Breakout-Detection
         this.chart = null;              // Chart-Referenz für LineSeries
+
+        // Trigger-History: Welche Levels wurden bereits geloggt?
+        // [{price, type: 'high'|'low', nearLogged: bool, brokenLogged: bool}]
+        this.triggeredLevels = [];
+
+        // Broken State Tracking (Bugfix: Mehrfach-Aktivierung)
+        // current = gerade aktiv | had = war aktiv, dann deaktiviert (permanent blockiert)
+        this.currentBrokenHighs = new Set();
+        this.currentBrokenLows = new Set();
+        this.hadBrokenHighs = new Set();
+        this.hadBrokenLows = new Set();
     }
 
     // ========================================
@@ -1333,6 +1344,74 @@ class SessionHighLowIndicator extends BaseIndicator {
 
         return {
             type: sessionType,
+            endTimestamp: sessionEndTimestamp
+        };
+    }
+
+    // ========================================
+    // GET NEXT SESSION END TIME (für Breakouts außerhalb Sessions)
+    // ========================================
+
+    getNextSessionEndTime(timestamp) {
+        // Wenn Breakout außerhalb Session → finde NÄCHSTE Session und nutze deren Ende
+        const date = new Date(timestamp * 1000);
+        const utcHour = date.getUTCHours();
+        const localHour = (utcHour + this.config.utcOffset + 24) % 24;
+        const localMinute = date.getUTCMinutes();
+        const hourMinute = `${String(localHour).padStart(2, '0')}:${String(localMinute).padStart(2, '0')}`;
+        const minutes = this.timeToMinutes(hourMinute);
+
+        const asianMinutes = { start: this.timeToMinutes(this.config.asianStart), end: this.timeToMinutes(this.config.asianEnd) };
+        const europeanMinutes = { start: this.timeToMinutes(this.config.europeanStart), end: this.timeToMinutes(this.config.europeanEnd) };
+        const americanMinutes = { start: this.timeToMinutes(this.config.americanStart), end: this.timeToMinutes(this.config.americanEnd) };
+
+        let nextSessionType = null;
+        let nextEndMinutes = null;
+        let daysToAdd = 0;
+
+        // Finde nächste Session
+        if (minutes < asianMinutes.start) {
+            // Vor Asian Start (22:00-00:00) → Asian Session ist nächste (gleicher Tag)
+            nextSessionType = 'asian';
+            nextEndMinutes = asianMinutes.end;
+        } else if (minutes >= asianMinutes.end && minutes < europeanMinutes.start) {
+            // Zwischen Asian/European → European ist nächste
+            nextSessionType = 'european';
+            nextEndMinutes = europeanMinutes.end;
+        } else if (minutes >= europeanMinutes.end && minutes < americanMinutes.start) {
+            // Zwischen European/American → American ist nächste
+            nextSessionType = 'american';
+            nextEndMinutes = americanMinutes.end;
+        } else if (minutes >= americanMinutes.end) {
+            // Nach American Ende (22:00-24:00) → Asian Session nächster Tag
+            nextSessionType = 'asian';
+            nextEndMinutes = asianMinutes.end;
+            daysToAdd = 1;
+        }
+
+        if (!nextSessionType) {
+            return null;
+        }
+
+        // Berechne Session-Ende Timestamp
+        const localDate = new Date(date.getTime() + this.config.utcOffset * 60 * 60 * 1000);
+        const endHour = Math.floor(nextEndMinutes / 60);
+        const endMinute = nextEndMinutes % 60;
+
+        const sessionEndDate = new Date(Date.UTC(
+            localDate.getUTCFullYear(),
+            localDate.getUTCMonth(),
+            localDate.getUTCDate() + daysToAdd,
+            endHour,
+            endMinute,
+            0
+        ));
+
+        // Konvertiere zurück zu UTC
+        const sessionEndTimestamp = Math.floor((sessionEndDate.getTime() - this.config.utcOffset * 60 * 60 * 1000) / 1000);
+
+        return {
+            type: nextSessionType,
             endTimestamp: sessionEndTimestamp
         };
     }
@@ -1559,7 +1638,13 @@ class SessionHighLowIndicator extends BaseIndicator {
                 unbrokenHighs.push({ price, sessionId, session, type: 'high' });
             } else {
                 // Durchbrochen - prüfe Grace Period
-                const breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+                let breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+
+                // 🔥 NEU: Falls außerhalb Session → nutze NÄCHSTE Session Ende
+                if (!breakoutSessionInfo) {
+                    breakoutSessionInfo = this.getNextSessionEndTime(brokenCandle.time);
+                }
+
                 if (breakoutSessionInfo) {
                     const isBreakoutSessionStillActive = newestCandleTime < breakoutSessionInfo.endTimestamp;
 
@@ -1590,11 +1675,25 @@ class SessionHighLowIndicator extends BaseIndicator {
                 unbrokenLows.push({ price, sessionId, session, type: 'low' });
             } else {
                 // Durchbrochen - prüfe Grace Period
-                const breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+                let breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+
+                // 🔥 NEU: Falls außerhalb Session → nutze NÄCHSTE Session Ende
+                if (!breakoutSessionInfo) {
+                    breakoutSessionInfo = this.getNextSessionEndTime(brokenCandle.time);
+                }
+
                 if (breakoutSessionInfo) {
                     const isBreakoutSessionStillActive = newestCandleTime < breakoutSessionInfo.endTimestamp;
+
+                    const breakDate = new Date(brokenCandle.time * 1000).toISOString();
+                    const sessionEndDate = new Date(breakoutSessionInfo.endTimestamp * 1000).toISOString();
+                    const nowDate = new Date(newestCandleTime * 1000).toISOString();
+
                     if (isBreakoutSessionStillActive) {
                         brokenLowsInGracePeriod.push({ price, sessionId, session, type: 'low', brokenAt: brokenCandle.time });
+                        console.log(`✅ [ALL LEVELS LOW] ${price.toFixed(2)}: Broken in ${breakoutSessionInfo.type} @ ${breakDate}, Session ends ${sessionEndDate}, now ${nowDate} → GRACE PERIOD`);
+                    } else {
+                        console.log(`❌ [ALL LEVELS LOW] ${price.toFixed(2)}: Session ended @ ${sessionEndDate}, now ${nowDate} → REMOVED`);
                     }
                 }
             }
@@ -1641,6 +1740,37 @@ class SessionHighLowIndicator extends BaseIndicator {
                 uniqueBrokenLows.push(l);
             }
         });
+
+        // ========================================
+        // CLEANUP: Entferne Levels aus Broken-Listen die nicht mehr sichtbar sind
+        // ========================================
+        const currentValidHighPrices = new Set(
+            [...uniqueHighs, ...uniqueBrokenHighs].map(h => h.price.toFixed(2))
+        );
+        const currentValidLowPrices = new Set(
+            [...uniqueLows, ...uniqueBrokenLows].map(l => l.price.toFixed(2))
+        );
+
+        // Filter Broken Listen - behalte nur noch sichtbare Levels
+        this.currentBrokenHighs = new Set(
+            [...this.currentBrokenHighs].filter(p => currentValidHighPrices.has(p))
+        );
+        this.hadBrokenHighs = new Set(
+            [...this.hadBrokenHighs].filter(p => currentValidHighPrices.has(p))
+        );
+        this.currentBrokenLows = new Set(
+            [...this.currentBrokenLows].filter(p => currentValidLowPrices.has(p))
+        );
+        this.hadBrokenLows = new Set(
+            [...this.hadBrokenLows].filter(p => currentValidLowPrices.has(p))
+        );
+
+        // Logging nur wenn Listen nicht leer
+        const totalTracked = this.currentBrokenHighs.size + this.currentBrokenLows.size +
+                            this.hadBrokenHighs.size + this.hadBrokenLows.size;
+        if (totalTracked > 0) {
+            console.log(`🧹 [Session HL Cleanup] Current: H=${this.currentBrokenHighs.size} L=${this.currentBrokenLows.size} | Had: H=${this.hadBrokenHighs.size} L=${this.hadBrokenLows.size}`);
+        }
 
         return {
             highs: uniqueHighs,  // Unbroken Levels
@@ -1693,10 +1823,15 @@ class SessionHighLowIndicator extends BaseIndicator {
 
             // Level wurde durchbrochen - ABER: Grace Period prüfen!
             // Finde Session, in der der Breakout passiert ist
-            const breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+            let breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+
+            // 🔥 NEU: Falls außerhalb Session → nutze NÄCHSTE Session Ende
+            if (!breakoutSessionInfo) {
+                breakoutSessionInfo = this.getNextSessionEndTime(brokenCandle.time);
+            }
 
             if (!breakoutSessionInfo) {
-                // Breakout außerhalb aller Sessions → sofort entfernen
+                // Kein Session-Info gefunden → entfernen
                 return false;
             }
 
@@ -1729,10 +1864,15 @@ class SessionHighLowIndicator extends BaseIndicator {
 
             // Level wurde durchbrochen - ABER: Grace Period prüfen!
             // Finde Session, in der der Breakout passiert ist
-            const breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+            let breakoutSessionInfo = this.getCurrentSessionInfo(brokenCandle.time);
+
+            // 🔥 NEU: Falls außerhalb Session → nutze NÄCHSTE Session Ende
+            if (!breakoutSessionInfo) {
+                breakoutSessionInfo = this.getNextSessionEndTime(brokenCandle.time);
+            }
 
             if (!breakoutSessionInfo) {
-                // Breakout außerhalb aller Sessions → sofort entfernen
+                // Kein Session-Info gefunden → entfernen
                 return false;
             }
 
@@ -2216,18 +2356,28 @@ class SessionHighLowIndicator extends BaseIndicator {
         // 🔥 NEU: Hole ALLE Levels inkl. durchbrochene mit Grace Period
         const { highs, lows, brokenHighs, brokenLows } = this.getAllLevelsWithGracePeriod(currentPrice);
 
+        // ========================================
+        // CLEANUP: Entferne Trigger für Levels die nicht mehr sichtbar sind
+        // ========================================
+        const allVisiblePrices = [
+            ...highs.map(h => h.price),
+            ...lows.map(l => l.price),
+            ...brokenHighs.map(h => h.price),
+            ...brokenLows.map(l => l.price)
+        ];
+
+        const beforeCleanup = this.triggeredLevels.length;
+        this.triggeredLevels = this.triggeredLevels.filter(trigger => {
+            const isStillVisible = allVisiblePrices.some(
+                price => Math.abs(price - trigger.price) < 0.1
+            );
+
+            return isStillVisible;
+        });
+
         // Kombiniere unbroken + broken Levels für Near/Broken Detection
         const allHighs = [...highs, ...brokenHighs];
         const allLows = [...lows, ...brokenLows];
-
-        console.log(`🔍 [DEBUG] brokenHighs count: ${brokenHighs.length}, brokenLows count: ${brokenLows.length}`);
-
-        // 🔍 DEBUG: Zeige alle Highs
-        if (allHighs.length > 0) {
-            console.log(`🔍 [checkBreakout] allHighs (${allHighs.length}):`, allHighs.map(h => h.price).join(', '));
-        } else {
-            console.log(`⚠️ [checkBreakout] Keine Highs gefunden! brokenHighs: ${brokenHighs.length}, highs: ${highs.length}`);
-        }
 
         // Wenn keine Levels verfügbar → return false für alles
         if (allHighs.length === 0 && allLows.length === 0) {
@@ -2255,11 +2405,11 @@ class SessionHighLowIndicator extends BaseIndicator {
         // 🔥 FIX: Nächstes High/Low AUCH finden wenn Preis das Level bereits gebrochen hat!
         // Wähle das NÄCHSTE gebrochene Level in Range (nicht das niedrigste/höchste)
 
-        // Nächstes High: Zuerst ungebrochene über Preis, sonst nächstes gebrochene in Range
-        let nextHigh = allHighs.find(h => h.price > currentPrice) || null;
+        // Nächstes High: Priorisiere broken Levels in Range, dann ungebrochene über Preis
+        let nextHigh = null;
 
-        // Falls kein High über Preis: Suche gebrochenes High in Range (nächstes am Preis)
-        if (!nextHigh && brokenHighs.length > 0) {
+        // 🔥 PRIORITÄT 1: Gebrochenes High in Range (Grace Period)
+        if (brokenHighs.length > 0) {
             const brokenInRange = brokenHighs
                 .filter(h => {
                     const distance = Math.abs(currentPrice - h.price);
@@ -2274,13 +2424,16 @@ class SessionHighLowIndicator extends BaseIndicator {
             nextHigh = brokenInRange[0] || null;
         }
 
-        console.log(`🔍 [checkBreakout] nextHigh:`, nextHigh ? `${nextHigh.price} (Distance: ${Math.abs(currentPrice - nextHigh.price).toFixed(2)})` : 'NULL');
+        // 🔥 PRIORITÄT 2: Falls kein broken Level in Range → nächstes ungebrochenes über Preis
+        if (!nextHigh) {
+            nextHigh = allHighs.find(h => h.price > currentPrice) || null;
+        }
 
-        // Nächstes Low: Zuerst ungebrochene unter Preis, sonst nächstes gebrochene in Range
-        let nextLow = allLows.find(l => l.price < currentPrice) || null;
+        // Nächstes Low: Priorisiere broken Levels in Range, dann ungebrochene unter Preis
+        let nextLow = null;
 
-        // Falls kein Low unter Preis: Suche gebrochenes Low in Range (nächstes am Preis)
-        if (!nextLow && brokenLows.length > 0) {
+        // 🔥 PRIORITÄT 1: Gebrochenes Low in Range (Grace Period)
+        if (brokenLows.length > 0) {
             const brokenInRange = brokenLows
                 .filter(l => {
                     const distance = Math.abs(currentPrice - l.price);
@@ -2295,75 +2448,109 @@ class SessionHighLowIndicator extends BaseIndicator {
             nextLow = brokenInRange[0] || null;
         }
 
+        // 🔥 PRIORITÄT 2: Falls kein broken Level in Range → nächstes ungebrochenes unter Preis
+        if (!nextLow) {
+            nextLow = allLows.find(l => l.price < currentPrice) || null;
+        }
+
         // ========================================
-        // NEAR HIGH CHECK
+        // DISTANCE CALCULATION (für Broken Detection)
         // ========================================
-        let nearHigh = false;
         let sessionHigh = null;
         let distanceToHigh = null;
+        let sessionLow = null;
+        let distanceToLow = null;
 
         if (nextHigh) {
             sessionHigh = nextHigh.price;
             distanceToHigh = Math.abs(currentPrice - sessionHigh);
-            nearHigh = distanceToHigh <= nearThreshold;
         }
-
-        // ========================================
-        // NEAR LOW CHECK
-        // ========================================
-        let nearLow = false;
-        let sessionLow = null;
-        let distanceToLow = null;
 
         if (nextLow) {
             sessionLow = nextLow.price;
             distanceToLow = Math.abs(currentPrice - sessionLow);
-            nearLow = distanceToLow <= nearThreshold;
         }
 
         // ========================================
-        // BROKEN DETECTION - Direkt aus brokenHighs/brokenLows Arrays
+        // BROKEN DETECTION - State Tracking: Einmal aus = für immer blockiert
         // ========================================
-        // 🔥 FIX: Statt komplexe State-Tracking Logik → einfach prüfen ob Level in brokenHighs/brokenLows ist!
-
         let highBroken = false;
         let lowBroken = false;
         let highFirstBreak = false;
         let lowFirstBreak = false;
 
-        // Prüfe ob nextHigh in brokenHighs Array ist
+        // BROKEN HIGH CHECK
         if (nextHigh && distanceToHigh <= brokenThreshold) {
             const isBroken = brokenHighs.some(h => Math.abs(h.price - nextHigh.price) < 0.1);
-            if (isBroken) {
-                highBroken = true;
+            const priceKey = nextHigh.price.toFixed(2);
 
-                // First Break Detection: War Level vorher nicht in brokenHighs?
-                if (!this.lastBrokenHighPrice || Math.abs(this.lastBrokenHighPrice - nextHigh.price) > 0.1) {
-                    highFirstBreak = true;
-                    this.lastBrokenHighPrice = nextHigh.price;
-                    console.log(`🔥 [Session HL] HIGH BROKEN (First Break): ${nextHigh.price}`);
+            if (isBroken) {
+                // Level ist durchbrochen
+                if (this.hadBrokenHighs.has(priceKey)) {
+                    // War schon mal aktiv + deaktiviert → PERMANENT BLOCKIERT
+                    console.log(`🚫 [Broken High] PERMANENT BLOCKIERT für ${priceKey} (war schon aktiv)`);
+                } else {
+                    // Darf aktivieren
+                    highBroken = true;
+                    this.currentBrokenHighs.add(priceKey);
+
+                    // First Break Detection
+                    if (!this.lastBrokenHighPrice || Math.abs(this.lastBrokenHighPrice - nextHigh.price) > 0.1) {
+                        highFirstBreak = true;
+                        this.lastBrokenHighPrice = nextHigh.price;
+                        console.log(`🔔 [Broken High] AKTIVIERT für ${priceKey} (First Break)`);
+                    }
+                }
+            } else {
+                // Level ist NICHT durchbrochen → Check ob Deaktivierung
+                if (this.currentBrokenHighs.has(priceKey)) {
+                    // War gerade aktiv, jetzt nicht mehr → DEAKTIVIERUNG!
+                    this.currentBrokenHighs.delete(priceKey);
+                    this.hadBrokenHighs.add(priceKey);
+                    console.log(`⚠️ [Broken High] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
                 }
             }
         }
 
-        // Prüfe ob nextLow in brokenLows Array ist
+        // BROKEN LOW CHECK
         if (nextLow && distanceToLow <= brokenThreshold) {
             const isBroken = brokenLows.some(l => Math.abs(l.price - nextLow.price) < 0.1);
-            if (isBroken) {
-                lowBroken = true;
+            const priceKey = nextLow.price.toFixed(2);
 
-                // First Break Detection: War Level vorher nicht in brokenLows?
-                if (!this.lastBrokenLowPrice || Math.abs(this.lastBrokenLowPrice - nextLow.price) > 0.1) {
-                    lowFirstBreak = true;
-                    this.lastBrokenLowPrice = nextLow.price;
-                    console.log(`🔥 [Session HL] LOW BROKEN (First Break): ${nextLow.price}`);
+            if (isBroken) {
+                // Level ist durchbrochen
+                if (this.hadBrokenLows.has(priceKey)) {
+                    // War schon mal aktiv + deaktiviert → PERMANENT BLOCKIERT
+                    console.log(`🚫 [Broken Low] PERMANENT BLOCKIERT für ${priceKey} (war schon aktiv)`);
+                } else {
+                    // Darf aktivieren
+                    lowBroken = true;
+                    this.currentBrokenLows.add(priceKey);
+
+                    // First Break Detection
+                    if (!this.lastBrokenLowPrice || Math.abs(this.lastBrokenLowPrice - nextLow.price) > 0.1) {
+                        lowFirstBreak = true;
+                        this.lastBrokenLowPrice = nextLow.price;
+                        console.log(`🔔 [Broken Low] AKTIVIERT für ${priceKey} (First Break)`);
+                    }
+                }
+            } else {
+                // Level ist NICHT durchbrochen → Check ob Deaktivierung
+                if (this.currentBrokenLows.has(priceKey)) {
+                    // War gerade aktiv, jetzt nicht mehr → DEAKTIVIERUNG!
+                    this.currentBrokenLows.delete(priceKey);
+                    this.hadBrokenLows.add(priceKey);
+                    console.log(`⚠️ [Broken Low] DEAKTIVIERT für ${priceKey} → PERMANENT BLOCKIERT!`);
                 }
             }
         }
 
+        // ========================================
+        // RETURN STATE
+        // ========================================
         return {
-            near_session_high: nearHigh,
-            near_session_low: nearLow,
+            near_session_high: false,  // Entfernt - nur noch Broken
+            near_session_low: false,   // Entfernt - nur noch Broken
             session_high_broken: highBroken,
             session_low_broken: lowBroken,
             session_high_first_break: highFirstBreak,
@@ -2445,7 +2632,6 @@ class FVGIndicator extends BaseIndicator {
             }
         }
 
-        console.log(`✅ FVG berechnet: ${fvgs.length} FVGs gefunden`);
         this.data = fvgs;
         return fvgs;
     }
@@ -2513,8 +2699,6 @@ class FVGIndicator extends BaseIndicator {
         const openFVGs = fvgs.filter(fvg => !fvg.filled);
         const filledFVGs = fvgs.filter(fvg => fvg.filled);
 
-        console.log(`📊 FVG Status: ${fvgs.length} Total | ${filledFVGs.length} Filled ❌ | ${openFVGs.length} Open ✅`);
-
         let renderedCount = 0;
         openFVGs.forEach((fvg, index) => {
             // Berechne endTime basierend auf boxDisplayLength
@@ -2563,8 +2747,6 @@ class FVGIndicator extends BaseIndicator {
                 console.error(`❌ FVG: Fehler beim Attach von Box #${index + 1}:`, e);
             }
         });
-
-        console.log(`✅ FVG gerendert: ${renderedCount} Boxen (Box-Länge: ${this.config.boxDisplayLength === 0 ? 'Unbegrenzt' : this.config.boxDisplayLength + ' Kerzen'})`);
     }
 
     clearFVGBoxes() {
@@ -2593,8 +2775,6 @@ class FVGIndicator extends BaseIndicator {
 
         // 🔥 KOMPLETTER RELOAD (Go To Date / Timeframe Switch)
         if (!candle && allData.length > 0) {
-            console.log('🔄 FVG: Kompletter Reload erkannt - vollständiges Re-Render');
-
             // Update candlestickSeries reference (könnte sich geändert haben)
             this.candlestickSeries = window.candlestickSeries;
 
@@ -2657,7 +2837,6 @@ class FVGIndicator extends BaseIndicator {
         this.clearFVGBoxes();
         this.candlestickSeries = null;
         this.data = null;
-        console.log(`🗑️ FVG(${this.id}) zerstört`);
     }
 
     getDisplayName() {
@@ -2918,7 +3097,6 @@ class FVGIndicator extends BaseIndicator {
         if (!currentPrice) {
             const candleData = window.candlestickSeries?.data();
             if (!candleData || candleData.length === 0) {
-                console.log('[FVG getCurrentState] Keine Candle-Daten verfügbar');
                 return {
                     in_fvg: false,
                     fvg_type: null,
@@ -2930,22 +3108,16 @@ class FVGIndicator extends BaseIndicator {
             currentPrice = candleData[candleData.length - 1].close;
         }
 
-        console.log(`[FVG getCurrentState] Prüfe ${this.data.length} FVG Daten bei Preis ${currentPrice}`);
-
         // Prüfe nur OFFENE FVGs (nicht gefüllte)
         const openFVGs = this.data.filter(fvg => !fvg.filled);
-        console.log(`[FVG getCurrentState] ${openFVGs.length} offene FVGs gefunden`);
 
         // Prüfe ob Preis in einer FVG Zone ist
         for (const fvg of openFVGs) {
             const top = fvg.top;
             const bottom = fvg.bottom;
 
-            console.log(`[FVG] FVG: ${fvg.type} | Top: ${top} | Bottom: ${bottom} | Preis: ${currentPrice} | In Range: ${currentPrice >= bottom && currentPrice <= top}`);
-
             // Ist Preis innerhalb der Zone?
             if (currentPrice >= bottom && currentPrice <= top) {
-                console.log(`✅ [FVG] Preis IN FVG Zone! Type: ${fvg.type}`);
                 return {
                     in_fvg: true,
                     fvg_type: fvg.type, // 'bullish' or 'bearish'
@@ -2955,8 +3127,6 @@ class FVGIndicator extends BaseIndicator {
                 };
             }
         }
-
-        console.log('[FVG] Preis NICHT in FVG Zone');
 
         // Nicht in FVG → finde nächste FVG
         let closestDistance = Infinity;
