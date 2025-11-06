@@ -2294,8 +2294,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         // Session High/Low Detection für RL Agent
         if (!this.completedSessions || this.completedSessions.length === 0) {
             return {
-                near_session_high: false,
-                near_session_low: false,
                 session_high_broken: false,
                 session_low_broken: false,
                 session_high_price: null,
@@ -2308,8 +2306,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         const candleData = window.candlestickSeries?.data();
         if (!candleData || candleData.length === 0) {
             return {
-                near_session_high: false,
-                near_session_low: false,
                 session_high_broken: false,
                 session_low_broken: false,
                 session_high_price: null,
@@ -2382,8 +2378,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         // Wenn keine Levels verfügbar → return false für alles
         if (allHighs.length === 0 && allLows.length === 0) {
             return {
-                near_session_high: false,
-                near_session_low: false,
                 session_high_broken: false,
                 session_low_broken: false,
                 session_high_first_break: false,
@@ -2551,8 +2545,6 @@ class SessionHighLowIndicator extends BaseIndicator {
         // RETURN STATE
         // ========================================
         return {
-            near_session_high: false,  // Entfernt - nur noch Broken
-            near_session_low: false,   // Entfernt - nur noch Broken
             session_high_broken: highBroken,
             session_low_broken: lowBroken,
             session_high_first_break: highFirstBreak,
@@ -3765,12 +3757,10 @@ class IndicatorManager {
             fvg_type: null,
 
             // Session High/Low
-            near_session_high: false,
-            near_session_low: false,
             session_high_broken: false,
             session_low_broken: false,
-            session_high_first_break: false,    // ✅ NEU
-            session_low_first_break: false,     // ✅ NEU
+            session_high_first_break: false,
+            session_low_first_break: false,
             session_high_price: null,
             session_low_price: null,
             current_session: null,
@@ -3806,12 +3796,10 @@ class IndicatorManager {
                     console.log(`✅ [getMarketContext] Calling SESSION_HL.getCurrentState(${currentPrice})`);
                     const sessionState = indicator.getCurrentState(currentPrice);
                     console.log(`✅ [getMarketContext] SESSION_HL result:`, sessionState);
-                    context.near_session_high = sessionState.near_session_high;
-                    context.near_session_low = sessionState.near_session_low;
                     context.session_high_broken = sessionState.session_high_broken;
                     context.session_low_broken = sessionState.session_low_broken;
-                    context.session_high_first_break = sessionState.session_high_first_break;  // ✅ NEU
-                    context.session_low_first_break = sessionState.session_low_first_break;    // ✅ NEU
+                    context.session_high_first_break = sessionState.session_high_first_break;
+                    context.session_low_first_break = sessionState.session_low_first_break;
                     context.session_high_price = sessionState.session_high_price;
                     context.session_low_price = sessionState.session_low_price;
                     context.current_session = sessionState.current_session;

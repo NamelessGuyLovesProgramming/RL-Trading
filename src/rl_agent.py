@@ -111,12 +111,6 @@ class RLTradingAgent:
             long_score += 0.3
             reasoning.append("FVG Zone erkannt")
 
-        # Session Low = Strong Support
-        near_session_low = patterns.get('near_session_low', False)
-        if near_session_low:
-            long_score += 0.25
-            reasoning.append("Nahe Session Low (Support)")
-
         # Session Low Broken - First Break wichtiger als Re-Test
         session_low_broken = patterns.get('session_low_broken', False)
         session_low_first_break = patterns.get('session_low_first_break', False)
@@ -158,12 +152,6 @@ class RLTradingAgent:
 
 
         # ========== SHORT SIGNALS ==========
-
-        # Session High = Strong Resistance
-        near_session_high = patterns.get('near_session_high', False)
-        if near_session_high:
-            short_score += 0.25
-            reasoning.append("Nahe Session High (Resistance)")
 
         # Session High Broken - First Break wichtiger als Re-Test
         session_high_broken = patterns.get('session_high_broken', False)

@@ -610,12 +610,66 @@
     </div>
 
     <div id="status" class="status disconnected">Disconnected</div>
+
+    <!-- RL Agent Vision Monitor -->
+    <div id="rlVisionMonitor" class="rl-vision-monitor">
+        <div class="rl-vision-header">
+            <span class="rl-vision-title">🤖 RL Agent Vision</span>
+            <button id="toggleRLVision" class="rl-vision-toggle" title="Minimize">−</button>
+        </div>
+        <div class="rl-vision-content">
+            <!-- FVG Section -->
+            <div class="rl-vision-section">
+                <div class="rl-vision-label">📦 FVG</div>
+                <div class="rl-vision-value" id="vision-in-fvg">
+                    <span class="status-indicator">❌</span> Not in FVG
+                </div>
+            </div>
+
+            <!-- Session High/Low Section -->
+            <div class="rl-vision-section">
+                <div class="rl-vision-label">🎯 SESSION HIGH</div>
+                <div class="rl-vision-value" id="vision-high-broken">
+                    <span class="status-indicator">❌</span> Not broken
+                </div>
+            </div>
+
+            <div class="rl-vision-section">
+                <div class="rl-vision-label">🎯 SESSION LOW</div>
+                <div class="rl-vision-value" id="vision-low-broken">
+                    <span class="status-indicator">❌</span> Not broken
+                </div>
+            </div>
+
+            <!-- Volume Section -->
+            <div class="rl-vision-section">
+                <div class="rl-vision-label">📊 Volume</div>
+                <div class="rl-vision-value" id="vision-volume-spike">
+                    <span class="status-indicator">❌</span> No spike
+                </div>
+                <div class="rl-vision-detail" id="vision-volume-ratio">Ratio: 1.0x</div>
+            </div>
+
+            <!-- Session Info -->
+            <div class="rl-vision-section">
+                <div class="rl-vision-label">🕐 Session</div>
+                <div class="rl-vision-value" id="vision-session">Unknown</div>
+            </div>
+
+            <!-- Current Price -->
+            <div class="rl-vision-section">
+                <div class="rl-vision-label">💰 Price</div>
+                <div class="rl-vision-value" id="vision-price">--</div>
+            </div>
+        </div>
+    </div>
+
     <div id="chart_container"></div>
 
     <!-- Autoscale Toggle Button -->
     <button id="autoscaleBtn" class="active" title="Autoscale: ON">⚖️</button>
 
-    <script src="/static/js/indicators.js?v=fvg-delete-fix"></script>
+    <script src="/static/js/indicators.js?v=clean-logs-fvg"></script>
     <script src="/static/js/chart.js?v=fvg-delete-fix"></script>
 
     <!-- Feedback Modal -->

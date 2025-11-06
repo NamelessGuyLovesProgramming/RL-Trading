@@ -45,8 +45,6 @@ def setup_debug_routes(app, debug_service, navigation_service,
         # Default values
         in_fvg = False
         fvg_distance = 999
-        near_session_high = False
-        near_session_low = False
         session_high_broken = False
         session_low_broken = False
         session_high_first_break = False
@@ -58,8 +56,6 @@ def setup_debug_routes(app, debug_service, navigation_service,
         # Use indicator data if available (NEW field names)
         if indicator_data:
             in_fvg = indicator_data.get('in_fvg', False)
-            near_session_high = indicator_data.get('near_session_high', False)
-            near_session_low = indicator_data.get('near_session_low', False)
             session_high_broken = indicator_data.get('session_high_broken', False)
             session_low_broken = indicator_data.get('session_low_broken', False)
             session_high_first_break = indicator_data.get('session_high_first_break', False)
@@ -80,16 +76,14 @@ def setup_debug_routes(app, debug_service, navigation_service,
             'patterns': {
                 'in_fvg_zone': in_fvg,
                 'fvg_distance': fvg_distance,
-                'near_support_ob': near_session_low,  # Session Low = Support
-                'near_resistance_ob': near_session_high,  # Session High = Resistance
-                'near_session_high': near_session_high,
-                'near_session_low': near_session_low,
+                'near_support_ob': False,
+                'near_resistance_ob': False,
                 'session_high_broken': session_high_broken,
                 'session_low_broken': session_low_broken,
-                'session_high_first_break': session_high_first_break,  # ✅ NEU
-                'session_low_first_break': session_low_first_break,    # ✅ NEU
-                'liquidity_direction': 1 if near_session_low else (-1 if near_session_high else 0),
-                'market_structure': 0  # TODO: Could be derived from session high/low
+                'session_high_first_break': session_high_first_break,
+                'session_low_first_break': session_low_first_break,
+                'liquidity_direction': 0,
+                'market_structure': 0
             },
             'session_info': {
                 'session': current_session,

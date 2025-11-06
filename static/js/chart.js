@@ -6745,17 +6745,6 @@ function updateRLVisionMonitor(context) {
     }
 
     // Session High
-    const nearHighElem = document.getElementById('vision-near-high');
-    if (nearHighElem) {
-        if (context.near_session_high) {
-            nearHighElem.innerHTML = `<span class="status-indicator">✅</span> Near High`;
-            nearHighElem.classList.add('active');
-        } else {
-            nearHighElem.innerHTML = `<span class="status-indicator">❌</span> Not near`;
-            nearHighElem.classList.remove('active');
-        }
-    }
-
     const highBrokenElem = document.getElementById('vision-high-broken');
     if (highBrokenElem) {
         if (context.session_high_broken) {
@@ -6768,17 +6757,6 @@ function updateRLVisionMonitor(context) {
     }
 
     // Session Low
-    const nearLowElem = document.getElementById('vision-near-low');
-    if (nearLowElem) {
-        if (context.near_session_low) {
-            nearLowElem.innerHTML = `<span class="status-indicator">✅</span> Near Low`;
-            nearLowElem.classList.add('active');
-        } else {
-            nearLowElem.innerHTML = `<span class="status-indicator">❌</span> Not near`;
-            nearLowElem.classList.remove('active');
-        }
-    }
-
     const lowBrokenElem = document.getElementById('vision-low-broken');
     if (lowBrokenElem) {
         if (context.session_low_broken) {
