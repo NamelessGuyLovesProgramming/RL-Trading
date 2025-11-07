@@ -480,27 +480,8 @@
             <button id="resetTimeBtn" class="nav-btn" title="Reset zum Datenende">🔄 Reset</button>
             <button id="settingsBtn" class="nav-btn" title="Settings" onclick="openSettingsModal()">⚙️ Settings</button>
 
-            <!-- RL Trading Panel (Minimal) -->
-            <div class="rl-panel" style="
-                display: flex; align-items: center; gap: 8px; margin-left: 15px;
-                padding-left: 15px; border-left: 1px solid #404040;
-            ">
-                <span style="font-size: 11px; color: #888;">RL:</span>
-                <span id="rlStatus" style="font-size: 10px; color: #666;">Offline</span>
-                <button id="rlDemoBtn" style="
-                    background: #2a2a2a; border: 1px solid #404040; color: #fff;
-                    padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;
-                " title="Demo-Modus" onclick="RLSystem.startDemo()">📝</button>
-                <button id="rlBotBtn" style="
-                    background: #2a2a2a; border: 1px solid #404040; color: #fff;
-                    padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;
-                " title="Bot-Modus" onclick="RLSystem.startBot()">🤖</button>
-                <button id="rlStopBtn" style="
-                    background: #2a2a2a; border: 1px solid #404040; color: #888;
-                    padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer;
-                    display: none;
-                " title="Stop" onclick="RLSystem.stop()">⏹</button>
-            </div>
+            <!-- KI Modus Toggle (wird von training-mode.js hier eingefügt) -->
+            <div id="aiModeToggleContainer" style="margin-left: 15px; padding-left: 15px; border-left: 1px solid #404040;"></div>
         </div>
     </div>
 
@@ -612,10 +593,10 @@
     <div id="status" class="status disconnected">Disconnected</div>
 
     <!-- RL Agent Vision Monitor -->
-    <div id="rlVisionMonitor" class="rl-vision-monitor">
+    <div id="rlVisionMonitor" class="rl-vision-monitor minimized">
         <div class="rl-vision-header">
             <span class="rl-vision-title">🤖 RL Agent Vision</span>
-            <button id="toggleRLVision" class="rl-vision-toggle" title="Minimize">−</button>
+            <button id="toggleRLVision" class="rl-vision-toggle" title="Maximize">+</button>
         </div>
         <div class="rl-vision-content">
             <!-- FVG Section -->

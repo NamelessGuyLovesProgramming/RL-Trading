@@ -6809,12 +6809,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const monitor = document.getElementById('rlVisionMonitor');
 
     if (toggleBtn && monitor) {
-        // Restore minimized state from localStorage
-        const isMinimized = localStorage.getItem('rlVisionMinimized') === 'true';
+        // Restore minimized state from localStorage (default: minimized)
+        const savedState = localStorage.getItem('rlVisionMinimized');
+        const isMinimized = savedState === null ? true : savedState === 'true';
         if (isMinimized) {
             monitor.classList.add('minimized');
             toggleBtn.textContent = '+';
             toggleBtn.title = 'Maximize';
+        } else {
+            monitor.classList.remove('minimized');
+            toggleBtn.textContent = '−';
+            toggleBtn.title = 'Minimize';
         }
 
         toggleBtn.addEventListener('click', function() {

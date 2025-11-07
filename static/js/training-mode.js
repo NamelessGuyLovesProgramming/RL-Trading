@@ -76,8 +76,14 @@ class TrainingModeUI {
             </div>
         `;
 
-        // Append to body
-        document.body.appendChild(button);
+        // Append button to toolbar container, stats panel to body
+        const container = document.getElementById('aiModeToggleContainer');
+        if (container) {
+            container.appendChild(button);
+        } else {
+            // Fallback: append to body if container not found
+            document.body.appendChild(button);
+        }
         document.body.appendChild(statsPanel);
     }
 
@@ -100,6 +106,10 @@ class TrainingModeUI {
 
                 case 'ai_trade_executed':
                     this.onAITradeExecuted(message);
+                    break;
+
+                case 'ai_position_closed':
+                    this.onAIPositionClosed(message);
                     break;
 
                 case 'ai_status':
@@ -158,6 +168,76 @@ class TrainingModeUI {
         // Show Trade Notification
         this.showTradeNotification(data);
 
+        // 📊 WICHTIG: Zeige Position im Chart an!
+        if (data.position && window.addPositionOverlay) {
+            // 🐛 DEBUG: Log position data to see what we receive (NO JSON.stringify - circular refs!)
+            console.log('[TrainingMode] 🔍 Position Data:', {
+                id: data.position.id,
+                entry: data.position.entry_price,
+                sl: data.position.sl_price,
+                tp: data.position.tp_price
+            });
+            console.log('[TrainingMode] 🔍 SL/TP Check:', {
+                has_sl: !!data.position.sl_price,
+                has_tp: !!data.position.tp_price,
+                sl_value: data.position.sl_price,
+                tp_value: data.position.tp_price
+            });
+
+            // 🐛 CRITICAL DEBUG: Log everything before overlay
+            console.log('[TrainingMode] 🐛 BEFORE addPositionOverlay - Position:', {
+                id: data.position.id,
+                entry: data.position.entry_price,
+                sl: data.position.sl_price,
+                tp: data.position.tp_price,
+                direction: data.position.direction,
+                type: data.position.type,
+                size: data.position.size
+            });
+
+            window.addPositionOverlay(data.position);
+            console.log('[TrainingMode] Position overlay added to chart');
+
+            // 🐛 DEBUG: Check if position was added
+            const positionId = data.position.id;
+            const wasAdded = window.positionLines && window.positionLines[positionId];
+            console.log('[TrainingMode] 🐛 Position in positionLines?', wasAdded);
+
+            if (wasAdded) {
+                console.log('[TrainingMode] 🐛 Position details:', window.positionLines[positionId]);
+            } else {
+                console.error('[TrainingMode] ❌ Position NOT in positionLines after addPositionOverlay!');
+                console.log('[TrainingMode] 🔍 All positionLines:', Object.keys(window.positionLines || {}));
+            }
+
+            // 💰 Initial PnL berechnen (wichtig wenn kein Skip danach kommt)
+            if (window.positionLines && window.positionLines[positionId]) {
+                const currentPrice = window.getCurrentMarketPrice ? window.getCurrentMarketPrice() : data.position.entry_price;
+                const position = data.position;
+                const direction = position.direction || 'long';
+                const entry = position.entry_price;
+                const size = position.size || 1;
+
+                let pnl = 0;
+                if (direction === 'long') {
+                    pnl = (currentPrice - entry) * size;
+                } else {
+                    pnl = (entry - currentPrice) * size;
+                }
+
+                window.positionLines[positionId].unrealizedPnL = pnl;
+                console.log(`[TrainingMode] 💰 Initial PnL calculated: ${pnl.toFixed(2)}€`);
+                console.log(`[TrainingMode] 💰 Current Price: ${currentPrice}, Entry: ${entry}, PnL: ${pnl.toFixed(2)}€`);
+            } else {
+                console.error('[TrainingMode] ❌ Cannot calculate PnL - position not in positionLines');
+            }
+
+            // Render PnL Labels
+            if (window.renderLivePnLLabels) {
+                setTimeout(() => window.renderLivePnLLabels(), 100);
+            }
+        }
+
         // Auto-Open Feedback Modal
         if (data.auto_open_modal && window.feedbackModal) {
             // Warte 1 Sekunde damit User den Trade sieht
@@ -177,6 +257,31 @@ class TrainingModeUI {
                 window.feedbackModal.show(tradeData);
                 console.log('[TrainingMode] Feedback Modal opened automatically');
             }, 1000);
+        }
+    }
+
+    onAIPositionClosed(data) {
+        console.log(`[TrainingMode] AI Position closed: ${data.trade_id}`);
+        console.log(`[TrainingMode] Close reason: ${data.close_reason}, PnL: ${data.realized_pnl}`);
+        console.log(`[TrainingMode] Outcome: ${data.outcome}`);
+
+        // Öffne Feedback Modal automatisch
+        if (window.feedbackModal) {
+            const tradeData = {
+                trade_id: data.trade_id,
+                source: 'ai',
+                action: data.action,
+                entry_price: data.entry_price,
+                sl_price: data.sl_price,
+                tp_price: data.tp_price,
+                close_price: data.close_price,
+                close_reason: data.close_reason,
+                realized_pnl: data.realized_pnl,
+                outcome: data.outcome
+            };
+
+            window.feedbackModal.show(tradeData);
+            console.log('[TrainingMode] Feedback Modal opened for closed position');
         }
     }
 
