@@ -6809,10 +6809,22 @@ document.addEventListener('DOMContentLoaded', function() {
     const monitor = document.getElementById('rlVisionMonitor');
 
     if (toggleBtn && monitor) {
+        // Restore minimized state from localStorage
+        const isMinimized = localStorage.getItem('rlVisionMinimized') === 'true';
+        if (isMinimized) {
+            monitor.classList.add('minimized');
+            toggleBtn.textContent = '+';
+            toggleBtn.title = 'Maximize';
+        }
+
         toggleBtn.addEventListener('click', function() {
             monitor.classList.toggle('minimized');
-            toggleBtn.textContent = monitor.classList.contains('minimized') ? '+' : '−';
-            toggleBtn.title = monitor.classList.contains('minimized') ? 'Maximize' : 'Minimize';
+            const minimized = monitor.classList.contains('minimized');
+            toggleBtn.textContent = minimized ? '+' : '−';
+            toggleBtn.title = minimized ? 'Maximize' : 'Minimize';
+
+            // Save state to localStorage
+            localStorage.setItem('rlVisionMinimized', minimized);
         });
     }
 });
