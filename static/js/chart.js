@@ -1741,6 +1741,9 @@
                             const candleData = window.candlestickSeries.data();
                             window.IndicatorManager.syncWithTimeframe(candleData);
                         }
+
+                        // 💰 Update PnL for all active positions (DRY refactored)
+                        calculateAllPositionsPnL(message.candle.close);
                     }
                     break;
 
@@ -1812,6 +1815,13 @@
                         // Update Chart mit candle
                         candlestickSeries.update(message.candle);
                         updateChartTime(message.candle.time);
+
+                        // Store last candle data for PnL calculation
+                        window.lastCandleClose = message.candle.close;
+                        window.lastCandle = message.candle;
+
+                        // 💰 Update PnL for all active positions (DRY refactored)
+                        calculateAllPositionsPnL(message.candle.close);
 
                         // 📊 Sync Indikatoren mit kompletten Chart-Daten (komplette Neuberechnung)
                         if (window.IndicatorManager) {
@@ -2191,35 +2201,8 @@
                             console.log('👁️ Vision Monitor aktualisiert nach unified_skip_event');
                         }
 
-                        // 💰 Update PnL for all active positions
-                        const currentPrice = validatedCandle.close;
-                        if (window.positionLines) {
-                            Object.keys(window.positionLines).forEach(positionId => {
-                                const posData = window.positionLines[positionId];
-                                if (posData && posData.position) {
-                                    const position = posData.position;
-                                    const direction = position.direction || 'long';
-                                    const entry = position.entry_price;
-                                    const size = position.size || 1;
-
-                                    // Calculate unrealized PnL
-                                    let pnl = 0;
-                                    if (direction === 'long') {
-                                        pnl = (currentPrice - entry) * size;
-                                    } else {
-                                        pnl = (entry - currentPrice) * size;
-                                    }
-
-                                    // Store updated PnL
-                                    posData.unrealizedPnL = pnl;
-
-                                    // PriceLine title remains empty - Canvas labels handle display
-                                }
-                            });
-
-                            // Render PnL labels on Canvas
-                            renderLivePnLLabels();
-                        }
+                        // 💰 Update PnL for all active positions (DRY refactored)
+                        calculateAllPositionsPnL(validatedCandle.close);
 
                         // Update document title with unified architecture info
                         document.title = `${message.timeframe} Unified Skip (${message.system})`;
@@ -2259,33 +2242,8 @@
                             checkLimitOrders(window.lastCandle);
                         }
 
-                        // 💰 Update PnL for all active positions (using final candle)
-                        const currentPrice = window.lastCandleClose;
-                        if (window.positionLines) {
-                            Object.keys(window.positionLines).forEach(positionId => {
-                                const posData = window.positionLines[positionId];
-                                if (posData && posData.position) {
-                                    const position = posData.position;
-                                    const direction = position.direction || 'long';
-                                    const entry = position.entry_price;
-                                    const size = position.size || 1;
-
-                                    // Calculate unrealized PnL
-                                    let pnl = 0;
-                                    if (direction === 'long') {
-                                        pnl = (currentPrice - entry) * size;
-                                    } else {
-                                        pnl = (entry - currentPrice) * size;
-                                    }
-
-                                    // Store updated PnL
-                                    posData.unrealizedPnL = pnl;
-                                }
-                            });
-
-                            // Render PnL labels on Canvas
-                            renderLivePnLLabels();
-                        }
+                        // 💰 Update PnL for all active positions (DRY refactored)
+                        calculateAllPositionsPnL(window.lastCandleClose);
 
                         // Update chart time with final candle
                         if (message.final_candle && message.final_candle.time) {
@@ -2834,6 +2792,10 @@
             };
 
             console.log(`✅ Position overlay added: ${positionId} ${position.type}`, window.positionLines[positionId]);
+
+            // ⭐ BUGFIX: Calculate initial PnL with real market price
+            const currentMarketPrice = window.lastCandleClose || position.entry_price;
+            calculateAllPositionsPnL(currentMarketPrice);
         }
 
         function removePositionOverlay(positionId) {
@@ -2888,6 +2850,40 @@
                     addPositionOverlay(position);
                 }
             });
+        }
+
+
+        /**
+         * Calculate unrealized PnL for all active positions
+         * Central function to avoid code duplication (DRY principle)
+         * @param {number} currentPrice - Current market price from latest candle
+         */
+        function calculateAllPositionsPnL(currentPrice) {
+            if (!window.positionLines) return;
+
+            Object.keys(window.positionLines).forEach(positionId => {
+                const posData = window.positionLines[positionId];
+                if (posData && posData.position) {
+                    const position = posData.position;
+                    const direction = position.direction || 'long';
+                    const entry = position.entry_price;
+                    const size = position.size || 1;
+
+                    // Calculate unrealized PnL
+                    let pnl = 0;
+                    if (direction === 'long') {
+                        pnl = (currentPrice - entry) * size;
+                    } else {
+                        pnl = (entry - currentPrice) * size;
+                    }
+
+                    // Store updated PnL
+                    posData.unrealizedPnL = pnl;
+                }
+            });
+
+            // Render updated PnL labels
+            renderLivePnLLabels();
         }
 
         /**
