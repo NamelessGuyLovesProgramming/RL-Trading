@@ -9,9 +9,85 @@ from fastapi import WebSocket, WebSocketDisconnect
 from datetime import datetime
 import json
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+
+def _build_market_context(candle: Dict[str, Any], timestamp: int, indicator_data: Dict = None) -> Dict[str, Any]:
+    """
+    Baut Market Context für RL Agent aus Candle-Daten und Indikator-Daten
+
+    Args:
+        candle: Aktuelle Kerze mit OHLCV
+        timestamp: Unix timestamp
+        indicator_data: Indikator-Daten vom Frontend (optional)
+
+    Returns:
+        Market Context Dictionary
+    """
+    # Default values
+    in_fvg = False
+    fvg_distance = 999
+    session_high_broken = False
+    session_low_broken = False
+    session_high_first_break = False
+    session_low_first_break = False
+    volume_spike = False
+    volume_ratio = 1.0
+    current_session = 'unknown'
+
+    # Use indicator data if available (NEW field names)
+    if indicator_data:
+        logger.info(f"[WS] [AI-TRADING] Indicator Data received: {list(indicator_data.keys())}")
+        in_fvg = indicator_data.get('in_fvg', False)
+        session_high_broken = indicator_data.get('session_high_broken', False)
+        session_low_broken = indicator_data.get('session_low_broken', False)
+        session_high_first_break = indicator_data.get('session_high_first_break', False)
+        session_low_first_break = indicator_data.get('session_low_first_break', False)
+        volume_spike = indicator_data.get('volume_spike', False)
+        volume_ratio = indicator_data.get('volume_ratio', 1.0)
+        current_session = indicator_data.get('current_session', 'unknown')
+
+        # FVG distance (approximation based on FVG type)
+        if in_fvg:
+            fvg_distance = 0.001  # Very close (inside FVG)
+        else:
+            fvg_distance = indicator_data.get('distance_to_fvg', 999) or 999
+    else:
+        logger.warning(f"[WS] [AI-TRADING] ⚠️ NO INDICATOR DATA - Using defaults!")
+
+    market_context = {
+        'current_price': candle['close'],
+        'timestamp': timestamp,
+        'patterns': {
+            'in_fvg_zone': in_fvg,
+            'fvg_distance': fvg_distance,
+            'near_support_ob': False,
+            'near_resistance_ob': False,
+            'session_high_broken': session_high_broken,
+            'session_low_broken': session_low_broken,
+            'session_high_first_break': session_high_first_break,
+            'session_low_first_break': session_low_first_break,
+            'liquidity_direction': 0,
+            'market_structure': 0
+        },
+        'session_info': {
+            'session': current_session,
+            'time_in_session': 0,
+            'near_open': False,
+            'near_close': False
+        },
+        'volume': {
+            'spike': volume_spike,
+            'ratio': volume_ratio
+        }
+    }
+
+    # Log built context
+    logger.info(f"[WS] [AI-TRADING] Market Context: in_fvg={in_fvg}, session={current_session}, volume_spike={volume_spike}")
+
+    return market_context
 
 
 async def handle_websocket_commands(
@@ -557,30 +633,15 @@ async def handle_websocket_commands(
                     # Wenn Training Mode aktiv: KI analysiert und tradet eventuell
                     if training_service and training_service.is_active:
                         try:
-                            # TODO: Market Context von Indicators holen
-                            # Für jetzt: Dummy Context
-                            market_context = {
-                                'current_price': current_price,
-                                'timestamp': int(new_global_time.timestamp()),
-                                'patterns': {
-                                    'in_fvg_zone': False,
-                                    'fvg_distance': 999,
-                                    'near_support_ob': False,
-                                    'near_resistance_ob': False,
-                                    'liquidity_direction': 0,
-                                    'market_structure': 0
-                                },
-                                'session_info': {
-                                    'session': 'unknown',
-                                    'time_in_session': 0,
-                                    'near_open': False,
-                                    'near_close': False
-                                },
-                                'volume': {
-                                    'spike': False,
-                                    'ratio': 1.0
-                                }
-                            }
+                            # Extract indicator data from WebSocket message (if available)
+                            indicator_data = data.get('indicator_data', None)
+
+                            # Build Market Context mit echten Indicator-Daten
+                            market_context = _build_market_context(
+                                candle=candle,
+                                timestamp=int(new_global_time.timestamp()),
+                                indicator_data=indicator_data
+                            )
 
                             # KI trifft Entscheidung
                             ai_trade = training_service.on_skip(market_context)
@@ -596,7 +657,7 @@ async def handle_websocket_commands(
                                     'action': ai_trade['action'],
                                     'position': ai_trade['position'],
                                     'account_summary': ai_trade['account_summary'],
-                                    'hints': ai_trade['hints'],
+                                    'hints': ai_trade.get('hints', []),  # Optional - kommt beim Position Close
                                     'reasoning': ai_trade['reasoning'],
                                     'confidence': ai_trade['confidence'],
                                     'auto_open_modal': True  # ← Trigger für Frontend
