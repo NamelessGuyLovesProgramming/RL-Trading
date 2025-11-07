@@ -482,6 +482,13 @@
 
             <!-- KI Modus Toggle (wird von training-mode.js hier eingefügt) -->
             <div id="aiModeToggleContainer" style="margin-left: 15px; padding-left: 15px; border-left: 1px solid #404040;"></div>
+
+            <!-- RL Vision Toggle -->
+            <button id="rlVisionToggleBtn" class="ai-mode-toggle-btn" style="margin-left: 10px;">
+                <span class="ai-icon">👁️</span>
+                <span class="ai-text">RL Vision</span>
+                <span class="ai-status">AN</span>
+            </button>
         </div>
     </div>
 
@@ -593,7 +600,7 @@
     <div id="status" class="status disconnected">Disconnected</div>
 
     <!-- RL Agent Vision Monitor -->
-    <div id="rlVisionMonitor" class="rl-vision-monitor minimized">
+    <div id="rlVisionMonitor" class="rl-vision-monitor">
         <div class="rl-vision-header">
             <span class="rl-vision-title">🤖 RL Agent Vision</span>
             <button id="toggleRLVision" class="rl-vision-toggle" title="Maximize">+</button>
@@ -661,5 +668,8 @@
     <!-- Training Mode -->
     <link rel="stylesheet" href="/static/css/training-mode.css">
     <script src="/static/js/training-mode.js"></script>
+
+    <!-- RL Vision Toggle -->
+    <script src="/static/js/rl-vision-toggle.js"></script>
 </body>
 </html>

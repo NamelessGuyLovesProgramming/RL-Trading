@@ -905,3 +905,8 @@
             width: auto;
             min-width: 200px;
         }
+
+        /* Hidden State (komplett ausblenden) */
+        .rl-vision-monitor.hidden {
+            display: none !important;
+        }
