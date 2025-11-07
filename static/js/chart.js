@@ -2721,6 +2721,16 @@
                     alert(`Backend Error: ${message.message}`);
                     break;
 
+                case 'ai_trade_executed':
+                case 'ai_position_closed':
+                case 'ai_mode_toggled':
+                case 'ai_status':
+                    // 🤖 AI Training Mode Events - Dispatch to training-mode.js
+                    window.dispatchEvent(new CustomEvent('websocket-message', {
+                        detail: message
+                    }));
+                    break;
+
                 default:
                     console.log('[UNKNOWN] Unknown message type:', message.type);
             }
@@ -5529,8 +5539,8 @@
             const currentMarketPrice = getCurrentMarketPrice();
 
             if (savedOrderType === 'market' && currentMarketPrice) {
-                document.getElementById('tradeEntry').textContent = currentMarketPrice.toFixed(2);
-                currentTradeSetup.entryPrice = currentMarketPrice;
+                document.getElementById('tradeEntry').textContent = currentMarketPrice.close.toFixed(2);
+                currentTradeSetup.entryPrice = currentMarketPrice.close;
             } else {
                 document.getElementById('tradeEntry').textContent = tradeData.entryPrice.toFixed(2);
             }
@@ -5557,8 +5567,8 @@
             if (orderType === 'market') {
                 const currentMarketPrice = getCurrentMarketPrice();
                 if (currentMarketPrice && currentTradeSetup) {
-                    document.getElementById('tradeEntry').textContent = currentMarketPrice.toFixed(2);
-                    currentTradeSetup.entryPrice = currentMarketPrice;
+                    document.getElementById('tradeEntry').textContent = currentMarketPrice.close.toFixed(2);
+                    currentTradeSetup.entryPrice = currentMarketPrice.close;
                     updatePositionSize();
                 }
             } else {

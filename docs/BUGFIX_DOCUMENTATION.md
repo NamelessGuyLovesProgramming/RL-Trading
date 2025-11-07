@@ -1,5 +1,74 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Position Tool: Trade Modal Crash - 07.11.2025 💰
+
+### Problem:
+**Trade Modal öffnet nicht - TypeError beim Klick auf Position Box:**
+```
+Uncaught TypeError: currentMarketPrice.toFixed is not a function
+    at openTradeModal (chart.js:5542:88)
+```
+
+**User Flow:**
+1. Klick auf 📈 Long Position Button
+2. Klick auf Chart → Position Box wird erstellt
+3. Klick auf 💰 Buy Button → **Crash statt Modal öffnen**
+
+### Root Cause:
+**Type Mismatch - Objekt statt Number:**
+
+`getCurrentMarketPrice()` gibt ein **Candle-Objekt** zurück:
+```javascript
+function getCurrentMarketPrice() {
+    if (window.lastCandle !== null && window.lastCandle !== undefined) {
+        return window.lastCandle;  // ← Returns {close, high, low}
+    }
+    return { close: window.lastCandleClose, high: window.lastCandleClose, low: window.lastCandleClose };
+}
+```
+
+Aber `openTradeModal()` behandelte es als **Number**:
+```javascript
+// ❌ FALSCH - versucht .toFixed() auf Objekt aufzurufen
+document.getElementById('tradeEntry').textContent = currentMarketPrice.toFixed(2);
+currentTradeSetup.entryPrice = currentMarketPrice;
+```
+
+### Fix:
+**Zugriff auf `.close` Property des Candle-Objekts:**
+
+**File:** `static/js/chart.js`
+
+**Zeile 5542:**
+```javascript
+// ✅ RICHTIG - extrahiere close price
+document.getElementById('tradeEntry').textContent = currentMarketPrice.close.toFixed(2);
+currentTradeSetup.entryPrice = currentMarketPrice.close;
+```
+
+**Zeile 5570:**
+```javascript
+// ✅ RICHTIG - in onOrderTypeChange()
+document.getElementById('tradeEntry').textContent = currentMarketPrice.close.toFixed(2);
+currentTradeSetup.entryPrice = currentMarketPrice.close;
+```
+
+### Affected Locations:
+- `static/js/chart.js:5542` - openTradeModal()
+- `static/js/chart.js:5570` - onOrderTypeChange()
+
+### Prevention:
+- `getCurrentMarketPrice()` gibt Candle-Objekt zurück für High/Low Checks bei Limit Orders
+- **Immer `.close` verwenden** wenn nur der Close-Preis benötigt wird
+- Type-Check bei API-Änderungen durchführen
+
+### Test:
+✅ Position Box erstellen → Buy Button klicken → Modal öffnet
+✅ Market Order zeigt aktuellen Close-Preis
+✅ Limit Order zeigt Box Entry-Preis
+
+---
+
 ## Session H/L "Near" Detection - Falsche Levels - 05.11.2025 🎯
 
 ### Problem:
