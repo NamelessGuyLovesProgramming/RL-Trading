@@ -60,13 +60,19 @@ class NavigationService:
         """
         print(f"[NavigationService] Go to date: {target_date} ({timeframe})")
 
-        # Berechne Zeit-Bereich
+        # Berechne Zeit-Bereich: Zieldatum in der MITTE des Charts
         timeframe_minutes = self.unified_time._get_timeframe_minutes(timeframe)
-        lookback_time = target_date - timedelta(minutes=timeframe_minutes * visible_candles)
+        half_candles = visible_candles // 2
+
+        # 🔧 FIX: Lade Kerzen VOR und NACH dem Zieldatum
+        lookback_time = target_date - timedelta(minutes=timeframe_minutes * half_candles)
+        forward_time = target_date + timedelta(minutes=timeframe_minutes * half_candles)
+
+        print(f"[NavigationService] Loading candles: {lookback_time} to {forward_time} (target in middle)")
 
         # Lade Chart-Daten
         chart_data = self.timeframe_repo.get_candles_for_date_range(
-            timeframe, lookback_time, target_date, max_candles=visible_candles
+            timeframe, lookback_time, forward_time, max_candles=visible_candles
         )
 
         # 🔧 FIX: Wenn keine Daten gefunden, finde erste verfügbare Kerze NACH target_date
@@ -86,10 +92,11 @@ class NavigationService:
 
                 print(f"[GOTO-FALLBACK] Found first available candle at {actual_target}")
 
-                # Lade Daten mit neuem Ziel
-                lookback_time = actual_target - timedelta(minutes=timeframe_minutes * visible_candles)
+                # Lade Daten mit neuem Ziel (ebenfalls in der Mitte)
+                lookback_time = actual_target - timedelta(minutes=timeframe_minutes * half_candles)
+                forward_time = actual_target + timedelta(minutes=timeframe_minutes * half_candles)
                 chart_data = self.timeframe_repo.get_candles_for_date_range(
-                    timeframe, lookback_time, actual_target, max_candles=visible_candles
+                    timeframe, lookback_time, forward_time, max_candles=visible_candles
                 )
             else:
                 print(f"[GOTO-FALLBACK] ERROR: No candles available after {target_date}")
