@@ -60,15 +60,15 @@ class NavigationService:
         """
         print(f"[NavigationService] Go to date: {target_date} ({timeframe})")
 
-        # Berechne Zeit-Bereich: Zieldatum in der MITTE des Charts
+        # Berechne Zeit-Bereich: Zieldatum am ENDE des Charts (verhindert Skip-Konflikte)
         timeframe_minutes = self.unified_time._get_timeframe_minutes(timeframe)
         half_candles = visible_candles // 2
 
-        # 🔧 FIX: Lade Kerzen VOR und NACH dem Zieldatum
-        lookback_time = target_date - timedelta(minutes=timeframe_minutes * half_candles)
-        forward_time = target_date + timedelta(minutes=timeframe_minutes * half_candles)
+        # 🔧 FIX: Lade Kerzen VOR dem Zieldatum (nicht danach, um Skip-Konflikte zu vermeiden)
+        lookback_time = target_date - timedelta(minutes=timeframe_minutes * visible_candles)
+        forward_time = target_date  # Chart endet BEIM Ziel, nicht danach
 
-        print(f"[NavigationService] Loading candles: {lookback_time} to {forward_time} (target in middle)")
+        print(f"[NavigationService] Loading candles: {lookback_time} to {forward_time} (target at end)")
 
         # Lade Chart-Daten
         chart_data = self.timeframe_repo.get_candles_for_date_range(

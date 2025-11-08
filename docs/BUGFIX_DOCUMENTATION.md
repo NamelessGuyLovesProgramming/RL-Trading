@@ -1,5 +1,95 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Play Mode: "Cannot update oldest data" Error - 08.11.2025 ⏯️
+
+### Problem:
+**Play-Modus crasht mit "Cannot update oldest data" Error:**
+```
+Uncaught Error: Cannot update oldest data, last time=[object Object], new time=[object Object]
+    at Lb @ lightweight-charts.standalone.production.js:7
+    at tw @ lightweight-charts.standalone.production.js:7
+    at update @ lightweight-charts.standalone.production.js:7
+```
+
+**User Flow:**
+1. Page Load → Chart wird auf 2024-01-03 initialisiert
+2. Klick auf Play-Button ▶️
+3. Skip sendet Kerzen: 00:10:00, 00:20:00, 00:30:00...
+4. **Error: Chart verweigert Updates**
+
+### Root Cause:
+**Go To Date lädt Zukunftsdaten nach dem Zieldatum:**
+
+`NavigationService.go_to_date()` lud Kerzen VOR **und NACH** dem Zieldatum:
+```python
+# ❌ FALSCH - Lädt Kerzen NACH dem Ziel
+target_date = 2024-01-03 00:00:00
+half_candles = 100
+forward_time = target_date + timedelta(minutes=timeframe_minutes * half_candles)
+# → Lädt bis 2024-01-03 08:20:00
+```
+
+**Resultat:**
+- Chart hatte bereits Kerzen bis **08:20:00**
+- Skip versuchte Kerzen ab **00:10:00** einzufügen
+- Chart: "Cannot update oldest data" → **00:10:00 ist VOR 08:20:00!**
+
+**Timeline:**
+```
+Server Zeit: 2024-01-03 00:00:00
+Chart lädt: 15:40:00 (Tag vorher) bis 08:20:00 (Tag danach) ← ZU WEIT!
+                                     ^^^^^^^^
+Skip sendet: 00:10:00 ← VOR dem Chart-Ende!
+             ^^^^^^^^
+Error: Cannot update oldest data
+```
+
+### Fix:
+**Go To Date lädt nur Kerzen VOR dem Zieldatum:**
+
+**File:** `charts/services/navigation_service.py`
+
+**Zeile 67-71:**
+```python
+# ✅ RICHTIG - Lade Kerzen VOR dem Zieldatum (nicht danach)
+lookback_time = target_date - timedelta(minutes=timeframe_minutes * visible_candles)
+forward_time = target_date  # Chart endet BEIM Ziel, nicht danach
+
+print(f"[NavigationService] Loading candles: {lookback_time} to {forward_time} (target at end)")
+```
+
+**Vorher:**
+```
+Loading candles: 2024-01-02 15:40:00 to 2024-01-03 08:20:00 (target in middle)
+                                                   ^^^^^^^^ ZU WEIT!
+```
+
+**Nachher:**
+```
+Loading candles: 2024-01-02 07:20:00 to 2024-01-03 00:00:00 (target at end)
+                                                   ^^^^^^^^ PERFEKT!
+```
+
+### Verification:
+```python
+# Before Fix:
+[NavigationService] Loading candles: 2024-01-02 15:40:00 to 2024-01-03 08:20:00
+[Skip] Sending: 00:10:00 → ERROR: Cannot update oldest data
+
+# After Fix:
+[NavigationService] Loading candles: 2024-01-02 07:20:00 to 2024-01-03 00:00:00
+[Skip] Sending: 00:05:00, 00:10:00, 00:15:00... → ✅ SUCCESS
+```
+
+### Prevention:
+**Go To Date Design Rule:**
+- Lade **200 Kerzen VOR** dem Zieldatum
+- Chart endet **GENAU BEIM** Zieldatum
+- Skip kann ab Zieldatum **VORWÄRTS** arbeiten
+- **Keine Konflikte** zwischen Chart-Daten und Skip-Updates
+
+---
+
 ## Position Tool: Trade Modal Crash - 07.11.2025 💰
 
 ### Problem:
