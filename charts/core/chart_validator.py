@@ -129,20 +129,25 @@ class ChartDataValidator:
         if filtered_count > 0:
             print(f"[DATA-GUARD] Filtered {filtered_count}/{original_count} invalid candles from {source}")
 
-        # CRITICAL: Nie leere Arrays zurückgeben
+        # CRITICAL: Handle empty results based on source
         if len(validated_data) == 0:
-            print(f"[DATA-GUARD] WARNING: All candles filtered from {source}! Creating minimal fallback.")
-            # Erstelle minimal-fallback um Chart-Crash zu verhindern
-            import time
-            current_time = int(time.time())
-            validated_data = [{
-                'time': current_time,
-                'open': 20000.0,
-                'high': 20010.0,
-                'low': 19990.0,
-                'close': 20005.0,
-                'volume': 100
-            }]
+            if source == "lazy_load":
+                # Lazy Load: Leeres Array ist NORMAL (Chart-Anfang erreicht)
+                print(f"[DATA-GUARD] Lazy load: No more historical data available (chart beginning reached)")
+                return []
+            else:
+                # Initial Load: Erstelle Fallback um Chart-Crash zu verhindern
+                print(f"[DATA-GUARD] WARNING: All candles filtered from {source}! Creating minimal fallback.")
+                import time
+                current_time = int(time.time())
+                validated_data = [{
+                    'time': current_time,
+                    'open': 20000.0,
+                    'high': 20010.0,
+                    'low': 19990.0,
+                    'close': 20005.0,
+                    'volume': 100
+                }]
 
         return validated_data
 
