@@ -1,5 +1,128 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Chart Rendering: No Candlesticks on Page Load - 08.11.2025 📊
+
+### Problem:
+**Chart zeigt keine Kerzen beim Projektstart (nur Indikatoren):**
+```
+Console:
+✅ 189 Kerzen geladen
+✅ SESSION, FVG, VOLUME Indikatoren funktionieren
+❌ Uncaught Error: Value is null (mehrfach)
+❌ Smart Positioning nicht verfügbar
+❌ CandlestickSeries nicht verfügbar
+```
+
+**User Experience:**
+1. Projekt starten → http://localhost:8003 öffnen
+2. Chart lädt vollständig
+3. Session-Rahmen, FVG-Boxen, Volume sichtbar ✅
+4. **ABER: Keine Candlesticks im Chart** ❌
+
+### Root Cause:
+**Race Condition zwischen DOM Load und WebSocket initial_data:**
+
+`DOMContentLoaded` initialisiert Chart SOFORT (ohne Daten):
+```javascript
+// static/js/chart.js:6283
+document.addEventListener('DOMContentLoaded', function() {
+    initChart();  // ← Chart wird OHNE Daten erstellt
+    connectWebSocket();  // ← Daten kommen später
+});
+```
+
+**Timeline:**
+```
+1. DOM Loaded Event fires
+2. initChart() aufgerufen → candlestickSeries erstellt (LEER)
+3. isInitialized = true
+4. WebSocket verbindet
+5. WebSocket empfängt initial_data mit 189 Kerzen
+6. Handler prüft: if (!isInitialized) → FALSE → überspringt initChart()
+7. candlestickSeries.setData() auf LEERE Series
+8. CRASH: "Value is null" → Kerzen werden nicht gerendert
+```
+
+**Warum Indikatoren funktionieren:**
+- Indikatoren nutzen `window.candlestickSeries?.data()` (Optional Chaining)
+- Defensives Error Handling → kein Crash
+- Chart-Kerzen haben kein Fallback → Silent Fail
+
+### Fix:
+**Chart-Initialisierung erst NACH WebSocket-Daten:**
+
+**File:** `static/js/chart.js`
+
+**Zeile 6278-6283 VORHER:**
+```javascript
+document.addEventListener('DOMContentLoaded', function() {
+    serverLog('🔧 DOM loaded - Initialisiere Chart und Event Handlers...');
+
+    // WICHTIG: Chart zuerst initialisieren
+    initChart();  // ← ENTFERNT!
+
+    // RL System UI initialisieren
+    if (window.RLSystem) {
+        window.RLSystem.updateUI();
+    }
+});
+```
+
+**Zeile 6278-6281 NACHHER:**
+```javascript
+document.addEventListener('DOMContentLoaded', function() {
+    serverLog('🔧 DOM loaded - Initialisiere Event Handlers...');
+
+    // Chart wird von WebSocket initial_data Message initialisiert
+
+    // RL System UI initialisieren
+    if (window.RLSystem) {
+        window.RLSystem.updateUI();
+    }
+});
+```
+
+**WebSocket Handler (bereits vorhanden - Zeile ~1652):**
+```javascript
+case 'initial_data':
+    if (!isInitialized) initChart();  // ← Macht jetzt den Job!
+    // ... setData mit echten Kerzen
+```
+
+### Verification:
+**Before Fix:**
+```
+Console:
+❌ Uncaught Error: Value is null (5x)
+❌ CandlestickSeries nicht verfügbar
+Browser: Keine Kerzen sichtbar
+```
+
+**After Fix:**
+```
+Console:
+✅ 189 Kerzen initial geladen
+✅ Lazy Load: +172 auf 361 total
+✅ Alle Indikatoren funktionieren
+✅ Standard-Zoom: Kerzen 139-188 sichtbar
+Browser: Kerzen erscheinen sofort ✅
+Tests: 115/116 Unit Tests passed ✅
+```
+
+### Prevention:
+**Design Rule: Data-First Initialization**
+- Chart NIE ohne Daten initialisieren
+- WebSocket initial_data triggert Chart-Init
+- Verzögerung ~100-200ms akzeptabel (nicht sichtbar)
+- Alternative wäre: Empty chart zeigen + progressives Laden (komplexer)
+
+**Lesson Learned:**
+- Race Conditions zwischen DOM Load und async Daten vermeiden
+- LightweightCharts braucht Daten bei Initialisierung
+- WebSocket als "Single Source of Truth" für Init-Timing
+
+---
+
 ## Play Mode: "Cannot update oldest data" Error - 08.11.2025 ⏯️
 
 ### Problem:

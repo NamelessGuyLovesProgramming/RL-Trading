@@ -2689,6 +2689,49 @@
                     }));
                     break;
 
+                case 'batch_complete':
+                    // 📊 Batch Training Complete - Auto-Open Feedback Modal
+                    console.log('[BATCH] Batch complete - Opening feedback modal', message.data);
+
+                    // Pause chart if playing
+                    if (window.isPlaying) {
+                        togglePlay(); // Stop chart playback
+                    }
+
+                    // Show notification
+                    const batchToast = document.createElement('div');
+                    batchToast.className = 'batch-notification';
+                    batchToast.innerHTML = `
+                        <div style="padding: 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                    color: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                                    font-size: 14px; font-weight: 500; text-align: center;">
+                            🎯 Batch #${message.data.batch_number} Complete!<br>
+                            <span style="font-size: 12px; opacity: 0.9;">10 Trades done - Rate den letzten Trade</span>
+                        </div>
+                    `;
+                    batchToast.style.cssText = `
+                        position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+                        z-index: 10000; animation: slideDown 0.3s ease;
+                    `;
+                    document.body.appendChild(batchToast);
+
+                    // Remove notification after 3s
+                    setTimeout(() => {
+                        batchToast.style.animation = 'slideUp 0.3s ease';
+                        setTimeout(() => batchToast.remove(), 300);
+                    }, 3000);
+
+                    // Store batch trade data for feedback modal
+                    window.currentBatchTrade = message.data;
+
+                    // Open feedback modal
+                    if (typeof openAIFeedbackModal === 'function') {
+                        openAIFeedbackModal(message.data);
+                    } else {
+                        console.warn('[BATCH] Feedback modal not available');
+                    }
+                    break;
+
                 default:
                     console.log('[UNKNOWN] Unknown message type:', message.type);
             }
@@ -6233,11 +6276,9 @@
 
         // Warte bis DOM und Script geladen sind
         document.addEventListener('DOMContentLoaded', function() {
-            serverLog('🔧 DOM loaded - Initialisiere Chart und Event Handlers...');
+            serverLog('🔧 DOM loaded - Initialisiere Event Handlers...');
 
-            // WICHTIG: Chart zuerst initialisieren
-            // console.log('🔧 Initialisiere Chart beim DOMContentLoaded...');
-            initChart();
+            // Chart wird von WebSocket initial_data Message initialisiert
 
             // RL System UI initialisieren
             if (window.RLSystem) {
