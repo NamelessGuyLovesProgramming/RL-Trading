@@ -330,6 +330,12 @@ def initialize_components():
     )
     logger.info(f"[INIT] AccountService initialized with config balances: AI={balances['ai_balance']:,.0f}€, User={balances['user_balance']:,.0f}€")
 
+    # Load Account State (inkl. aktive Positionen) aus Config
+    account_state = config_service.load_account_state()
+    if account_state:
+        account_service.load_from_dict(account_state)
+        logger.info("[INIT] Account State (positions) restored from config")
+
     # RL Feedback System mit Reward Manager
     logger.info("[INIT] Creating RL Feedback System...")
     import pandas as pd
@@ -364,7 +370,29 @@ def initialize_components():
             position_service=position_service,
             account_service=account_service
         )
-        logger.info("[INIT] [OK] Training Mode Service initialized")
+
+        # Register Batch Callback: Pause Chart + Send WebSocket Event
+        def on_batch_complete(trade_data):
+            """Called when batch of N trades is complete"""
+            logger.info(f"[BATCH] Batch complete - Last trade: {trade_data['trade_id']}")
+
+            # Send WebSocket notification to all clients
+            import asyncio
+            asyncio.create_task(manager.broadcast({
+                'type': 'batch_complete',
+                'data': {
+                    'trade_id': trade_data['trade_id'],
+                    'position': trade_data['position'],
+                    'action': trade_data['action'],
+                    'reasoning': trade_data['reasoning'],
+                    'confidence': trade_data['confidence'],
+                    'batch_number': training_service.total_batches,
+                    'message': f"Batch #{training_service.total_batches} complete - Rate letzten Trade!"
+                }
+            }))
+
+        training_service.set_batch_callback(on_batch_complete)
+        logger.info("[INIT] [OK] Training Mode Service initialized with batch callback")
     else:
         logger.warning(f"[INIT] CSV not found: {csv_path} - Feedback System disabled")
         feedback_system = None
@@ -456,7 +484,8 @@ async def startup_event():
         global_skip_events=global_skip_events,
         debug_control_timeframe=debug_control_timeframe,
         account_service=account_service,
-        config_service=config_service
+        config_service=config_service,
+        training_mode_service=training_service
     )
 
     account_routes.setup_account_routes(
@@ -479,6 +508,11 @@ async def startup_event():
     )
 
     static_routes.setup_static_routes(app=app)
+
+    # Review Routes
+    from charts.routes import review
+    review.setup_review_routes(app=app)
+    logger.info("📊 Review Routes registered")
 
     logger.info("✅ Server bereit auf http://localhost:8003")
     logger.info("📖 API Docs: http://localhost:8003/docs")

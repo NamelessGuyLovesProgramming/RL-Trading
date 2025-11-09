@@ -1,5 +1,146 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Position Persistence: Browser Refresh löscht aktive Positionen - 09.11.2025 💾
+
+### Problem:
+**Aktive Trading-Positionen verschwinden nach Browser-Refresh:**
+```
+1. Position öffnen (z.B. Long bei 16700.75)
+2. Position läuft im Backend weiter (SL/TP Checks aktiv)
+3. Browser-Refresh (F5)
+4. ❌ Position ist weg im Chart (aber Backend tracked weiter)
+5. ❌ Trade läuft unsichtbar im Hintergrund
+```
+
+**User Experience:**
+- Position wird nicht mehr angezeigt
+- Kein Entry/SL/TP visuell im Chart
+- Backend hat Position noch (Datenverlust-Gefahr)
+- Verwirrend für User
+
+### Root Cause:
+**Keine State-Persistierung für Positionen:**
+```python
+# charts/services/account_service.py
+# Positionen nur im Memory gespeichert
+self.user_account['active_positions'] = {}  # ← Lost bei Server-Restart
+```
+
+**Fehlende Komponenten:**
+1. ❌ AccountService hatte keine Serialisierung
+2. ❌ ConfigService konnte Positionen nicht speichern
+3. ❌ Keine API um Positionen abzurufen
+4. ❌ Frontend lud Positionen nicht beim Page Load
+
+### Fix Locations:
+
+#### 1. Backend - AccountService Serialisierung
+**File:** `charts/services/account_service.py:408-479`
+```python
+def to_dict(self) -> Dict[str, Any]:
+    """Serialisiert AccountService State für Persistierung"""
+    return {
+        'ai_account': {...},
+        'user_account': {
+            'active_positions': dict(self.user_account['active_positions']),
+            'closed_positions': list(self.user_account['closed_positions']),
+            ...
+        }
+    }
+
+def load_from_dict(self, state: Dict[str, Any]) -> bool:
+    """Lädt AccountService State aus persistiertem Dict"""
+    if 'user_account' in state:
+        self.user_account['active_positions'] = dict(state['user_account']['active_positions'])
+```
+
+#### 2. Backend - ConfigService Persistierung
+**File:** `charts/services/config_service.py:189-229`
+```python
+def save_account_state(self, account_state: Dict[str, Any]) -> bool:
+    """Speichert AccountService State (inkl. Positionen) in Config"""
+    self.config["account_state"] = account_state
+    self._save_config(self.config)
+
+def load_account_state(self) -> Optional[Dict[str, Any]]:
+    """Lädt AccountService State aus Config"""
+    return self.config.get("account_state")
+```
+
+#### 3. Server-Start - Position Restore
+**File:** `charts/chart_server.py:333-337`
+```python
+# Load Account State (inkl. aktive Positionen) aus Config
+account_state = config_service.load_account_state()
+if account_state:
+    account_service.load_from_dict(account_state)
+    logger.info("[INIT] Account State (positions) restored from config")
+```
+
+#### 4. WebSocket - Auto-Save Hooks
+**File:** `charts/routes/websocket_handler.py:404`
+```python
+# Nach Trade Execution
+config_service.save_account_state(account_service.to_dict())
+```
+
+**File:** `charts/routes/websocket_handler.py:493`
+```python
+# Nach Position Close
+config_service.save_account_state(account_service.to_dict())
+```
+
+#### 5. API Route - Positions abrufen
+**File:** `charts/routes/account.py:58-95`
+```python
+@router.get("/positions")
+async def get_active_positions() -> Dict[str, Any]:
+    """GET /api/account/positions - Gibt alle aktiven Positionen zurück"""
+    positions = account_service.get_active_positions()
+    return {"status": "success", "positions": positions, "count": len(positions)}
+```
+
+#### 6. Frontend - Load Positions on Page Load
+**File:** `static/js/chart.js:1199-1221`
+```javascript
+async function loadActivePositions() {
+    const response = await fetch('/api/account/positions');
+    const data = await response.json();
+
+    if (data.status === 'success' && data.positions.length > 0) {
+        data.positions.forEach(position => {
+            addPositionOverlay(position);
+        });
+        setTimeout(() => renderLivePnLLabels(), 100);
+    }
+}
+
+// Call beim Chart Init (Zeile 793)
+loadActivePositions();
+```
+
+### Test Results:
+✅ **Server-Restart Test:**
+- Position in Config gespeichert
+- Server neu gestartet
+- Logs: `User: 1 positions loaded`
+- Position vollständig wiederhergestellt
+
+✅ **Browser-Refresh Test:**
+- Position geöffnet (test_pos_123456)
+- Browser-Refresh (F5)
+- Console: `Loaded 1 active position(s) from backend`
+- Position im Chart gerendert mit Entry/SL/TP
+
+### Prevention:
+- ✅ Positionen in `persistent_state.json` gespeichert
+- ✅ Auto-Save bei jedem Trade Open/Close
+- ✅ Server-Start lädt Positionen automatisch
+- ✅ Frontend holt Positionen beim Page Load
+- ✅ Vollständige State-Wiederherstellung
+
+---
+
 ## Chart Rendering: No Candlesticks on Page Load - 08.11.2025 📊
 
 ### Problem:

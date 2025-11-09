@@ -789,6 +789,9 @@
                 // Chart-Daten sofort laden
                 loadInitialData();
 
+                // Lade aktive Positionen nach Page Refresh
+                loadActivePositions();
+
                 // SOFORTIGER TEST der Smart Positioning
                 window.testSmartPositioning = function() {
                     // console.log('DIRECT TEST: Smart Positioning wird getestet...');
@@ -1192,6 +1195,34 @@
 
         // Lade initiale Chart-Daten vom Server
         let initialDataLoaded = false; // CRITICAL: Prevent double-loading
+        // Lädt aktive Positionen nach Page Refresh
+        async function loadActivePositions() {
+            try {
+                console.log('📦 Loading active positions from backend...');
+
+                const response = await fetch('/api/account/positions');
+                const data = await response.json();
+
+                if (data.status === 'success' && data.positions && data.positions.length > 0) {
+                    console.log(`✅ Loaded ${data.positions.length} active position(s) from backend`);
+
+                    // Rendere jede Position im Chart
+                    data.positions.forEach(position => {
+                        addPositionOverlay(position);
+                    });
+
+                    // Render P&L Labels
+                    setTimeout(() => renderLivePnLLabels(), 100);
+
+                    console.log('✅ All positions rendered after page refresh');
+                } else {
+                    console.log('ℹ️ No active positions to restore');
+                }
+            } catch (error) {
+                console.error('❌ Error loading active positions:', error);
+            }
+        }
+
         function loadInitialData() {
             // CRITICAL: Prevent double-loading which causes "Value is null" crash
             if (initialDataLoaded) {
@@ -2729,6 +2760,29 @@
                         openAIFeedbackModal(message.data);
                     } else {
                         console.warn('[BATCH] Feedback modal not available');
+                    }
+                    break;
+
+                case 'pause_play_mode':
+                    // 🎯 AUTO-PAUSE: Position geschlossen (TP/SL Hit) - Play pausieren
+                    console.log('[AUTO-PAUSE] Position closed - pausing play mode', message);
+
+                    // Send API call to toggle play mode off
+                    fetch('/api/debug/toggle_play', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('[AUTO-PAUSE] Play mode stopped via API:', data);
+                    })
+                    .catch(error => {
+                        console.error('[AUTO-PAUSE] Failed to stop play mode:', error);
+                    });
+
+                    // Show notification
+                    if (message.message) {
+                        showNotification(message.message, 'info');
                     }
                     break;
 

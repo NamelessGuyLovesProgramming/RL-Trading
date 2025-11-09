@@ -404,3 +404,76 @@ class AccountService:
             'ai_count': ai_count,
             'user_count': user_count
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialisiert AccountService State für Persistierung
+
+        Returns:
+            Dict mit ai_account und user_account State
+        """
+        return {
+            'ai_account': {
+                'balance': self.ai_account['balance'],
+                'realized_pnl': self.ai_account['realized_pnl'],
+                'unrealized_pnl': self.ai_account['unrealized_pnl'],
+                'active_positions': dict(self.ai_account['active_positions']),
+                'closed_positions': list(self.ai_account['closed_positions']),
+                'total_trades': self.ai_account['total_trades'],
+                'winning_trades': self.ai_account['winning_trades'],
+                'losing_trades': self.ai_account['losing_trades']
+            },
+            'user_account': {
+                'balance': self.user_account['balance'],
+                'realized_pnl': self.user_account['realized_pnl'],
+                'unrealized_pnl': self.user_account['unrealized_pnl'],
+                'active_positions': dict(self.user_account['active_positions']),
+                'closed_positions': list(self.user_account['closed_positions']),
+                'total_trades': self.user_account['total_trades'],
+                'winning_trades': self.user_account['winning_trades'],
+                'losing_trades': self.user_account['losing_trades']
+            }
+        }
+
+    def load_from_dict(self, state: Dict[str, Any]) -> bool:
+        """
+        Lädt AccountService State aus persistiertem Dict
+
+        Args:
+            state: Dict mit ai_account und user_account State
+
+        Returns:
+            True wenn erfolgreich geladen
+        """
+        try:
+            # AI Account laden
+            if 'ai_account' in state:
+                ai_state = state['ai_account']
+                self.ai_account['balance'] = float(ai_state.get('balance', 500000.0))
+                self.ai_account['realized_pnl'] = float(ai_state.get('realized_pnl', 0.0))
+                self.ai_account['unrealized_pnl'] = float(ai_state.get('unrealized_pnl', 0.0))
+                self.ai_account['active_positions'] = dict(ai_state.get('active_positions', {}))
+                self.ai_account['closed_positions'] = list(ai_state.get('closed_positions', []))
+                self.ai_account['total_trades'] = int(ai_state.get('total_trades', 0))
+                self.ai_account['winning_trades'] = int(ai_state.get('winning_trades', 0))
+                self.ai_account['losing_trades'] = int(ai_state.get('losing_trades', 0))
+
+            # User Account laden
+            if 'user_account' in state:
+                user_state = state['user_account']
+                self.user_account['balance'] = float(user_state.get('balance', 500000.0))
+                self.user_account['realized_pnl'] = float(user_state.get('realized_pnl', 0.0))
+                self.user_account['unrealized_pnl'] = float(user_state.get('unrealized_pnl', 0.0))
+                self.user_account['active_positions'] = dict(user_state.get('active_positions', {}))
+                self.user_account['closed_positions'] = list(user_state.get('closed_positions', []))
+                self.user_account['total_trades'] = int(user_state.get('total_trades', 0))
+                self.user_account['winning_trades'] = int(user_state.get('winning_trades', 0))
+                self.user_account['losing_trades'] = int(user_state.get('losing_trades', 0))
+
+            logger.info(f"[AccountService] State geladen - AI Positions: {len(self.ai_account['active_positions'])}, "
+                       f"User Positions: {len(self.user_account['active_positions'])}")
+            return True
+
+        except Exception as e:
+            logger.error(f"[AccountService] Fehler beim Laden des State: {e}")
+            return False

@@ -400,6 +400,9 @@ async def handle_websocket_commands(
                     })
                     logger.info(f"[WS] account_update broadcast complete")
 
+                    # Speichere Account State (inkl. neue Position) in Config
+                    config_service.save_account_state(account_service.to_dict())
+
                     logger.info(f"[WS] Trade executed: {position_id} on {account_type} account")
                     logger.info(f"[WS] Direction: {direction}, Entry: {entry_price}, Size: {position_size}")
 
@@ -485,6 +488,9 @@ async def handle_websocket_commands(
                         'type': 'account_update',
                         'accounts': all_accounts
                     })
+
+                    # Speichere Account State (Position wurde geschlossen) in Config
+                    config_service.save_account_state(account_service.to_dict())
 
                     logger.info(f"[WS] Manual close broadcasted for position {position_id}")
 
@@ -915,18 +921,22 @@ async def handle_websocket_commands(
                         trade_record = TradeRecord(
                             trade_id=trade_id,
                             timestamp=datetime.now().isoformat(),
-                            direction='unknown',
+                            action='hold',  # Changed from 'direction' to 'action'
                             entry_price=0.0,
                             sl_price=0.0,
                             tp_price=0.0,
-                            outcome='pending',
+                            exit_price=None,  # Changed from 'outcome'
                             pnl=0.0,
                             state_hash='unknown',
-                            evaluation=human_eval
+                            observation=[],  # Required field
+                            patterns={},  # Required field
+                            session_info={},  # Required field
+                            volume_info={},  # Required field
+                            human_evaluation=human_eval  # Changed from 'evaluation'
                         )
 
                         # Speichere Feedback
-                        feedback_system.storage.save_training_feedback(trade_record)
+                        feedback_system.storage.save_training_feedback(trade_record.to_dict())
                         logger.info(f"[WS] [OK] Feedback gespeichert (Position nicht aktiv)")
 
                         await websocket.send_json({
@@ -957,18 +967,22 @@ async def handle_websocket_commands(
                     trade_record = TradeRecord(
                         trade_id=trade_id,
                         timestamp=datetime.now().isoformat(),
-                        direction=direction,
+                        action=direction,  # Changed from 'direction' to 'action'
                         entry_price=entry_price,
                         sl_price=sl_price,
                         tp_price=tp_price,
-                        outcome='pending',
+                        exit_price=None,  # Changed from 'outcome' - trade still active
                         pnl=pnl,
                         state_hash=state_hash,
-                        evaluation=human_eval
+                        observation=[],  # Required field - TODO: get from context
+                        patterns={},  # Required field - TODO: get from context
+                        session_info={},  # Required field - TODO: get from context
+                        volume_info={},  # Required field - TODO: get from context
+                        human_evaluation=human_eval  # Changed from 'evaluation'
                     )
 
                     # Speichere Feedback
-                    feedback_system.storage.save_training_feedback(trade_record)
+                    feedback_system.storage.save_training_feedback(trade_record.to_dict())
                     logger.info(f"[WS] [OK] Feedback gespeichert für {trade_id} (State Hash: {state_hash[:8]}...)")
 
                     # Berechne Feedback Reward für RL Training
@@ -1002,6 +1016,55 @@ async def handle_websocket_commands(
                     await websocket.send_json({
                         'type': 'error',
                         'message': f'Trade Feedback failed: {str(e)}'
+                    })
+
+
+            # ========== BATCH FEEDBACK COMMAND ==========
+
+            elif command_type == 'batch_feedback':
+                try:
+                    if not training_service:
+                        await websocket.send_json({
+                            'type': 'error',
+                            'message': 'Training Service nicht verfügbar'
+                        })
+                        continue
+
+                    # Batch Feedback Daten vom Client
+                    trade_id = data.get('trade_id')
+                    overall_score = data.get('overall_score', 0.0)
+                    ratings = data.get('ratings', {})
+                    notes = data.get('notes', '')
+
+                    logger.info(f"[BATCH] Feedback empfangen für {trade_id}")
+                    logger.info(f"[BATCH] Overall Score: {overall_score:.2f}/5.0")
+
+                    # Convert 5-star ratings (0-5) to reward (0-1)
+                    # Overall score is average of 6 criteria, already normalized
+                    feedback_reward = overall_score / 5.0
+
+                    # Training Mode: KI lernt aus Feedback
+                    training_service.on_feedback_received(trade_id, feedback_reward)
+
+                    # Broadcast Success
+                    await manager.broadcast({
+                        'type': 'batch_feedback_saved',
+                        'trade_id': trade_id,
+                        'overall_score': overall_score,
+                        'feedback_reward': feedback_reward,
+                        'batch_number': training_service.total_batches,
+                        'message': f'Batch #{training_service.total_batches} Feedback gespeichert - Weiter mit nächsten 10 Trades!'
+                    })
+
+                    logger.info(f"[BATCH] Feedback verarbeitet - Nächster Batch startet")
+
+                except Exception as e:
+                    logger.error(f"[BATCH] Batch Feedback error: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    await websocket.send_json({
+                        'type': 'error',
+                        'message': f'Batch Feedback failed: {str(e)}'
                     })
 
 

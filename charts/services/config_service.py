@@ -185,3 +185,45 @@ class ConfigService:
         except Exception as e:
             logger.error(f"[ConfigService] Error resetting config: {e}")
             return False
+
+    def save_account_state(self, account_state: Dict[str, Any]) -> bool:
+        """
+        Speichert AccountService State (inkl. Positionen) in Config
+
+        Args:
+            account_state: Dict von AccountService.to_dict()
+
+        Returns:
+            True wenn erfolgreich
+        """
+        try:
+            self.config["account_state"] = account_state
+            self._save_config(self.config)
+
+            # Log Positions Count
+            ai_positions = len(account_state.get('ai_account', {}).get('active_positions', {}))
+            user_positions = len(account_state.get('user_account', {}).get('active_positions', {}))
+            logger.info(f"[ConfigService] Account State saved - AI: {ai_positions} positions, User: {user_positions} positions")
+
+            return True
+        except Exception as e:
+            logger.error(f"[ConfigService] Error saving account state: {e}")
+            return False
+
+    def load_account_state(self) -> Optional[Dict[str, Any]]:
+        """
+        Lädt AccountService State aus Config
+
+        Returns:
+            Dict mit account_state oder None wenn nicht vorhanden
+        """
+        account_state = self.config.get("account_state")
+
+        if account_state:
+            ai_positions = len(account_state.get('ai_account', {}).get('active_positions', {}))
+            user_positions = len(account_state.get('user_account', {}).get('active_positions', {}))
+            logger.info(f"[ConfigService] Account State loaded - AI: {ai_positions} positions, User: {user_positions} positions")
+        else:
+            logger.info("[ConfigService] No account state found in config")
+
+        return account_state

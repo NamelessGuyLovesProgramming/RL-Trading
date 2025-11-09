@@ -55,6 +55,45 @@ def setup_account_routes(app, account_service, config_service):
                 "message": f"Fehler beim Laden der Account-Daten: {str(e)}"
             }
 
+    @router.get("/positions")
+    async def get_active_positions() -> Dict[str, Any]:
+        """
+        GET /api/account/positions
+
+        Gibt alle aktiven Positionen zurück (AI & User)
+
+        Returns:
+            {
+                "status": "success",
+                "positions": [
+                    {
+                        "id": "pos_123",
+                        "entry_price": 17500.0,
+                        "sl_price": 17450.0,
+                        "tp_price": 17600.0,
+                        "direction": "long",
+                        "account_type": "user",
+                        "unrealized_pnl": 50.0,
+                        ...
+                    }
+                ]
+            }
+        """
+        try:
+            # Hole alle aktiven Positionen (beide Accounts)
+            positions = account_service.get_active_positions()
+
+            return {
+                "status": "success",
+                "positions": positions,
+                "count": len(positions)
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Fehler beim Laden der Positionen: {str(e)}"
+            }
+
     @router.post("/update-balance")
     async def update_balance(request: UpdateBalanceRequest) -> Dict[str, Any]:
         """
