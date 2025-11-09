@@ -1,0 +1,287 @@
+/* Model Manager Panel */
+.model-manager-panel {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    width: 350px;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    z-index: 1000;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+.model-manager-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: #252525;
+    border-bottom: 1px solid #333;
+    border-radius: 8px 8px 0 0;
+}
+
+.model-manager-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+
+.close-btn:hover {
+    color: #fff;
+}
+
+.model-manager-content {
+    padding: 16px;
+}
+
+/* Model Selection */
+.model-section {
+    margin-bottom: 16px;
+}
+
+.model-section label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: #999;
+}
+
+.model-select {
+    width: 100%;
+    padding: 8px 12px;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+.model-select:focus {
+    outline: none;
+    border-color: #4a9eff;
+}
+
+/* Buttons */
+button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+.btn-small:hover {
+    background: #4a4a4a;
+}
+
+.btn-primary {
+    width: 100%;
+    padding: 10px;
+    background: #4a9eff;
+    color: #fff;
+    font-weight: 500;
+}
+
+.btn-primary:hover {
+    background: #3a8eef;
+}
+
+.btn-secondary {
+    padding: 10px 20px;
+    background: #3a3a3a;
+    color: #e0e0e0;
+}
+
+.btn-secondary:hover {
+    background: #4a4a4a;
+}
+
+.btn-danger-small {
+    padding: 4px 8px;
+    background: #d73a49;
+    color: #fff;
+    font-size: 11px;
+}
+
+.btn-danger-small:hover {
+    background: #c72a3a;
+}
+
+/* Model Info */
+.model-info {
+    background: #252525;
+    padding: 12px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 12px;
+}
+
+.info-row .label {
+    color: #999;
+}
+
+.metric {
+    font-weight: 500;
+}
+
+.metric.positive {
+    color: #28a745;
+}
+
+.metric.negative {
+    color: #d73a49;
+}
+
+.metric.warning {
+    color: #ffa500;
+}
+
+/* Training Progress */
+.training-progress {
+    background: #252525;
+    padding: 12px;
+    border-radius: 4px;
+    margin-top: 16px;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.progress-header span {
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 8px;
+    background: #1a1a1a;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4a9eff, #28a745);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.progress-text {
+    font-size: 11px;
+    color: #999;
+    text-align: center;
+}
+
+.progress-metrics {
+    font-size: 11px;
+    color: #999;
+    text-align: center;
+    margin-top: 6px;
+}
+
+/* Training Dialog (Modal) */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+    z-index: 2000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-content {
+    background: #1e1e1e;
+    padding: 24px;
+    border-radius: 8px;
+    border: 1px solid #333;
+    width: 400px;
+    max-width: 90%;
+}
+
+.modal-content h3 {
+    margin: 0 0 20px 0;
+    font-size: 16px;
+}
+
+.modal-content label {
+    display: block;
+    margin: 12px 0 6px 0;
+    font-size: 12px;
+    color: #999;
+}
+
+.modal-content input,
+.modal-content select {
+    width: 100%;
+    padding: 8px 12px;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 13px;
+    box-sizing: border-box;
+}
+
+.modal-content input:focus,
+.modal-content select:focus {
+    outline: none;
+    border-color: #4a9eff;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.modal-actions button {
+    flex: 1;
+    padding: 10px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .model-manager-panel {
+        width: calc(100% - 40px);
+        left: 20px;
+        right: 20px;
+    }
+}
