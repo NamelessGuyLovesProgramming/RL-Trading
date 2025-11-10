@@ -2776,24 +2776,31 @@
 
                 case 'pause_play_mode':
                     // 🎯 AUTO-PAUSE: Position geschlossen (TP/SL Hit) - Play pausieren
-                    console.log('[AUTO-PAUSE] Position closed - pausing play mode', message);
+                    console.log('[AUTO-PAUSE] Position closed - checking if play mode is active', message);
 
-                    // Send API call to toggle play mode off
-                    fetch('/api/debug/toggle_play', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' }
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('[AUTO-PAUSE] Play mode stopped via API:', data);
-                    })
-                    .catch(error => {
-                        console.error('[AUTO-PAUSE] Failed to stop play mode:', error);
-                    });
+                    // ⚠️ FIX: Nur pausieren wenn PLAY läuft (nicht wenn schon PAUSE ist)
+                    if (window.isPlaying) {
+                        console.log('[AUTO-PAUSE] Play mode is active - pausing...');
 
-                    // Show notification
-                    if (message.message) {
-                        showNotification(message.message, 'info');
+                        // Send API call to toggle play mode off
+                        fetch('/api/debug/toggle_play', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('[AUTO-PAUSE] Play mode stopped via API:', data);
+                        })
+                        .catch(error => {
+                            console.error('[AUTO-PAUSE] Failed to stop play mode:', error);
+                        });
+
+                        // Show notification
+                        if (message.message) {
+                            showNotification(message.message, 'info');
+                        }
+                    } else {
+                        console.log('[AUTO-PAUSE] Play mode is already paused - ignoring');
                     }
                     break;
 

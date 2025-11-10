@@ -1,20 +1,13 @@
 /**
  * Feedback Modal System
- * Handles 6-criteria trade evaluation with star ratings
+ * Simplified 3-level rating: Good / OK / Bad
  */
 
 class FeedbackModal {
     constructor() {
         this.isOpen = false;
         this.currentTrade = null;
-        this.ratings = {
-            entry_timing: 0,
-            pattern_recognition: 0,
-            sl_placement: 0,
-            tp_placement: 0,
-            liquidity_sweeps: 0,
-            volume_analysis: 0
-        };
+        this.rating = null; // "good", "ok", or "bad"
         this.notes = '';
 
         this.init();
@@ -48,7 +41,7 @@ class FeedbackModal {
                             <span id="feedbackModalTitleText">Trade Bewertung</span>
                         </h2>
                         <p class="feedback-modal-subtitle" id="feedbackModalSubtitle">
-                            Bewerte diesen Trade nach 6 Kriterien
+                            Wie war dieser Trade?
                         </p>
                     </div>
 
@@ -80,121 +73,23 @@ class FeedbackModal {
 
                     <!-- Body -->
                     <div class="feedback-modal-body">
-                        <!-- Criteria -->
-                        <div class="feedback-criteria">
-                            <!-- Entry Timing -->
-                            <div class="feedback-criterion">
-                                <div class="criterion-header">
-                                    <span class="criterion-icon">📍</span>
-                                    <span class="criterion-title">Entry-Timing</span>
-                                </div>
-                                <div class="criterion-description">
-                                    Hat die KI auf Session-Grenzen geachtet?
-                                </div>
-                                <div class="star-rating" data-criterion="entry_timing">
-                                    <span class="star" data-value="1">☆</span>
-                                    <span class="star" data-value="2">☆</span>
-                                    <span class="star" data-value="3">☆</span>
-                                    <span class="star" data-value="4">☆</span>
-                                    <span class="star" data-value="5">☆</span>
-                                </div>
-                                <div class="criterion-hint" id="hint-entry_timing"></div>
-                            </div>
-
-                            <!-- Pattern Recognition -->
-                            <div class="feedback-criterion">
-                                <div class="criterion-header">
-                                    <span class="criterion-icon">📈</span>
-                                    <span class="criterion-title">Pattern-Erkennung</span>
-                                </div>
-                                <div class="criterion-description">
-                                    Wurden FVG, Order Blocks richtig erkannt?
-                                </div>
-                                <div class="star-rating" data-criterion="pattern_recognition">
-                                    <span class="star" data-value="1">☆</span>
-                                    <span class="star" data-value="2">☆</span>
-                                    <span class="star" data-value="3">☆</span>
-                                    <span class="star" data-value="4">☆</span>
-                                    <span class="star" data-value="5">☆</span>
-                                </div>
-                                <div class="criterion-hint" id="hint-pattern_recognition"></div>
-                            </div>
-
-                            <!-- Stop Loss -->
-                            <div class="feedback-criterion">
-                                <div class="criterion-header">
-                                    <span class="criterion-icon">🛑</span>
-                                    <span class="criterion-title">Stop-Loss Platzierung</span>
-                                </div>
-                                <div class="criterion-description">
-                                    Ist SL unter/über Session H/L platziert?
-                                </div>
-                                <div class="star-rating" data-criterion="sl_placement">
-                                    <span class="star" data-value="1">☆</span>
-                                    <span class="star" data-value="2">☆</span>
-                                    <span class="star" data-value="3">☆</span>
-                                    <span class="star" data-value="4">☆</span>
-                                    <span class="star" data-value="5">☆</span>
-                                </div>
-                                <div class="criterion-hint" id="hint-sl_placement"></div>
-                            </div>
-
-                            <!-- Take Profit -->
-                            <div class="feedback-criterion">
-                                <div class="criterion-header">
-                                    <span class="criterion-icon">🎯</span>
-                                    <span class="criterion-title">Take-Profit Platzierung</span>
-                                </div>
-                                <div class="criterion-description">
-                                    TP bei Liquidity Zone / realistisch?
-                                </div>
-                                <div class="star-rating" data-criterion="tp_placement">
-                                    <span class="star" data-value="1">☆</span>
-                                    <span class="star" data-value="2">☆</span>
-                                    <span class="star" data-value="3">☆</span>
-                                    <span class="star" data-value="4">☆</span>
-                                    <span class="star" data-value="5">☆</span>
-                                </div>
-                                <div class="criterion-hint" id="hint-tp_placement"></div>
-                            </div>
-
-                            <!-- Liquidity Sweeps -->
-                            <div class="feedback-criterion">
-                                <div class="criterion-header">
-                                    <span class="criterion-icon">💧</span>
-                                    <span class="criterion-title">Liquidity Sweeps</span>
-                                </div>
-                                <div class="criterion-description">
-                                    Wurden Sweeps erkannt und genutzt?
-                                </div>
-                                <div class="star-rating" data-criterion="liquidity_sweeps">
-                                    <span class="star" data-value="1">☆</span>
-                                    <span class="star" data-value="2">☆</span>
-                                    <span class="star" data-value="3">☆</span>
-                                    <span class="star" data-value="4">☆</span>
-                                    <span class="star" data-value="5">☆</span>
-                                </div>
-                                <div class="criterion-hint" id="hint-liquidity_sweeps"></div>
-                            </div>
-
-                            <!-- Volume Analysis -->
-                            <div class="feedback-criterion">
-                                <div class="criterion-header">
-                                    <span class="criterion-icon">📊</span>
-                                    <span class="criterion-title">Volume Analyse</span>
-                                </div>
-                                <div class="criterion-description">
-                                    Volume-Spikes beachtet?
-                                </div>
-                                <div class="star-rating" data-criterion="volume_analysis">
-                                    <span class="star" data-value="1">☆</span>
-                                    <span class="star" data-value="2">☆</span>
-                                    <span class="star" data-value="3">☆</span>
-                                    <span class="star" data-value="4">☆</span>
-                                    <span class="star" data-value="5">☆</span>
-                                </div>
-                                <div class="criterion-hint" id="hint-volume_analysis"></div>
-                            </div>
+                        <!-- 3-Level Rating Buttons -->
+                        <div class="feedback-rating-buttons">
+                            <button class="rating-btn rating-btn-good" id="ratingBtnGood" data-rating="good">
+                                <span class="rating-icon">👍</span>
+                                <span class="rating-label">Gut</span>
+                                <span class="rating-desc">Würde ich 100% wieder so machen</span>
+                            </button>
+                            <button class="rating-btn rating-btn-ok" id="ratingBtnOk" data-rating="ok">
+                                <span class="rating-icon">😐</span>
+                                <span class="rating-label">OK</span>
+                                <span class="rating-desc">Funktioniert, aber könnte besser sein</span>
+                            </button>
+                            <button class="rating-btn rating-btn-bad" id="ratingBtnBad" data-rating="bad">
+                                <span class="rating-icon">👎</span>
+                                <span class="rating-label">Schlecht</span>
+                                <span class="rating-desc">Fehler gemacht, nicht wiederholen</span>
+                            </button>
                         </div>
 
                         <!-- Notes -->
@@ -202,19 +97,8 @@ class FeedbackModal {
                             <label for="feedbackNotes">Notizen (optional)</label>
                             <textarea
                                 id="feedbackNotes"
-                                placeholder="Z.B. 'Zu früh eingestiegen, sollte auf Session Close warten...'"
+                                placeholder="Z.B. 'Zu früh eingestiegen, hätte auf Bestätigung warten sollen...'"
                             ></textarea>
-                        </div>
-
-                        <!-- Overall Score -->
-                        <div class="feedback-overall-score">
-                            <div class="overall-score-label">Gesamt-Score</div>
-                            <div class="overall-score-value">
-                                <span id="overallScoreValue">0.0</span>
-                                <span>/</span>
-                                <span>5.0</span>
-                                <span class="overall-score-stars" id="overallScoreStars"></span>
-                            </div>
                         </div>
                     </div>
 
@@ -247,13 +131,9 @@ class FeedbackModal {
         const notifBtn = document.getElementById('tradeNotificationBtn');
         notifBtn.addEventListener('click', () => this.show());
 
-        // Modal overlay (close on outside click)
-        const overlay = document.getElementById('feedbackModalOverlay');
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                this.hide();
-            }
-        });
+        // ⚠️ FIX: Modal darf NICHT durch Außenklick geschlossen werden
+        // Modal kann nur durch X-Button, Speichern oder Löschen geschlossen werden
+        // (Overlay Click Listener entfernt)
 
         // Cancel button
         document.getElementById('feedbackCancelBtn').addEventListener('click', () => {
@@ -270,28 +150,11 @@ class FeedbackModal {
             this.delete();
         });
 
-        // Star ratings
-        document.querySelectorAll('.star-rating').forEach(container => {
-            const criterion = container.dataset.criterion;
-            const stars = container.querySelectorAll('.star');
-
-            stars.forEach(star => {
-                // Click
-                star.addEventListener('click', () => {
-                    const value = parseInt(star.dataset.value);
-                    this.setRating(criterion, value);
-                });
-
-                // Hover
-                star.addEventListener('mouseenter', () => {
-                    const value = parseInt(star.dataset.value);
-                    this.highlightStars(criterion, value);
-                });
-            });
-
-            // Mouse leave - restore actual rating
-            container.addEventListener('mouseleave', () => {
-                this.highlightStars(criterion, this.ratings[criterion]);
+        // Rating buttons
+        document.querySelectorAll('.rating-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const rating = btn.dataset.rating;
+                this.setRating(rating);
             });
         });
 
@@ -301,40 +164,22 @@ class FeedbackModal {
         });
     }
 
-    setRating(criterion, value) {
-        this.ratings[criterion] = value;
-        this.highlightStars(criterion, value);
-        this.updateOverallScore();
-    }
-
-    highlightStars(criterion, value) {
-        const container = document.querySelector(`.star-rating[data-criterion="${criterion}"]`);
-        const stars = container.querySelectorAll('.star');
-
-        stars.forEach((star, index) => {
-            if (index < value) {
-                star.textContent = '★';
-                star.classList.add('active');
-            } else {
-                star.textContent = '☆';
-                star.classList.remove('active');
-            }
+    setRating(rating) {
+        // Remove active class from all buttons
+        document.querySelectorAll('.rating-btn').forEach(btn => {
+            btn.classList.remove('active');
         });
-    }
 
-    updateOverallScore() {
-        const ratings = Object.values(this.ratings);
-        const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-
-        document.getElementById('overallScoreValue').textContent = avg.toFixed(1);
-
-        // Update stars
-        const fullStars = Math.floor(avg);
-        let starsHTML = '';
-        for (let i = 0; i < 5; i++) {
-            starsHTML += i < fullStars ? '★' : '☆';
+        // Add active class to selected button
+        const selectedBtn = document.querySelector(`.rating-btn[data-rating="${rating}"]`);
+        if (selectedBtn) {
+            selectedBtn.classList.add('active');
         }
-        document.getElementById('overallScoreStars').textContent = starsHTML;
+
+        // Store rating
+        this.rating = rating;
+
+        console.log(`[FeedbackModal] Rating set to: ${rating}`);
     }
 
     showNotification(tradeData) {
@@ -412,37 +257,25 @@ class FeedbackModal {
         }
     }
 
-    updateHints(hints) {
-        Object.keys(hints).forEach(criterion => {
-            const hintEl = document.getElementById(`hint-${criterion}`);
-            if (!hintEl) return;
-
-            const hintData = hints[criterion];
-            const suggested = hintData.suggested_stars;
-
-            // Determine hint class
-            let hintClass = '';
-            if (suggested >= 4) hintClass = '';
-            else if (suggested === 3) hintClass = 'warning';
-            else hintClass = 'error';
-
-            hintEl.className = `criterion-hint ${hintClass}`;
-            hintEl.innerHTML = `
-                <span class="icon">💡</span>
-                <span>${hintData.hint}</span>
-            `;
-
-            // Auto-set suggested rating
-            this.setRating(criterion, suggested);
-        });
-    }
-
     save() {
+        // Validate rating
+        if (!this.rating) {
+            alert('Bitte bewerte den Trade (Gut/OK/Schlecht)');
+            return;
+        }
+
+        // Convert rating to numerical value
+        const ratingValue = {
+            'good': 1.0,
+            'ok': 0.5,
+            'bad': 0.0
+        }[this.rating];
+
         const evaluation = {
             trade_id: this.currentTrade.trade_id,
-            ratings: { ...this.ratings },
+            rating: this.rating,  // "good", "ok", or "bad"
+            rating_value: ratingValue,  // 1.0, 0.5, or 0.0
             notes: this.notes,
-            overall_score: Object.values(this.ratings).reduce((a, b) => a + b, 0) / 6,
             timestamp: new Date().toISOString()
         };
 
@@ -500,24 +333,22 @@ class FeedbackModal {
     }
 
     reset() {
-        // Reset ratings
-        Object.keys(this.ratings).forEach(key => {
-            this.ratings[key] = 0;
-            this.highlightStars(key, 0);
+        // Reset rating
+        this.rating = null;
+
+        // Remove active class from all buttons
+        document.querySelectorAll('.rating-btn').forEach(btn => {
+            btn.classList.remove('active');
         });
 
         // Reset notes
         this.notes = '';
-        document.getElementById('feedbackNotes').value = '';
+        const notesEl = document.getElementById('feedbackNotes');
+        if (notesEl) {
+            notesEl.value = '';
+        }
 
-        // Reset overall score
-        this.updateOverallScore();
-
-        // Clear hints
-        document.querySelectorAll('.criterion-hint').forEach(el => {
-            el.innerHTML = '';
-            el.className = 'criterion-hint';
-        });
+        console.log('[FeedbackModal] Reset');
     }
 }
 
@@ -529,3 +360,58 @@ document.addEventListener('DOMContentLoaded', () => {
 
     console.log('[FeedbackModal] Ready');
 });
+
+// Global function for batch trading workflow
+function openAIFeedbackModal(tradeData) {
+    if (!window.feedbackModal) {
+        console.error('[openAIFeedbackModal] Feedback modal not initialized');
+        return;
+    }
+
+    // Convert batch trade data to modal format
+    const modalTradeData = {
+        trade_id: tradeData.trade_id,
+        action: tradeData.action,
+        entry_price: tradeData.position.entry_price,
+        sl_price: tradeData.position.sl_price,
+        tp_price: tradeData.position.tp_price,
+        source: 'ai',
+        reasoning: tradeData.reasoning,
+        confidence: tradeData.confidence
+    };
+
+    console.log('[openAIFeedbackModal] Opening modal for batch trade:', modalTradeData);
+
+    // Open modal
+    window.feedbackModal.show(modalTradeData);
+
+    // Hook: After save, resume chart playback
+    window.feedbackModal.onSave = function(evaluation) {
+        console.log('[openAIFeedbackModal] Feedback saved, resuming chart...');
+
+        // Resume chart playback
+        if (window.togglePlay && !window.isPlaying) {
+            setTimeout(() => {
+                togglePlay(); // Resume chart
+                console.log('[openAIFeedbackModal] Chart resumed');
+            }, 500);
+        }
+
+        // Send feedback to training service
+        if (window.chartWs && window.chartWs.readyState === WebSocket.OPEN) {
+            window.chartWs.send(JSON.stringify({
+                type: 'batch_feedback',
+                trade_id: evaluation.trade_id,
+                overall_score: evaluation.overall_score,
+                ratings: evaluation.ratings,
+                notes: evaluation.notes
+            }));
+        }
+
+        // Clear hook
+        delete window.feedbackModal.onSave;
+    };
+}
+
+// Make globally accessible
+window.openAIFeedbackModal = openAIFeedbackModal;
