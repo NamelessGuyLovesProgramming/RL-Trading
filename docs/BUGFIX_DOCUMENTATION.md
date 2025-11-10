@@ -1,5 +1,95 @@
 # RL Trading Chart - Bugfix Dokumentation
 
+## Claude Preferences Optimierung - 10.11.2025 📋
+
+### Problem:
+**Preferences-Datei zu lang und unübersichtlich:**
+```
+1. 284 Zeilen → schwer zu navigieren
+2. Kommunikations-Stil nimmt 30% Platz ein (87 Zeilen)
+3. Session Start/Ende unklar definiert
+4. Widerspruch: Git Signatur (Zeile 222 vs 270)
+5. Redundanzen: TodoWrite, Process Management mehrfach
+6. Project Specifics mit Code-Details vermischt
+```
+
+**Auswirkungen:**
+- Wichtige Regeln (Session Start, Process) gehen unter
+- Zu viele redundante Beispiele in Kommunikations-Section
+- Unklarer Server-Start Workflow
+- Testing-Befehle nie genutzt
+
+### Root Cause:
+**Organisches Wachstum ohne Refactoring:**
+- Preferences über mehrere Sessions gewachsen
+- Beispiele angehäuft statt komprimiert
+- Keine Priorisierung (wichtig vs. nice-to-have)
+- Testing-Section nie aufgeräumt
+
+### Fix Locations:
+
+#### 1. UNDERSTAND Phase erweitert
+**File:** `.claude-preferences.md:9-11`
+```markdown
+- ⚠️ KRITISCH: AKTIV NACHFRAGEN bis ALLES zu 100% klar ist!
+- Bei Unsicherheit: Lieber 3x nachfragen als falsch umsetzen
+```
+
+#### 2. SESSION START Workflow hinzugefügt
+**File:** `.claude-preferences.md:83-100`
+```markdown
+### ⚡ SESSION START (AUTOMATISCH!)
+Bei jeder neuen Session SOFORT ausführen:
+1. Background-Shells Cleanup
+2. Chart Server Neustart (in Kette)
+3. Erwartete Ausgabe prüfen
+
+Workflow: Clean Shells → Kill Prozesse → Server Start → Verify
+```
+
+#### 3. Git Signatur Widerspruch entfernt
+**File:** `.claude-preferences.md:169-176`
+```markdown
+⚠️ KEINE "Claude Code" Signatur in Commits!
+NIEMALS `Generated with Claude Code` oder `Co-Authored-By: Claude`
+```
+
+#### 4. Kommunikations-Stil gekürzt
+**File:** `.claude-preferences.md:59-79`
+- Von 87 → 21 Zeilen (-76%)
+- Essenz behalten: Oma-Regel, Ultra-Simpel, Grundsätze
+- Redundante Beispiele entfernt
+
+#### 5. Testing Section entfernt
+**File:** `.claude-preferences.md:139-154`
+- Alle Testing-Befehle entfernt
+- Nur noch: `py charts/chart_server.py`
+- User nutzt nur "starte das projekt"
+
+#### 6. Project Specifics → Quick Reference
+**File:** `.claude-preferences.md:178-183`
+- Von 26 → 6 Zeilen
+- Nur essenzielle Info: Port, Asset, Timezone
+
+### Prevention:
+- **Regelmäßiges Review**: Alle 10-15 Sessions Preferences prüfen
+- **Priorisierung**: Wichtige Regeln oben, Details unten
+- **Beispiel-Limit**: Max. 1 Beispiel pro Konzept
+- **User Feedback**: "Nutzt du X?" fragen vor Behalten
+- **Metriken tracken**: Zeilen pro Section überwachen
+
+### Ergebnis:
+```
+Vorher: 284 Zeilen
+Nachher: 166 Zeilen (-42% 🎉)
+
+Kommunikation: 87 → 21 Zeilen (-76%)
+Quick Commands: 38 → 16 Zeilen (-58%)
+Project Specifics: 26 → 6 Zeilen (-77%)
+```
+
+---
+
 ## Position Persistence: Browser Refresh löscht aktive Positionen - 09.11.2025 💾
 
 ### Problem:
