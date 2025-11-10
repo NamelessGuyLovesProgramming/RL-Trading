@@ -2710,6 +2710,17 @@
                     alert(`Backend Error: ${message.message}`);
                     break;
 
+                case 'show_feedback_modal':
+                    // 📝 Show Feedback Modal for User Trades (Demo Collection)
+                    console.log('[FEEDBACK] Opening feedback modal for user trade', message.trade_data);
+
+                    if (window.feedbackModal) {
+                        window.feedbackModal.show(message.trade_data);
+                    } else {
+                        console.error('[FEEDBACK] Feedback modal not initialized!');
+                    }
+                    break;
+
                 case 'ai_trade_executed':
                 case 'ai_position_closed':
                 case 'ai_mode_toggled':
@@ -2783,6 +2794,74 @@
                     // Show notification
                     if (message.message) {
                         showNotification(message.message, 'info');
+                    }
+                    break;
+
+                case 'skip_to_time_progress':
+                    // Progress Updates während Skip To Time
+                    console.log(`⏩ Skip Progress: ${message.current}/${message.total} candles`);
+
+                    // Update Chart mit aktueller Kerze
+                    if (isInitialized && message.candle) {
+                        candlestickSeries.update(message.candle);
+                        updateChartTime(message.candle.time);
+
+                        // Store last candle for PnL
+                        window.lastCandleClose = message.candle.close;
+                        window.lastCandle = message.candle;
+
+                        // Update PnL for all active positions
+                        calculateAllPositionsPnL(message.candle.close);
+                    }
+                    break;
+
+                case 'skip_to_time_complete':
+                    // ⚡ BULK-RENDER: Alle Kerzen schnell nacheinander rendern
+                    console.log(`✅ Skip Complete: ${message.candles_skipped} candles skipped`);
+                    console.log(`🕒 Final Time: ${message.final_time}`);
+
+                    if (isInitialized && message.all_candles && message.all_candles.length > 0) {
+                        // ⚡ Rendere alle Kerzen schnell nacheinander (30ms delay)
+                        let candleIndex = 0;
+                        const renderInterval = setInterval(() => {
+                            if (candleIndex >= message.all_candles.length) {
+                                clearInterval(renderInterval);
+
+                                // ⚡ Final: Sync indicators nach allen Kerzen
+                                if (window.IndicatorManager) {
+                                    const candleData = window.candlestickSeries.data();
+                                    window.IndicatorManager.syncWithTimeframe(candleData);
+                                }
+
+                                console.log(`⚡ Bulk-Render complete: ${message.all_candles.length} candles`);
+                                return;
+                            }
+
+                            const candle = message.all_candles[candleIndex];
+                            candlestickSeries.update(candle);
+                            updateChartTime(candle.time);
+
+                            // Update last candle for PnL
+                            window.lastCandleClose = candle.close;
+                            window.lastCandle = candle;
+
+                            // Update PnL for all active positions
+                            calculateAllPositionsPnL(candle.close);
+
+                            candleIndex++;
+                        }, 30);  // ⚡ 30ms delay = ~33 candles/second = schnell aber sichtbar
+                    } else if (isInitialized && message.final_candle) {
+                        // Fallback: Nur letzte Kerze (falls all_candles nicht vorhanden)
+                        candlestickSeries.update(message.final_candle);
+                        updateChartTime(message.final_candle.time);
+                        window.lastCandleClose = message.final_candle.close;
+                        window.lastCandle = message.final_candle;
+                        calculateAllPositionsPnL(message.final_candle.close);
+
+                        if (window.IndicatorManager) {
+                            const candleData = window.candlestickSeries.data();
+                            window.IndicatorManager.syncWithTimeframe(candleData);
+                        }
                     }
                     break;
 
@@ -4404,10 +4483,28 @@
                                         const newStartIndex = startIndex + indexDelta;
                                         const newEndIndex = originalEndIndex + indexDelta;
 
-                                        if (newStartIndex >= 0 && newEndIndex < seriesData.length) {
-                                            box.timeStart = seriesData[newStartIndex].time;
-                                            box.timeEnd = seriesData[newEndIndex].time;
+                                        // ⭐ FIX: Erlaube Drag zur letzten Kerze, aber begrenze Start
+                                        // Clamp newStartIndex zu gültigen Grenzen (max = letzte Kerze)
+                                        const clampedStartIndex = Math.max(0, Math.min(newStartIndex, seriesData.length - 1));
+
+                                        // Ende kann über letzte Kerze hinaus (für TP in Zukunft)
+                                        const clampedEndIndex = Math.max(clampedStartIndex + 1, newEndIndex);
+
+                                        box.timeStart = seriesData[clampedStartIndex].time;
+
+                                        // ⭐ Ende: Falls über Daten hinaus, extrapoliere Zeit
+                                        if (clampedEndIndex >= seriesData.length) {
+                                            // Berechne Zeit-Delta pro Kerze
+                                            const timePerCandle = seriesData.length > 1
+                                                ? (seriesData[seriesData.length - 1].time - seriesData[0].time) / (seriesData.length - 1)
+                                                : 300; // Fallback: 5min
+                                            const beyondLastCandles = clampedEndIndex - (seriesData.length - 1);
+                                            box.timeEnd = seriesData[seriesData.length - 1].time + (beyondLastCandles * timePerCandle);
+                                        } else {
+                                            box.timeEnd = seriesData[clampedEndIndex].time;
                                         }
+
+                                        console.log(`📦 Box Drag: Start=${clampedStartIndex}, End=${clampedEndIndex} (Original: ${newStartIndex}, ${newEndIndex})`);
                                     }
                                 }
                             }
@@ -4787,6 +4884,23 @@
 
             if (isDragging) {
                 console.log('🎯 Box Resize beendet:', dragHandle);
+
+                // ⭐⭐⭐ HARD-LIMIT: Linker Handle (Box-Anfang) darf nicht über letzte Kerze hinaus ⭐⭐⭐
+                // Validierung NACH dem Resize, nicht während
+                const box = window.currentPositionBox;
+                if (box && box.timeStart) {
+                    const allData = candlestickSeries.data();
+                    if (allData && allData.length > 0) {
+                        const lastCandleTime = allData[allData.length - 1].time;
+                        if (box.timeStart > lastCandleTime) {
+                            box.timeStart = lastCandleTime;
+                            box.candleStartIndex = allData.length - 1;
+                            console.log(`🛑 Box-Anfang korrigiert auf letzte Kerze: ${lastCandleTime}`);
+                            drawPositionBox();  // Redraw mit korrigierter Position
+                        }
+                    }
+                }
+
                 isDragging = false;
                 dragHandle = null;
                 e.target.style.cursor = 'default';
@@ -4931,7 +5045,7 @@
                     // ⭐⭐⭐ WICHTIG: Update Kerzen-Index + Zeit für Canvas-Zeichnung ⭐⭐⭐
                     try {
                         // 🔮 UNBEGRENZTE ZEIT-EXTRAPOLATION FIX - Resize funktioniert auch in Zukunft
-                        const newTime = coordinateToTimeUnlimited(mouseX);
+                        let newTime = coordinateToTimeUnlimited(mouseX);
 
                         if (newTime !== null && !isNaN(newTime)) {
                             // ⭐ NEU: Finde Kerzen-Index zur neuen Zeit
@@ -6233,11 +6347,155 @@
             });
         }
 
+        // ⏰ Go To Specific Time Function (Smart: gleicher Tag wenn möglich) - Using Skip
+        function goToTime(timeString) {
+            serverLog(`[GO TO TIME] Skipping to ${timeString}`);
+
+            // Get current date from chart state
+            fetch('/api/chart/status')
+                .then(response => response.json())
+                .then(status => {
+                    if (!status.current_time) {
+                        throw new Error('No current_time in status');
+                    }
+
+                    // ⚡ SMART: Gleicher Tag wenn Zielzeit noch in Zukunft liegt
+                    const currentDate = new Date(status.current_time);
+                    const [targetHour, targetMinute] = timeString.split(':').map(Number);
+
+                    // ⚡ FIX: UTC-Methoden verwenden (da Backend in UTC arbeitet)
+                    // Versuche Zielzeit für heute
+                    const targetToday = new Date(currentDate);
+                    targetToday.setUTCHours(targetHour, targetMinute, 0, 0);
+
+                    // Wenn Zielzeit heute noch in der Zukunft liegt → heute verwenden
+                    // Sonst → nächsten Tag verwenden
+                    let targetDate;
+                    if (targetToday > currentDate) {
+                        targetDate = targetToday;  // ✅ Heute
+                        serverLog(`[GO TO TIME] Target: TODAY at ${timeString}`);
+                    } else {
+                        const targetTomorrow = new Date(currentDate);
+                        targetTomorrow.setUTCDate(targetTomorrow.getUTCDate() + 1);
+                        targetTomorrow.setUTCHours(targetHour, targetMinute, 0, 0);
+                        targetDate = targetTomorrow;  // ✅ Morgen
+                        serverLog(`[GO TO TIME] Target: NEXT DAY at ${timeString}`);
+                    }
+
+                    const targetDateTime = targetDate.toISOString().split('.')[0];
+
+                    serverLog(`[GO TO TIME] Target: ${targetDateTime}`);
+                    serverLog(`[GO TO TIME] Starting skip process...`);
+
+                    // Call Skip To Time API (generates candles instead of jumping)
+                    return fetch('/api/debug/skip_to_time', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            date: targetDateTime
+                        })
+                    });
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        console.log(`✅ Skipped to next day ${timeString}:`, data);
+                        serverLog(`[SUCCESS] Skipped ${data.candles_skipped} candles to ${timeString}`, data);
+                    } else {
+                        throw new Error(data.message || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error(`❌ Skip To ${timeString} Error:`, error);
+                    serverLog(`❌ Skip To ${timeString} failed: ${error.message}`);
+                    alert('Fehler beim Zeitsprung: ' + error.message);
+                });
+        }
+
+        // ➡️ Go To Next Trading Day Function - Using Skip
+        function goToNextTradingDay() {
+            serverLog('[GO TO NEXT DAY] Skipping to next trading day (08:00)');
+
+            fetch('/api/chart/status')
+                .then(response => response.json())
+                .then(status => {
+                    if (!status.current_time) {
+                        throw new Error('No current_time in status');
+                    }
+
+                    const currentDate = new Date(status.current_time);
+
+                    // Add 1 day
+                    currentDate.setDate(currentDate.setDate(currentDate.getDate() + 1));
+
+                    // Set to 08:00 (Asian session start)
+                    currentDate.setHours(8, 0, 0, 0);
+
+                    const targetDateTime = currentDate.toISOString().split('.')[0];
+
+                    serverLog(`[GO TO NEXT DAY] Target: ${targetDateTime}`);
+                    serverLog(`[GO TO NEXT DAY] Starting skip process...`);
+
+                    // Call Skip To Time API (generates candles instead of jumping)
+                    return fetch('/api/debug/skip_to_time', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            date: targetDateTime
+                        })
+                    });
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        console.log('✅ Skipped to next day (08:00):', data);
+                        serverLog(`[SUCCESS] Skipped ${data.candles_skipped} candles to next day 08:00`, data);
+                    } else {
+                        throw new Error(data.message || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('❌ Skip To Next Day Error:', error);
+                    serverLog('❌ Skip To Next Day failed: ' + error.message);
+                    alert('Fehler beim Zeitsprung: ' + error.message);
+                });
+        }
+
         // ⭐ Expose Date Modal functions globally for onclick handlers
         window.openDateModal = openDateModal;
         window.closeDateModal = closeDateModal;
         window.goToSelectedDate = goToSelectedDate;
         window.resetTimeToDataEnd = resetTimeToDataEnd;
+        window.goToTime = goToTime;
+        window.goToNextTradingDay = goToNextTradingDay;
+
+        // ⭐ Go To Dropdown Click Handler
+        const gotoBtn = document.getElementById('gotoBtn');
+        const gotoDropdown = document.querySelector('.goto-dropdown');
+
+        if (gotoBtn && gotoDropdown) {
+            // Toggle dropdown on button click
+            gotoBtn.addEventListener('click', function(event) {
+                event.stopPropagation();
+                gotoDropdown.classList.toggle('show');
+                serverLog('[GO TO] Dropdown toggled');
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(event) {
+                if (!gotoBtn.contains(event.target) && !gotoDropdown.contains(event.target)) {
+                    gotoDropdown.classList.remove('show');
+                }
+            });
+
+            // Close dropdown when clicking on an option
+            const gotoOptions = document.querySelectorAll('.goto-option');
+            gotoOptions.forEach(option => {
+                option.addEventListener('click', function() {
+                    gotoDropdown.classList.remove('show');
+                });
+            });
+        }
 
         // Modal schließen bei Escape-Taste
         document.addEventListener('keydown', function(event) {
@@ -6245,6 +6503,10 @@
                 const modal = document.getElementById('dateModal');
                 if (modal.style.display === 'flex') {
                     closeDateModal();
+                }
+                // Close Go To dropdown on Escape
+                if (gotoDropdown) {
+                    gotoDropdown.classList.remove('show');
                 }
             }
         });
