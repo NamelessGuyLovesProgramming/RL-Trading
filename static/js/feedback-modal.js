@@ -276,7 +276,15 @@ class FeedbackModal {
             rating: this.rating,  // "good", "ok", or "bad"
             rating_value: ratingValue,  // 1.0, 0.5, or 0.0
             notes: this.notes,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            // ⚡ FIX: Trade-Daten mitsenden für vollständige Speicherung
+            action: this.currentTrade.action,
+            entry_price: this.currentTrade.entry_price,
+            sl_price: this.currentTrade.sl_price,
+            tp_price: this.currentTrade.tp_price,
+            close_price: this.currentTrade.close_price,
+            realized_pnl: this.currentTrade.realized_pnl,
+            source: this.currentTrade.source || 'user'
         };
 
         console.log('[FeedbackModal] Saving evaluation:', evaluation);

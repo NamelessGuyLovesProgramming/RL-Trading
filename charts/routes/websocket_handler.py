@@ -99,6 +99,7 @@ async def handle_websocket_commands(
     debug_service,
     position_service,
     account_service,
+    config_service,
     unified_time_manager,
     chart_lifecycle_manager,
     data_validator,
@@ -492,6 +493,25 @@ async def handle_websocket_commands(
                     # Speichere Account State (Position wurde geschlossen) in Config
                     config_service.save_account_state(account_service.to_dict())
 
+                    # Trigger Feedback Modal für User Trades (Demo Collection)
+                    if account_type == 'user':
+                        # Hole Position Details für Feedback Modal
+                        position_data = close_result.get('closed_position', {})
+                        await manager.broadcast({
+                            'type': 'show_feedback_modal',
+                            'trade_data': {
+                                'trade_id': position_id,
+                                'action': position_data.get('direction', 'unknown'),
+                                'entry_price': position_data.get('entry_price', 0),
+                                'sl_price': position_data.get('sl_price', 0),
+                                'tp_price': position_data.get('tp_price', 0),
+                                'close_price': close_price,
+                                'realized_pnl': realized_pnl,
+                                'source': 'user'
+                            }
+                        })
+                        logger.info(f"[WS] Feedback modal triggered for user trade: {position_id}")
+
                     logger.info(f"[WS] Manual close broadcasted for position {position_id}")
 
                 except Exception as e:
@@ -618,15 +638,35 @@ async def handle_websocket_commands(
                         if close_result['success']:
                             logger.info(f"[WS] Position closed: {position_id} - {reason} at {close_price}")
 
+                            realized_pnl = close_result['realized_pnl']
+
                             # Broadcast position closure
                             await manager.broadcast({
                                 'type': 'position_closed',
                                 'position_id': position_id,
                                 'close_price': close_price,
                                 'close_reason': reason,
-                                'realized_pnl': close_result['realized_pnl'],
+                                'realized_pnl': realized_pnl,
                                 'account_type': account_type
                             })
+
+                            # ⚡ FIX: Trigger Feedback Modal für User Trades bei SL/TP
+                            if account_type == 'user':
+                                position_data = close_result.get('closed_position', {})
+                                await manager.broadcast({
+                                    'type': 'show_feedback_modal',
+                                    'trade_data': {
+                                        'trade_id': position_id,
+                                        'action': position_data.get('direction', 'unknown'),
+                                        'entry_price': position_data.get('entry_price', 0),
+                                        'sl_price': position_data.get('sl_price', 0),
+                                        'tp_price': position_data.get('tp_price', 0),
+                                        'close_price': close_price,
+                                        'realized_pnl': realized_pnl,
+                                        'source': 'user'
+                                    }
+                                })
+                                logger.info(f"[WS] Feedback modal triggered for SL/TP close: {position_id} ({reason})")
 
                     # Broadcast updated accounts after PnL updates
                     all_accounts = account_service.get_all_accounts_summary()
@@ -913,36 +953,45 @@ async def handle_websocket_commands(
 
                     if not position:
                         # Position bereits geschlossen oder nicht gefunden
-                        # Speichere Feedback trotzdem für zukünftiges RL Training
-                        logger.warning(f"[WS] Position {trade_id} nicht aktiv - speichere Feedback ohne Position Details")
+                        # ⚡ FIX: Verwende Trade-Daten aus Feedback statt Dummy-Werte
+                        logger.warning(f"[WS] Position {trade_id} nicht aktiv - verwende Daten aus Feedback")
 
-                        # Minimales TradeRecord für Storage
+                        # Extrahiere Trade-Daten aus Feedback (vom Frontend gesendet)
+                        action = feedback_data.get('action', 'hold')
+                        entry_price = feedback_data.get('entry_price', 0.0)
+                        sl_price = feedback_data.get('sl_price', 0.0)
+                        tp_price = feedback_data.get('tp_price', 0.0)
+                        close_price = feedback_data.get('close_price')
+                        realized_pnl = feedback_data.get('realized_pnl', 0.0)
+                        source = feedback_data.get('source', 'user')
+
+                        # TradeRecord mit echten Daten erstellen
                         from src.feedback_storage import TradeRecord
                         trade_record = TradeRecord(
                             trade_id=trade_id,
                             timestamp=datetime.now().isoformat(),
-                            action='hold',  # Changed from 'direction' to 'action'
-                            entry_price=0.0,
-                            sl_price=0.0,
-                            tp_price=0.0,
-                            exit_price=None,  # Changed from 'outcome'
-                            pnl=0.0,
-                            state_hash='unknown',
-                            observation=[],  # Required field
-                            patterns={},  # Required field
-                            session_info={},  # Required field
-                            volume_info={},  # Required field
-                            human_evaluation=human_eval  # Changed from 'evaluation'
+                            action=action,
+                            entry_price=entry_price,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            exit_price=close_price,
+                            pnl=realized_pnl,
+                            state_hash='closed_position',
+                            observation=[],
+                            patterns={},
+                            session_info={},
+                            volume_info={},
+                            human_evaluation=human_eval
                         )
 
                         # Speichere Feedback
                         feedback_system.storage.save_training_feedback(trade_record.to_dict())
-                        logger.info(f"[WS] [OK] Feedback gespeichert (Position nicht aktiv)")
+                        logger.info(f"[WS] [OK] Feedback gespeichert für geschlossene Position: {action} @ {entry_price}")
 
                         await websocket.send_json({
                             'type': 'trade_feedback_saved',
                             'trade_id': trade_id,
-                            'message': 'Feedback gespeichert (Position bereits geschlossen)'
+                            'message': f'Feedback gespeichert: {action} Trade @ {entry_price}'
                         })
                         continue
 
@@ -1161,12 +1210,16 @@ async def handle_websocket_commands(
                     # Toggle Training Mode
                     status = training_service.toggle_mode()
 
+                    # Hole AI Account Stats (persistente Trade-Zählung)
+                    ai_account_summary = account_service.get_account_summary('ai')
+
                     # Broadcast zu allen Clients
                     await manager.broadcast({
                         'type': 'ai_mode_toggled',
                         'is_active': status['is_active'],
                         'session_id': status['session_id'],
-                        'stats': status['stats']
+                        'stats': status['stats'],
+                        'account_stats': ai_account_summary  # ← Persistente Stats
                     })
 
                     logger.info(f"[WS] AI Mode toggled: {status['is_active']}")
@@ -1192,9 +1245,13 @@ async def handle_websocket_commands(
 
                     status = training_service.get_status()
 
+                    # Hole AI Account Stats (persistente Trade-Zählung)
+                    ai_account_summary = account_service.get_account_summary('ai')
+
                     await websocket.send_json({
                         'type': 'ai_status',
-                        **status
+                        **status,
+                        'account_stats': ai_account_summary  # ← Persistente Stats
                     })
 
                     logger.info(f"[WS] AI Status sent")
