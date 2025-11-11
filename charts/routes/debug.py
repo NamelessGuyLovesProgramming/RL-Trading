@@ -42,6 +42,18 @@ def setup_debug_routes(app, debug_service, navigation_service,
         Returns:
             Market Context Dictionary
         """
+        # 🔍 DEBUG: Log incoming indicator data
+        print(f"\n{'='*60}")
+        print(f"[MARKET-CONTEXT-DEBUG] Building market context...")
+        print(f"[MARKET-CONTEXT-DEBUG] Candle Close: {candle.get('close', 'N/A')}")
+        print(f"[MARKET-CONTEXT-DEBUG] Indicator Data received: {indicator_data is not None}")
+
+        if indicator_data:
+            print(f"[MARKET-CONTEXT-DEBUG] Indicator Data Keys: {list(indicator_data.keys())}")
+            print(f"[MARKET-CONTEXT-DEBUG] Full Indicator Data: {indicator_data}")
+        else:
+            print(f"[MARKET-CONTEXT-DEBUG] ⚠️  NO INDICATOR DATA - Using defaults!")
+
         # Default values
         in_fvg = False
         fvg_distance = 999
@@ -70,7 +82,7 @@ def setup_debug_routes(app, debug_service, navigation_service,
             else:
                 fvg_distance = indicator_data.get('distance_to_fvg', 999) or 999
 
-        return {
+        market_context = {
             'current_price': candle['close'],
             'timestamp': timestamp,
             'patterns': {
@@ -96,6 +108,19 @@ def setup_debug_routes(app, debug_service, navigation_service,
                 'ratio': volume_ratio
             }
         }
+
+        # 🔍 DEBUG: Log built context
+        print(f"[MARKET-CONTEXT-DEBUG] Built Context Patterns:")
+        print(f"  - in_fvg_zone: {market_context['patterns']['in_fvg_zone']}")
+        print(f"  - session_high_broken: {market_context['patterns']['session_high_broken']}")
+        print(f"  - session_low_broken: {market_context['patterns']['session_low_broken']}")
+        print(f"  - session_high_first_break: {market_context['patterns']['session_high_first_break']}")
+        print(f"  - session_low_first_break: {market_context['patterns']['session_low_first_break']}")
+        print(f"  - volume_spike: {market_context['volume']['spike']}")
+        print(f"  - current_session: {market_context['session_info']['session']}")
+        print(f"{'='*60}\n")
+
+        return market_context
 
     # REFACTOR PHASE 4: Skip-Endpoint (bereits auf NavigationService migriert)
     @router.post("/skip")
@@ -208,14 +233,61 @@ def setup_debug_routes(app, debug_service, navigation_service,
                     # 🤖 AI TRADE FEEDBACK: Wenn AI Trade geschlossen wurde → Feedback Modal öffnen
                     if position_id.startswith('ai_'):
                         print(f"[AI-TRADING] 🎯 AI Trade closed - Opening Feedback Modal for {position_id}")
+                        # Hole Position Details für Modal
+                        position_data = next((p for p in active_positions if p['id'] == position_id), None)
+                        outcome = 'win' if close_result['realized_pnl'] > 0 else 'loss'
+
+                        # Update Training Mode Stats
+                        if training_mode_service and training_mode_service.is_active:
+                            training_mode_service.on_position_closed(
+                                trade_id=position_id,
+                                outcome=outcome,
+                                realized_pnl=close_result['realized_pnl']
+                            )
+
                         await manager.broadcast({
                             'type': 'ai_position_closed',
                             'trade_id': position_id,
+                            'action': position_data.get('direction', 'unknown') if position_data else 'unknown',
+                            'entry_price': position_data.get('entry_price', 0) if position_data else 0,
+                            'sl_price': position_data.get('sl_price', 0) if position_data else 0,
+                            'tp_price': position_data.get('tp_price', 0) if position_data else 0,
                             'close_price': close_price,
                             'close_reason': reason,
                             'realized_pnl': close_result['realized_pnl'],
-                            'outcome': 'win' if close_result['realized_pnl'] > 0 else 'loss'
+                            'outcome': outcome
                         })
+
+                    # 👤 USER TRADE FEEDBACK: Wenn User Trade durch SL/TP geschlossen → Feedback Modal öffnen
+                    elif account_type == 'user':
+                        print(f"[USER-TRADING] 🎯 User Trade closed by {reason} - Opening Feedback Modal for {position_id}")
+                        # Hole Position Details für Modal
+                        position_data = next((p for p in active_positions if p['id'] == position_id), None)
+
+                        await manager.broadcast({
+                            'type': 'show_feedback_modal',
+                            'trade_data': {
+                                'trade_id': position_id,
+                                'action': position_data.get('direction', 'unknown') if position_data else 'unknown',
+                                'entry_price': position_data.get('entry_price', 0) if position_data else 0,
+                                'entry_time': position_data.get('opened_at') if position_data else None,
+                                'sl_price': position_data.get('sl_price', 0) if position_data else 0,
+                                'tp_price': position_data.get('tp_price', 0) if position_data else 0,
+                                'close_price': close_price,
+                                'close_time': datetime.now().isoformat(),
+                                'realized_pnl': close_result['realized_pnl'],
+                                'source': 'user'
+                            }
+                        })
+                        print(f"[USER-TRADING] ✅ Feedback modal triggered for SL/TP close")
+
+            # 🎯 AUTO-PAUSE: Pausiere Play-Modus wenn Position geschlossen wurde
+            if positions_to_close:
+                await manager.broadcast({
+                    'type': 'pause_play_mode',
+                    'reason': 'position_closed',
+                    'message': f'{len(positions_to_close)} Position(en) geschlossen - Play pausiert'
+                })
 
             # Broadcast updated accounts after PnL updates
             if active_positions:  # Nur wenn Positionen existieren
@@ -238,10 +310,24 @@ def setup_debug_routes(app, debug_service, navigation_service,
                 # AI trifft Entscheidung
                 ai_decision = training_mode_service.on_skip(market_context)
 
-                # Wenn AI traded → Log only (Feedback Modal erst bei Position Close!)
+                # Wenn AI traded → Broadcast + Log
                 if ai_decision:
                     print(f"[AI-TRADING] ✅ Trade executed: {ai_decision['action'].upper()} @ {ai_decision['position']['entry_price']}")
                     print(f"[AI-TRADING] Trade ID: {ai_decision['trade_id']} - Waiting for SL/TP hit for feedback...")
+
+                    # Broadcast AI Trade Event an alle Clients
+                    import asyncio
+                    asyncio.create_task(manager.broadcast({
+                        'type': 'ai_trade_executed',
+                        'trade_id': ai_decision['trade_id'],
+                        'action': ai_decision['action'],
+                        'position': ai_decision['position'],
+                        'account_summary': ai_decision['account_summary'],
+                        'hints': ai_decision.get('hints', []),  # Optional - kommt beim Position Close
+                        'reasoning': ai_decision['reasoning'],
+                        'confidence': ai_decision['confidence'],
+                        'auto_open_modal': False  # Kein Auto-Modal für jetzt
+                    }))
 
             timeframe_display = {
                 '1m': "1min", '2m': "2min", '3m': "3min", '5m': "5min",
@@ -427,6 +513,103 @@ def setup_debug_routes(app, debug_service, navigation_service,
             return {"status": "error", "message": str(e)}
 
 
+    # Skip To Time Endpoint - Skip forward until target time is reached
+    @router.post("/skip_to_time")
+    async def debug_skip_to_time(data: dict):
+        """Skip forward until target datetime is reached"""
+        try:
+            from datetime import datetime, timedelta
+
+            target_date_str = data.get("date")
+            if not target_date_str:
+                return {"status": "error", "message": "No date provided"}
+
+            # Parse target datetime
+            try:
+                target_datetime = datetime.strptime(target_date_str, "%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                try:
+                    target_datetime = datetime.strptime(target_date_str, "%Y-%m-%d")
+                except ValueError:
+                    return {"status": "error", "message": f"Invalid date format: {target_date_str}"}
+
+            # Get current time
+            current_time = unified_time_manager.get_current_time()
+            if not current_time:
+                return {"status": "error", "message": "No current time available"}
+
+            # Make both timezone-aware or naive for comparison
+            if current_time.tzinfo is not None:
+                # current_time is aware, make target aware (UTC)
+                from datetime import timezone
+                target_datetime = target_datetime.replace(tzinfo=timezone.utc)
+
+            # Calculate time difference
+            time_diff = target_datetime - current_time
+
+            if time_diff.total_seconds() <= 0:
+                return {"status": "error", "message": "Target time is in the past or current time"}
+
+            # Calculate number of 5-minute candles needed
+            minutes_diff = time_diff.total_seconds() / 60
+            candles_needed = int(minutes_diff / 5)
+
+            print(f"[SKIP-TO-TIME] Current: {current_time}, Target: {target_datetime}")
+            print(f"[SKIP-TO-TIME] Time diff: {minutes_diff} minutes = {candles_needed} candles")
+
+            if candles_needed > 1000:
+                return {"status": "error", "message": f"Too many candles to skip: {candles_needed} (max 1000)"}
+
+            if candles_needed < 1:
+                return {"status": "error", "message": "Less than 1 candle to skip"}
+
+            # Use skip_batch logic
+            skip_timeframe = debug_control_timeframe
+            candles = []
+            last_candle = None
+
+            for i in range(candles_needed):
+                skip_result = navigation_service.skip_forward(skip_timeframe)
+
+                if not skip_result['success']:
+                    print(f"[SKIP-TO-TIME] Stopped at {i+1}/{candles_needed}: {skip_result.get('error')}")
+                    break
+
+                last_candle = skip_result['candle']
+                candles.append(last_candle)
+
+                # Update chart state
+                if hasattr(manager, 'chart_state') and 'data' in manager.chart_state:
+                    manager.chart_state['data'].append(last_candle)
+
+                # ⚡ BULK-RENDER: KEIN WebSocket während Loop - alle Kerzen am Ende senden
+
+            if not candles:
+                return {"status": "error", "message": "No candles skipped"}
+
+            new_global_time = unified_time_manager.get_current_time()
+
+            # ⚡ BULK-RENDER: Sende ALLE Kerzen für schnelles Frontend-Rendering
+            await manager.broadcast({
+                'type': 'skip_to_time_complete',
+                'candles_skipped': len(candles),
+                'final_time': new_global_time.isoformat() if new_global_time else None,
+                'final_candle': last_candle,
+                'all_candles': candles  # ⚡ NEU: Alle Kerzen für Bulk-Render
+            })
+
+            return {
+                "status": "success",
+                "candles_skipped": len(candles),
+                "final_time": new_global_time.isoformat() if new_global_time else None
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"status": "error", "message": f"Skip To Time Error: {str(e)}"}
+
+
     # REFACTOR PHASE 4: GoTo-Endpoint (bereits auf NavigationService migriert)
     @router.post("/go_to_date")
     async def debug_go_to_date(date_data: dict):
@@ -439,7 +622,15 @@ def setup_debug_routes(app, debug_service, navigation_service,
             if not target_date:
                 return {"status": "error", "message": "Kein Datum angegeben"}
 
-            target_datetime = datetime.strptime(target_date, "%Y-%m-%d")
+            # Try parsing with time first, then date only
+            try:
+                target_datetime = datetime.strptime(target_date, "%Y-%m-%dT%H:%M:%S")
+            except ValueError:
+                try:
+                    target_datetime = datetime.strptime(target_date, "%Y-%m-%d")
+                except ValueError:
+                    return {"status": "error", "message": f"Ungültiges Datumsformat: {target_date}"}
+
             current_timeframe = manager.chart_state['interval']
 
             print(f"[GOTO-SERVICE] Request: {target_date} in {current_timeframe}")

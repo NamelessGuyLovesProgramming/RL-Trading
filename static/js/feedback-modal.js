@@ -53,8 +53,20 @@ class FeedbackModal {
                                 <div class="trade-info-value" id="tradeAction">-</div>
                             </div>
                             <div class="trade-info-item">
-                                <div class="trade-info-label">Entry</div>
+                                <div class="trade-info-label">Entry Preis</div>
                                 <div class="trade-info-value" id="tradeEntry">-</div>
+                            </div>
+                            <div class="trade-info-item">
+                                <div class="trade-info-label">Entry Zeit</div>
+                                <div class="trade-info-value" id="tradeEntryTime">-</div>
+                            </div>
+                            <div class="trade-info-item">
+                                <div class="trade-info-label">Exit Preis</div>
+                                <div class="trade-info-value" id="tradeExit">-</div>
+                            </div>
+                            <div class="trade-info-item">
+                                <div class="trade-info-label">Exit Zeit</div>
+                                <div class="trade-info-value" id="tradeExitTime">-</div>
                             </div>
                             <div class="trade-info-item">
                                 <div class="trade-info-label">Stop Loss</div>
@@ -241,6 +253,16 @@ class FeedbackModal {
         document.getElementById('tradeAction').className = `trade-info-value ${trade.action}`;
 
         document.getElementById('tradeEntry').textContent = `$${trade.entry_price.toFixed(2)}`;
+
+        // Entry Zeit (von entry_time oder timestamp)
+        const entryTime = trade.entry_time || trade.timestamp || '-';
+        document.getElementById('tradeEntryTime').textContent = entryTime !== '-' ? new Date(entryTime).toLocaleString('de-DE') : '-';
+
+        // Exit Preis und Zeit
+        document.getElementById('tradeExit').textContent = trade.close_price ? `$${trade.close_price.toFixed(2)}` : '-';
+        const exitTime = trade.close_time || trade.exit_time || '-';
+        document.getElementById('tradeExitTime').textContent = exitTime !== '-' ? new Date(exitTime).toLocaleString('de-DE') : '-';
+
         document.getElementById('tradeSL').textContent = `$${trade.sl_price.toFixed(2)}`;
         document.getElementById('tradeTP').textContent = `$${trade.tp_price.toFixed(2)}`;
 
