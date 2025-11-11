@@ -196,7 +196,7 @@ class FeedbackStorage:
                 state_hash TEXT NOT NULL,
                 action TEXT NOT NULL,
 
-                -- Market Context Features
+                -- OLD Market Context Features (kept for backward compatibility)
                 in_fvg_zone BOOLEAN,
                 fvg_distance REAL,
                 near_support_ob BOOLEAN,
@@ -208,7 +208,7 @@ class FeedbackStorage:
                 volume_spike BOOLEAN,
                 volume_ratio REAL,
 
-                -- Human Evaluation Scores (0.0 - 1.0)
+                -- OLD Human Evaluation Scores (kept for backward compatibility)
                 entry_timing_score REAL,
                 pattern_score REAL,
                 sl_score REAL,
@@ -217,19 +217,37 @@ class FeedbackStorage:
                 volume_score REAL,
                 overall_score REAL,
 
-                -- Trade Details
+                -- Trade Details (Basic Features 1-9)
                 entry_price REAL,
                 sl_price REAL,
                 tp_price REAL,
                 exit_price REAL,
                 pnl REAL,
+                entry_time TEXT,
+                exit_time TEXT,
+                trade_duration_candles INTEGER,
+                max_drawdown_pct REAL,
+
+                -- NEW: Market Context Features (10-16)
+                distance_to_ema20_pct REAL,
+                atr_value REAL,
+                recent_high_distance_pct REAL,
+                recent_low_distance_pct REAL,
+                position_in_range REAL,
+                rr_ratio REAL,
+
+                -- NEW: Simple Human Rating (Feature 17)
+                rating REAL,
 
                 -- Meta
                 source TEXT,
                 session_id TEXT,
                 trade_id TEXT,
                 timestamp DATETIME,
-                notes TEXT
+                notes TEXT,
+                patterns TEXT,
+                session_info TEXT,
+                volume_info TEXT
             )
         """)
 
@@ -244,6 +262,56 @@ class FeedbackStorage:
         conn.close()
 
         print("[FeedbackStorage] Database initialized with indices")
+
+        # Run migration to add new columns if they don't exist
+        self._migrate_database()
+
+    def _migrate_database(self):
+        """Migriert bestehende Datenbank - fügt neue 17-Feature Spalten hinzu"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Check which columns exist
+        cursor.execute("PRAGMA table_info(feedback_patterns)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # New columns to add (17 Feature System)
+        new_columns = {
+            'entry_time': 'TEXT',
+            'exit_time': 'TEXT',
+            'trade_duration_candles': 'INTEGER',
+            'max_drawdown_pct': 'REAL',
+            'distance_to_ema20_pct': 'REAL',
+            'atr_value': 'REAL',
+            'recent_high_distance_pct': 'REAL',
+            'recent_low_distance_pct': 'REAL',
+            'position_in_range': 'REAL',
+            'rr_ratio': 'REAL',
+            'rating': 'REAL',
+            'patterns': 'TEXT',
+            'session_info': 'TEXT',
+            'volume_info': 'TEXT'
+        }
+
+        # Add missing columns
+        added_columns = []
+        for col_name, col_type in new_columns.items():
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE feedback_patterns ADD COLUMN {col_name} {col_type}")
+                    added_columns.append(col_name)
+                except sqlite3.OperationalError as e:
+                    # Column might already exist, ignore
+                    pass
+
+        conn.commit()
+        conn.close()
+
+        if added_columns:
+            print(f"[FeedbackStorage] Migration: Added {len(added_columns)} new columns")
+            print(f"[FeedbackStorage] New columns: {', '.join(added_columns)}")
+        else:
+            print("[FeedbackStorage] Migration: Database schema up-to-date")
 
     def save_demo_session(self, session_data: Dict[str, Any]) -> str:
         """
@@ -275,6 +343,33 @@ class FeedbackStorage:
         self._append_to_pickle(pkl_path, session_data)
 
         print(f"[OK] Demo Session gespeichert: {json_path}")
+        return str(json_path)
+
+    def save_training_feedback(self, trade_data: Dict[str, Any]) -> str:
+        """
+        Speichert einzelnes Training Feedback
+
+        Args:
+            trade_data: Dict mit trade_id, timestamp, action, prices, evaluation etc.
+
+        Returns:
+            Path zur gespeicherten JSON Datei
+        """
+        trade_id = trade_data.get('trade_id', f"training_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
+        # JSON
+        json_path = self.training_path / f"{trade_id}.json"
+        with open(json_path, 'w') as f:
+            json.dump(trade_data, f, indent=2)
+
+        # SQLite
+        self._insert_feedback_pattern(
+            trade=trade_data,
+            source='training',
+            session_id=trade_data.get('session_id', 'training_session')
+        )
+
+        print(f"[OK] Training Feedback gespeichert: {json_path}")
         return str(json_path)
 
     def save_training_session(self, session_data: Dict[str, Any]) -> str:
@@ -313,6 +408,15 @@ class FeedbackStorage:
         volume = market_ctx.get('volume', {})
         human_eval = trade.get('human_evaluation', {})
 
+        # NEW: Extract 17 features
+        features = trade.get('features', {})
+
+        # Serialize JSON fields
+        import json
+        patterns_json = json.dumps(patterns) if patterns else None
+        session_json = json.dumps(session_info) if session_info else None
+        volume_json = json.dumps(volume) if volume else None
+
         cursor.execute("""
             INSERT INTO feedback_patterns (
                 state_hash, action,
@@ -323,11 +427,17 @@ class FeedbackStorage:
                 entry_timing_score, pattern_score, sl_score,
                 tp_score, liquidity_score, volume_score, overall_score,
                 entry_price, sl_price, tp_price, exit_price, pnl,
+                entry_time, exit_time, trade_duration_candles, max_drawdown_pct,
+                distance_to_ema20_pct, atr_value, recent_high_distance_pct,
+                recent_low_distance_pct, position_in_range, rr_ratio,
+                rating,
+                patterns, session_info, volume_info,
                 source, session_id, trade_id, timestamp, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             market_ctx.get('state_hash'),
             trade.get('action'),
+            # OLD features (backward compatibility)
             patterns.get('in_fvg_zone', False),
             patterns.get('fvg_distance', 0.0),
             patterns.get('near_support_ob', False),
@@ -338,6 +448,7 @@ class FeedbackStorage:
             session_info.get('time_in_session', 0),
             volume.get('spike', False),
             volume.get('ratio', 1.0),
+            # OLD evaluation scores (backward compatibility)
             human_eval.get('entry_timing', {}).get('score', 0.0),
             human_eval.get('pattern_recognition', {}).get('score', 0.0),
             human_eval.get('sl_placement', {}).get('score', 0.0),
@@ -345,11 +456,30 @@ class FeedbackStorage:
             human_eval.get('liquidity_sweeps', {}).get('score', 0.0),
             human_eval.get('volume_analysis', {}).get('score', 0.0),
             human_eval.get('overall_score', 0.0),
+            # Trade Basic Features (1-9)
             trade.get('entry_price', 0.0),
             trade.get('sl_price', 0.0),
             trade.get('tp_price', 0.0),
             trade.get('exit_price'),
             trade.get('pnl'),
+            features.get('entry_time'),
+            features.get('exit_time'),
+            features.get('trade_duration_candles'),
+            features.get('max_drawdown_pct'),
+            # Market Context Features (10-16)
+            features.get('distance_to_ema20_pct'),
+            features.get('atr_value'),
+            features.get('recent_high_distance_pct'),
+            features.get('recent_low_distance_pct'),
+            features.get('position_in_range'),
+            features.get('rr_ratio'),
+            # Simple Rating (17)
+            features.get('rating'),
+            # JSON fields
+            patterns_json,
+            session_json,
+            volume_json,
+            # Meta
             source,
             session_id,
             trade.get('trade_id'),

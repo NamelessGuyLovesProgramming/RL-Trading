@@ -10,8 +10,83 @@ from datetime import datetime
 import json
 import logging
 from typing import Optional, Dict, Any
+import pandas as pd
+
+# Feature Extraction für RL Context (NEW: 17 Features)
+from charts.core.market_context_extractor import MarketContextExtractor, calculate_trade_features
 
 logger = logging.getLogger(__name__)
+
+# Initialize Market Context Extractor
+market_context_extractor = MarketContextExtractor()
+
+
+def _extract_market_context_features(data_loader, entry_time: str, entry_price: float,
+                                     sl_price: float, tp_price: float) -> Dict[str, float]:
+    """
+    Extrahiert Market-Context Features (10-16) zum Entry-Zeitpunkt
+
+    Args:
+        data_loader: DataLoader instance mit OHLC-Daten
+        entry_time: Entry Timestamp (ISO string)
+        entry_price: Entry Preis
+        sl_price: Stop Loss Preis
+        tp_price: Take Profit Preis
+
+    Returns:
+        Dictionary mit 7 Market-Context Features
+    """
+    try:
+        # Hole DataFrame
+        df = data_loader.df.copy()
+
+        # Konvertiere zu lowercase wenn nötig
+        if 'Open' in df.columns:
+            df.columns = df.columns.str.lower()
+
+        # Ensure index is datetime
+        if 'timestamp' not in df.index.names:
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df = df.set_index('timestamp')
+            else:
+                # Use index as timestamp if available
+                df.index = pd.to_datetime(df.index)
+
+        # Find entry candle index
+        entry_dt = pd.to_datetime(entry_time)
+        time_diffs = (df.index - entry_dt).abs()
+        entry_idx = time_diffs.argmin()
+
+        logger.info(f"[FEATURES] Extracting market context at entry_idx={entry_idx}, time={entry_time}")
+
+        # Extract market context features (7 features)
+        features = market_context_extractor.extract_at_entry(
+            df=df,
+            entry_idx=entry_idx,
+            entry_price=entry_price,
+            sl_price=sl_price,
+            tp_price=tp_price
+        )
+
+        logger.info(f"[FEATURES] Extracted {len(features)} market context features")
+        logger.debug(f"[FEATURES] Sample: EMA={features.get('distance_to_ema20_pct'):.2f}%, "
+                    f"Volume={features.get('volume_ratio'):.2f}x, "
+                    f"R:R={features.get('rr_ratio'):.2f}")
+
+        return features
+
+    except Exception as e:
+        logger.error(f"[FEATURES] Error extracting market context: {e}", exc_info=True)
+        return {
+            'distance_to_ema20_pct': 0.0,
+            'volume_ratio': 1.0,
+            'atr_value': 0.0,
+            'recent_high_distance_pct': 0.0,
+            'recent_low_distance_pct': 0.0,
+            'position_in_range': 0.5,
+            'rr_ratio': 0.0
+        }
 
 
 def _build_market_context(candle: Dict[str, Any], timestamp: int, indicator_data: Dict = None) -> Dict[str, Any]:
@@ -963,9 +1038,59 @@ async def handle_websocket_commands(
                         tp_price = feedback_data.get('tp_price', 0.0)
                         close_price = feedback_data.get('close_price')
                         realized_pnl = feedback_data.get('realized_pnl', 0.0)
+                        entry_time_str = feedback_data.get('entry_time', datetime.now().isoformat())
+                        exit_time_str = feedback_data.get('exit_time', datetime.now().isoformat())
                         source = feedback_data.get('source', 'user')
+                        is_long = action.lower() == 'buy'
 
-                        # TradeRecord mit echten Daten erstellen
+                        # NEW: Extract 17 Features
+                        # Market Context Features (10-16): Snapshot at entry time
+                        market_features = _extract_market_context_features(
+                            chart_service.data_loader,
+                            entry_time=entry_time_str,
+                            entry_price=entry_price,
+                            sl_price=sl_price,
+                            tp_price=tp_price
+                        )
+
+                        # Trade-Specific Features (7, 9): Duration & Max Drawdown
+                        trade_features = calculate_trade_features(
+                            df=chart_service.data_loader.df,
+                            entry_time=entry_time_str,
+                            exit_time=exit_time_str,
+                            entry_price=entry_price,
+                            is_long=is_long
+                        )
+
+                        # Simple Rating (Feature 17): Convert overall_score to 0.0/0.5/1.0
+                        if overall_score >= 0.8:
+                            rating = 1.0  # Good
+                        elif overall_score >= 0.5:
+                            rating = 0.5  # OK
+                        else:
+                            rating = 0.0  # Bad
+
+                        # Combine all 17 features
+                        features = {
+                            # Trade Basics (1-9)
+                            'entry_price': entry_price,
+                            'sl_price': sl_price,
+                            'tp_price': tp_price,
+                            'exit_price': close_price,
+                            'entry_time': entry_time_str,
+                            'exit_time': exit_time_str,
+                            'trade_duration_candles': trade_features.get('trade_duration_candles', 0),
+                            'realized_pnl': realized_pnl,
+                            'max_drawdown_pct': trade_features.get('max_drawdown_pct', 0.0),
+                            # Market Context (10-16)
+                            **market_features,
+                            # Human Rating (17)
+                            'rating': rating
+                        }
+
+                        logger.info(f"[FEATURES] Complete 17-feature set extracted for closed position")
+
+                        # TradeRecord mit echten Daten + Features erstellen
                         from src.feedback_storage import TradeRecord
                         trade_record = TradeRecord(
                             trade_id=trade_id,
@@ -978,15 +1103,20 @@ async def handle_websocket_commands(
                             pnl=realized_pnl,
                             state_hash='closed_position',
                             observation=[],
-                            patterns={},
+                            patterns={},  # Keep empty, features now in 'features' field
                             session_info={},
                             volume_info={},
                             human_evaluation=human_eval
                         )
 
+                        # Add features field to trade_record dict
+                        trade_dict = trade_record.to_dict()
+                        trade_dict['features'] = features
+
                         # Speichere Feedback
-                        feedback_system.storage.save_training_feedback(trade_record.to_dict())
+                        feedback_system.storage.save_training_feedback(trade_dict)
                         logger.info(f"[WS] [OK] Feedback gespeichert für geschlossene Position: {action} @ {entry_price}")
+                        logger.info(f"[WS] Features: Rating={rating}, R:R={features.get('rr_ratio'):.2f}, Duration={features.get('trade_duration_candles')} candles")
 
                         await websocket.send_json({
                             'type': 'trade_feedback_saved',
@@ -1001,6 +1131,7 @@ async def handle_websocket_commands(
                     tp_price = position['tp_price']
                     direction = position['direction']
                     pnl = position.get('pnl', 0.0)
+                    entry_time_str = position.get('entry_time', datetime.now().isoformat())
 
                     # Generiere State Hash für ähnliche Situationen
                     current_time = unified_time_manager.get_current_time()
@@ -1011,28 +1142,70 @@ async def handle_websocket_commands(
                         tp_price=tp_price
                     )
 
+                    # NEW: Extract Market Context Features (10-16)
+                    market_features = _extract_market_context_features(
+                        chart_service.data_loader,
+                        entry_time=entry_time_str,
+                        entry_price=entry_price,
+                        sl_price=sl_price,
+                        tp_price=tp_price
+                    )
+
+                    # Simple Rating (Feature 17): Convert overall_score to 0.0/0.5/1.0
+                    if overall_score >= 0.8:
+                        rating = 1.0  # Good
+                    elif overall_score >= 0.5:
+                        rating = 0.5  # OK
+                    else:
+                        rating = 0.0  # Bad
+
+                    # Partial feature set (trade not closed yet)
+                    features = {
+                        # Trade Basics (1-9) - partial
+                        'entry_price': entry_price,
+                        'sl_price': sl_price,
+                        'tp_price': tp_price,
+                        'exit_price': None,  # Trade still active
+                        'entry_time': entry_time_str,
+                        'exit_time': None,  # Trade still active
+                        'trade_duration_candles': None,  # Cannot calculate yet
+                        'realized_pnl': pnl,  # Unrealized PnL for now
+                        'max_drawdown_pct': None,  # Cannot calculate yet
+                        # Market Context (10-16)
+                        **market_features,
+                        # Human Rating (17)
+                        'rating': rating
+                    }
+
+                    logger.info(f"[FEATURES] Partial feature set extracted for active position (trade not closed yet)")
+
                     # Erstelle TradeRecord
                     from src.feedback_storage import TradeRecord
                     trade_record = TradeRecord(
                         trade_id=trade_id,
                         timestamp=datetime.now().isoformat(),
-                        action=direction,  # Changed from 'direction' to 'action'
+                        action=direction,
                         entry_price=entry_price,
                         sl_price=sl_price,
                         tp_price=tp_price,
-                        exit_price=None,  # Changed from 'outcome' - trade still active
+                        exit_price=None,  # Trade still active
                         pnl=pnl,
                         state_hash=state_hash,
-                        observation=[],  # Required field - TODO: get from context
-                        patterns={},  # Required field - TODO: get from context
-                        session_info={},  # Required field - TODO: get from context
-                        volume_info={},  # Required field - TODO: get from context
-                        human_evaluation=human_eval  # Changed from 'evaluation'
+                        observation=[],
+                        patterns={},  # Keep empty, features now in 'features' field
+                        session_info={},
+                        volume_info={},
+                        human_evaluation=human_eval
                     )
 
+                    # Add features field to trade_record dict
+                    trade_dict = trade_record.to_dict()
+                    trade_dict['features'] = features
+
                     # Speichere Feedback
-                    feedback_system.storage.save_training_feedback(trade_record.to_dict())
+                    feedback_system.storage.save_training_feedback(trade_dict)
                     logger.info(f"[WS] [OK] Feedback gespeichert für {trade_id} (State Hash: {state_hash[:8]}...)")
+                    logger.info(f"[WS] Features: Rating={rating}, R:R={features.get('rr_ratio'):.2f}")
 
                     # Berechne Feedback Reward für RL Training
                     feedback_reward = feedback_system.reward_manager.get_component('human').calculate(
