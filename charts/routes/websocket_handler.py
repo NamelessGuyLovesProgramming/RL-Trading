@@ -21,24 +21,30 @@ logger = logging.getLogger(__name__)
 market_context_extractor = MarketContextExtractor()
 
 
-def _extract_market_context_features(data_loader, entry_time: str, entry_price: float,
-                                     sl_price: float, tp_price: float) -> Dict[str, float]:
+def _extract_market_context_features(csv_loader, entry_time: str, entry_price: float,
+                                     sl_price: float, tp_price: float, timeframe: str = '5m') -> Dict[str, float]:
     """
     Extrahiert Market-Context Features (10-16) zum Entry-Zeitpunkt
 
     Args:
-        data_loader: DataLoader instance mit OHLC-Daten
+        csv_loader: CSVLoader instance to load OHLC data
         entry_time: Entry Timestamp (ISO string)
         entry_price: Entry Preis
         sl_price: Stop Loss Preis
         tp_price: Take Profit Preis
+        timeframe: Timeframe für Data Load (default: 5m)
 
     Returns:
         Dictionary mit 7 Market-Context Features
     """
     try:
-        # Hole DataFrame
-        df = data_loader.df.copy()
+        # Hole DataFrame vom CSVLoader
+        df = csv_loader.load_timeframe_data(timeframe)
+        if df is None or df.empty:
+            logger.error(f"[FEATURES] Failed to load {timeframe} data from CSVLoader")
+            raise ValueError(f"No data available for {timeframe}")
+
+        df = df.copy()
 
         # Konvertiere zu lowercase wenn nötig
         if 'Open' in df.columns:
@@ -55,6 +61,17 @@ def _extract_market_context_features(data_loader, entry_time: str, entry_price: 
 
         # Find entry candle index
         entry_dt = pd.to_datetime(entry_time)
+
+        # Match timezone awareness to DataFrame index
+        if df.index.tz is not None:
+            # DataFrame is timezone-aware -> make timestamp timezone-aware
+            if entry_dt.tz is None:
+                entry_dt = entry_dt.tz_localize(df.index.tz)
+        else:
+            # DataFrame is timezone-naive -> remove timezone from timestamp
+            if entry_dt.tz is not None:
+                entry_dt = entry_dt.replace(tzinfo=None)
+
         time_diffs = (df.index - entry_dt).abs()
         entry_idx = time_diffs.argmin()
 
@@ -1046,7 +1063,7 @@ async def handle_websocket_commands(
                         # NEW: Extract 17 Features
                         # Market Context Features (10-16): Snapshot at entry time
                         market_features = _extract_market_context_features(
-                            chart_service.data_loader,
+                            chart_service.timeframe_repo.csv_loader,
                             entry_time=entry_time_str,
                             entry_price=entry_price,
                             sl_price=sl_price,
@@ -1054,8 +1071,10 @@ async def handle_websocket_commands(
                         )
 
                         # Trade-Specific Features (7, 9): Duration & Max Drawdown
+                        # Load DataFrame for trade feature calculation
+                        df_trade = chart_service.timeframe_repo.csv_loader.load_timeframe_data('5m')
                         trade_features = calculate_trade_features(
-                            df=chart_service.data_loader.df,
+                            df=df_trade,
                             entry_time=entry_time_str,
                             exit_time=exit_time_str,
                             entry_price=entry_price,
@@ -1144,7 +1163,7 @@ async def handle_websocket_commands(
 
                     # NEW: Extract Market Context Features (10-16)
                     market_features = _extract_market_context_features(
-                        chart_service.data_loader,
+                        chart_service.timeframe_repo.csv_loader,
                         entry_time=entry_time_str,
                         entry_price=entry_price,
                         sl_price=sl_price,

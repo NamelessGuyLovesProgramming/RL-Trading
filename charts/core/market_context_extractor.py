@@ -220,6 +220,22 @@ def calculate_trade_features(df: pd.DataFrame, entry_time: str, exit_time: str,
         entry_dt = pd.to_datetime(entry_time)
         exit_dt = pd.to_datetime(exit_time)
 
+        # Match timezone awareness to DataFrame index
+        # If DataFrame has UTC timezone, make timestamps UTC-aware
+        # If DataFrame is timezone-naive, keep timestamps timezone-naive
+        if df.index.tz is not None:
+            # DataFrame is timezone-aware -> make timestamps timezone-aware
+            if entry_dt.tz is None:
+                entry_dt = entry_dt.tz_localize(df.index.tz)
+            if exit_dt.tz is None:
+                exit_dt = exit_dt.tz_localize(df.index.tz)
+        else:
+            # DataFrame is timezone-naive -> remove timezone from timestamps
+            if entry_dt.tz is not None:
+                entry_dt = entry_dt.replace(tzinfo=None)
+            if exit_dt.tz is not None:
+                exit_dt = exit_dt.replace(tzinfo=None)
+
         # Get candles between entry and exit
         mask = (df.index >= entry_dt) & (df.index <= exit_dt)
         trade_candles = df.loc[mask]

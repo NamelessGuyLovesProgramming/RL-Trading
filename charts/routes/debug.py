@@ -5,6 +5,7 @@ REFACTOR PHASE 5: Extrahiert aus chart_server.py
 
 from fastapi import APIRouter, Request
 from typing import Dict, Any
+from datetime import datetime
 
 # Router-Instanz
 router = APIRouter(prefix="/api/debug", tags=["debug"])
