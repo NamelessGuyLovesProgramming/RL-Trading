@@ -65,7 +65,11 @@ from charts.routes import chart as chart_routes
 from charts.routes import debug as debug_routes
 from charts.routes import account as account_routes
 from charts.routes import static as static_routes
+from charts.routes import ml_operations
 from charts.routes.websocket_handler import handle_websocket_commands
+
+# ML Operations imports
+from src.training_manager import TrainingManager
 
 # Logging Setup
 logging.basicConfig(
@@ -301,6 +305,9 @@ def initialize_components():
         validator=data_validator
     )
 
+    # Config Service (MUSS vor NavigationService sein!)
+    config_service = ConfigService()
+
     navigation_service = NavigationService(
         timeframe_repo=timeframe_data_repository,
         debug_controller=debug_controller,
@@ -308,7 +315,8 @@ def initialize_components():
         unified_state=unified_state,
         validator=data_validator,
         global_skip_events=global_skip_events,
-        universal_renderer=universal_renderer
+        universal_renderer=universal_renderer,
+        config_service=config_service
     )
 
     debug_service = DebugService(
@@ -321,8 +329,7 @@ def initialize_components():
         price_repo=price_repository
     )
 
-    # Config Service & Account Service mit persistenten Balances
-    config_service = ConfigService()
+    # Account Service mit persistenten Balances
     balances = config_service.get_account_balances()
     account_service = AccountService(
         ai_balance=balances['ai_balance'],
@@ -335,6 +342,8 @@ def initialize_components():
     if account_state:
         account_service.load_from_dict(account_state)
         logger.info("[INIT] Account State (positions) restored from config")
+
+
 
     # RL Feedback System mit Reward Manager
     logger.info("[INIT] Creating RL Feedback System...")
@@ -363,7 +372,14 @@ def initialize_components():
 
         # RL Agent & Training Mode Service
         logger.info("[INIT] Creating RL Agent & Training Mode...")
-        rl_agent = RLTradingAgent(feedback_system)
+
+        # PPO Model Path (neuestes trainiertes Modell)
+        ppo_model_path = "models/train_1000_20251107_230029.zip"
+
+        rl_agent = RLTradingAgent(
+            feedback_system=feedback_system,
+            model_path=ppo_model_path
+        )
         training_service = TrainingModeService(
             rl_agent=rl_agent,
             feedback_system=feedback_system,
@@ -393,6 +409,23 @@ def initialize_components():
 
         training_service.set_batch_callback(on_batch_complete)
         logger.info("[INIT] [OK] Training Mode Service initialized with batch callback")
+
+        # Training Manager für ML Operations
+        logger.info("[INIT] Creating Training Manager for ML Operations...")
+
+        # WebSocket broadcast callback
+        async def ml_broadcast(message):
+            """Broadcast ML training progress to all WebSocket clients"""
+            await manager.broadcast(message)
+
+        # Initialize Training Manager
+        training_manager = TrainingManager(websocket_broadcast=ml_broadcast)
+        ml_operations.set_training_manager(training_manager)
+
+        # Set RL Agent for model hot-reloading
+        ml_operations.set_rl_agent(rl_agent)
+
+        logger.info("[INIT] ✅ Training Manager ready")
     else:
         logger.warning(f"[INIT] CSV not found: {csv_path} - Feedback System disabled")
         feedback_system = None
@@ -403,7 +436,8 @@ def initialize_components():
 
     # PERSISTENCE: Lade gespeicherte Zeit beim Server-Start
     time_config = config_service.get_time_config()
-    saved_time = time_config.get('initial_go_to_date')
+    # Priorisiere current_debug_time (nach Skip) über initial_go_to_date (Start-Zeit)
+    saved_time = time_config.get('current_debug_time') or time_config.get('initial_go_to_date')
 
     if saved_time:
         try:
@@ -448,6 +482,7 @@ async def websocket_endpoint(websocket: WebSocket):
         debug_service=debug_service,
         position_service=position_service,
         account_service=account_service,
+        config_service=config_service,
         unified_time_manager=unified_time_manager,
         chart_lifecycle_manager=chart_lifecycle_manager,
         data_validator=data_validator,
@@ -513,6 +548,10 @@ async def startup_event():
     from charts.routes import review
     review.setup_review_routes(app=app)
     logger.info("📊 Review Routes registered")
+
+    # ML Operations Routes
+    app.include_router(ml_operations.router)
+    logger.info("🤖 ML Operations Routes registered")
 
     logger.info("✅ Server bereit auf http://localhost:8003")
     logger.info("📖 API Docs: http://localhost:8003/docs")

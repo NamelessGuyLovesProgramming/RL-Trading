@@ -20,7 +20,8 @@ class NavigationService:
                  unified_state,  # UnifiedStateManager
                  validator,  # ChartDataValidator
                  global_skip_events,  # List of skip events
-                 universal_renderer):  # UniversalSkipRenderer
+                 universal_renderer,  # UniversalSkipRenderer
+                 config_service):  # ConfigService
         """
         Initialisiert NavigationService mit Dependencies
 
@@ -32,6 +33,7 @@ class NavigationService:
             validator: Chart-Daten Validierung
             global_skip_events: Globale Skip-Event Liste
             universal_renderer: Skip Renderer für Event-Erstellung
+            config_service: Config Service für Persistence
         """
         self.timeframe_repo = timeframe_repo
         self.debug_controller = debug_controller
@@ -40,6 +42,7 @@ class NavigationService:
         self.validator = validator
         self.global_skip_events = global_skip_events
         self.universal_renderer = universal_renderer
+        self.config_service = config_service
 
         print("[NavigationService] Initialized with dependency injection")
 
@@ -184,6 +187,11 @@ class NavigationService:
         )
         self.global_skip_events.append(skip_event)
         print(f"[NavigationService] Skip event saved: {timeframe} -> Total: {len(self.global_skip_events)} events")
+
+        # 💾 PERSISTENCE: Speichere aktuelle Zeit nach Skip
+        if current_time:
+            self.config_service.update_time_config(current_debug_time=current_time.isoformat())
+            print(f"[NavigationService] Time saved to config: {current_time.isoformat()}")
 
         print(f"[NavigationService] Skip completed: {skip_result['type']}")
 

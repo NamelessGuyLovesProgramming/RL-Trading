@@ -221,6 +221,10 @@ def setup_debug_routes(app, debug_service, navigation_service,
                 if close_result['success']:
                     print(f"[SKIP] Position closed: {position_id} - {reason} at {close_price}")
 
+                    # 💾 PERSISTENCE: Speichere Account State nach SL/TP Touch
+                    config_service.save_account_state(account_service.to_dict())
+                    print(f"[SKIP] Account state saved after {reason}")
+
                     # Broadcast position closure
                     await manager.broadcast({
                         'type': 'position_closed',
