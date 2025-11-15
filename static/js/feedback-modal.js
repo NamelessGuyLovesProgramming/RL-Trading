@@ -1,14 +1,13 @@
 /**
  * Feedback Modal System
- * Simplified 3-level rating: Good / OK / Bad
+ * 5-Level Rating: 👍👍 / 👍 / 😐 / 👎 / 👎👎
  */
 
 class FeedbackModal {
     constructor() {
         this.isOpen = false;
         this.currentTrade = null;
-        this.rating = null; // "good", "ok", or "bad"
-        this.notes = '';
+        this.rating = null; // "very_good", "good", "ok", "bad", "very_bad"
 
         this.init();
     }
@@ -85,32 +84,33 @@ class FeedbackModal {
 
                     <!-- Body -->
                     <div class="feedback-modal-body">
-                        <!-- 3-Level Rating Buttons -->
+                        <!-- 5-Level Rating Buttons -->
                         <div class="feedback-rating-buttons">
-                            <button class="rating-btn rating-btn-good" id="ratingBtnGood" data-rating="good">
+                            <button class="rating-btn rating-btn-very-good" data-rating="very_good">
+                                <span class="rating-icon">👍👍</span>
+                                <span class="rating-label">Sehr gut</span>
+                                <span class="rating-desc">Perfektes Setup - Lehrbuch-Trade</span>
+                            </button>
+                            <button class="rating-btn rating-btn-good" data-rating="good">
                                 <span class="rating-icon">👍</span>
                                 <span class="rating-label">Gut</span>
-                                <span class="rating-desc">Würde ich 100% wieder so machen</span>
+                                <span class="rating-desc">Solide Entscheidung</span>
                             </button>
-                            <button class="rating-btn rating-btn-ok" id="ratingBtnOk" data-rating="ok">
+                            <button class="rating-btn rating-btn-ok" data-rating="ok">
                                 <span class="rating-icon">😐</span>
                                 <span class="rating-label">OK</span>
-                                <span class="rating-desc">Funktioniert, aber könnte besser sein</span>
+                                <span class="rating-desc">Neutral - weder gut noch schlecht</span>
                             </button>
-                            <button class="rating-btn rating-btn-bad" id="ratingBtnBad" data-rating="bad">
+                            <button class="rating-btn rating-btn-bad" data-rating="bad">
                                 <span class="rating-icon">👎</span>
                                 <span class="rating-label">Schlecht</span>
-                                <span class="rating-desc">Fehler gemacht, nicht wiederholen</span>
+                                <span class="rating-desc">Fehler - nicht wiederholen</span>
                             </button>
-                        </div>
-
-                        <!-- Notes -->
-                        <div class="feedback-notes">
-                            <label for="feedbackNotes">Notizen (optional)</label>
-                            <textarea
-                                id="feedbackNotes"
-                                placeholder="Z.B. 'Zu früh eingestiegen, hätte auf Bestätigung warten sollen...'"
-                            ></textarea>
+                            <button class="rating-btn rating-btn-very-bad" data-rating="very_bad">
+                                <span class="rating-icon">👎👎</span>
+                                <span class="rating-label">Sehr schlecht</span>
+                                <span class="rating-desc">Schwerer Fehler - wichtige Lektion</span>
+                            </button>
                         </div>
                     </div>
 
@@ -168,11 +168,6 @@ class FeedbackModal {
                 const rating = btn.dataset.rating;
                 this.setRating(rating);
             });
-        });
-
-        // Notes
-        document.getElementById('feedbackNotes').addEventListener('input', (e) => {
-            this.notes = e.target.value;
         });
     }
 
@@ -282,24 +277,25 @@ class FeedbackModal {
     save() {
         // Validate rating
         if (!this.rating) {
-            alert('Bitte bewerte den Trade (Gut/OK/Schlecht)');
+            alert('Bitte bewerte den Trade!');
             return;
         }
 
-        // Convert rating to numerical value
+        // Convert rating to numerical value (-1.0 to +1.0)
         const ratingValue = {
-            'good': 1.0,
-            'ok': 0.5,
-            'bad': 0.0
+            'very_good': +1.0,
+            'good': +0.5,
+            'ok': 0.0,
+            'bad': -0.5,
+            'very_bad': -1.0
         }[this.rating];
 
         const evaluation = {
             trade_id: this.currentTrade.trade_id,
-            rating: this.rating,  // "good", "ok", or "bad"
-            rating_value: ratingValue,  // 1.0, 0.5, or 0.0
-            notes: this.notes,
+            rating: this.rating,  // "very_good", "good", "ok", "bad", "very_bad"
+            rating_value: ratingValue,  // +1.0, +0.5, 0.0, -0.5, -1.0
             timestamp: new Date().toISOString(),
-            // ⚡ FIX: Trade-Daten mitsenden für vollständige Speicherung
+            // Trade-Daten für vollständige Speicherung
             action: this.currentTrade.action,
             entry_price: this.currentTrade.entry_price,
             sl_price: this.currentTrade.sl_price,
@@ -371,13 +367,6 @@ class FeedbackModal {
             btn.classList.remove('active');
         });
 
-        // Reset notes
-        this.notes = '';
-        const notesEl = document.getElementById('feedbackNotes');
-        if (notesEl) {
-            notesEl.value = '';
-        }
-
         console.log('[FeedbackModal] Reset');
     }
 }
@@ -427,14 +416,13 @@ function openAIFeedbackModal(tradeData) {
             }, 500);
         }
 
-        // Send feedback to training service
+        // Send feedback to training service (5-Level System)
         if (window.chartWs && window.chartWs.readyState === WebSocket.OPEN) {
             window.chartWs.send(JSON.stringify({
                 type: 'batch_feedback',
                 trade_id: evaluation.trade_id,
-                overall_score: evaluation.overall_score,
-                ratings: evaluation.ratings,
-                notes: evaluation.notes
+                rating: evaluation.rating,  // "very_good", "good", "ok", "bad", "very_bad"
+                rating_value: evaluation.rating_value  // +1.0, +0.5, 0.0, -0.5, -1.0
             }));
         }
 

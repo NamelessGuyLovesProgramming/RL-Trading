@@ -1013,28 +1013,18 @@ async def handle_websocket_commands(
                         continue
 
                     trade_id = feedback_data.get('trade_id')
-                    ratings = feedback_data.get('ratings', {})
-                    notes = feedback_data.get('notes', '')
-                    overall_score = feedback_data.get('overall_score', 0.0)
+                    rating = feedback_data.get('rating')  # "very_good", "good", "ok", "bad", "very_bad"
+                    rating_value = feedback_data.get('rating_value')  # +1.0, +0.5, 0.0, -0.5, -1.0
 
                     logger.info(f"[WS] Trade Feedback empfangen für {trade_id}")
-                    logger.info(f"[WS] Ratings: {ratings}")
-                    logger.info(f"[WS] Overall Score: {overall_score}")
-                    logger.info(f"[WS] Notes: {notes[:50]}..." if len(notes) > 50 else f"[WS] Notes: {notes}")
+                    logger.info(f"[WS] Rating: {rating} (Value: {rating_value:+.1f})")
 
-                    # Konvertiere Ratings zu HumanEvaluation
+                    # Erstelle HumanEvaluation (5-Level System)
                     from src.feedback_storage import HumanEvaluation
 
-                    # Ratings sind bereits 0.0-1.0, müssen nicht konvertiert werden
-                    human_eval = HumanEvaluation(
-                        entry_timing=ratings.get('entry_timing', 0.0),
-                        pattern_recognition=ratings.get('pattern_recognition', 0.0),
-                        sl_placement=ratings.get('sl_placement', 0.0),
-                        tp_placement=ratings.get('tp_placement', 0.0),
-                        liquidity_sweeps=ratings.get('liquidity_sweeps', 0.0),
-                        volume_analysis=ratings.get('volume_analysis', 0.0),
-                        overall_score=overall_score,
-                        notes=notes
+                    human_eval = HumanEvaluation.from_rating(
+                        rating=rating,
+                        timestamp=datetime.now().isoformat()
                     )
 
                     # Hole Trade Position Details
@@ -1081,14 +1071,6 @@ async def handle_websocket_commands(
                             is_long=is_long
                         )
 
-                        # Simple Rating (Feature 17): Convert overall_score to 0.0/0.5/1.0
-                        if overall_score >= 0.8:
-                            rating = 1.0  # Good
-                        elif overall_score >= 0.5:
-                            rating = 0.5  # OK
-                        else:
-                            rating = 0.0  # Bad
-
                         # Combine all 17 features
                         features = {
                             # Trade Basics (1-9)
@@ -1103,8 +1085,8 @@ async def handle_websocket_commands(
                             'max_drawdown_pct': trade_features.get('max_drawdown_pct', 0.0),
                             # Market Context (10-16)
                             **market_features,
-                            # Human Rating (17)
-                            'rating': rating
+                            # Human Rating (17) - 5-Level System
+                            'rating': rating_value  # +1.0, +0.5, 0.0, -0.5, -1.0
                         }
 
                         logger.info(f"[FEATURES] Complete 17-feature set extracted for closed position")
@@ -1170,14 +1152,6 @@ async def handle_websocket_commands(
                         tp_price=tp_price
                     )
 
-                    # Simple Rating (Feature 17): Convert overall_score to 0.0/0.5/1.0
-                    if overall_score >= 0.8:
-                        rating = 1.0  # Good
-                    elif overall_score >= 0.5:
-                        rating = 0.5  # OK
-                    else:
-                        rating = 0.0  # Bad
-
                     # Partial feature set (trade not closed yet)
                     features = {
                         # Trade Basics (1-9) - partial
@@ -1192,8 +1166,8 @@ async def handle_websocket_commands(
                         'max_drawdown_pct': None,  # Cannot calculate yet
                         # Market Context (10-16)
                         **market_features,
-                        # Human Rating (17)
-                        'rating': rating
+                        # Human Rating (17) - 5-Level System
+                        'rating': rating_value  # +1.0, +0.5, 0.0, -0.5, -1.0
                     }
 
                     logger.info(f"[FEATURES] Partial feature set extracted for active position (trade not closed yet)")
@@ -1243,7 +1217,9 @@ async def handle_websocket_commands(
                     await manager.broadcast({
                         'type': 'trade_feedback_saved',
                         'trade_id': trade_id,
-                        'overall_score': overall_score,
+                        'rating': rating,  # "very_good", "good", "ok", "bad", "very_bad"
+                        'rating_value': rating_value,  # +1.0, +0.5, 0.0, -0.5, -1.0
+                        'rating_label': human_eval.rating_label,  # "👍👍 Sehr gut" etc.
                         'feedback_reward': feedback_reward,
                         'message': 'Feedback erfolgreich gespeichert'
                     })
@@ -1271,18 +1247,17 @@ async def handle_websocket_commands(
                         })
                         continue
 
-                    # Batch Feedback Daten vom Client
+                    # Batch Feedback Daten vom Client (5-Level System)
                     trade_id = data.get('trade_id')
-                    overall_score = data.get('overall_score', 0.0)
-                    ratings = data.get('ratings', {})
-                    notes = data.get('notes', '')
+                    rating = data.get('rating')  # "very_good", "good", "ok", "bad", "very_bad"
+                    rating_value = data.get('rating_value')  # +1.0, +0.5, 0.0, -0.5, -1.0
 
                     logger.info(f"[BATCH] Feedback empfangen für {trade_id}")
-                    logger.info(f"[BATCH] Overall Score: {overall_score:.2f}/5.0")
+                    logger.info(f"[BATCH] Rating: {rating} (Value: {rating_value:+.1f})")
 
-                    # Convert 5-star ratings (0-5) to reward (0-1)
-                    # Overall score is average of 6 criteria, already normalized
-                    feedback_reward = overall_score / 5.0
+                    # Convert 5-Level rating to reward (scale to 0-1 for training)
+                    # rating_value: -1.0 to +1.0 → reward: 0.0 to 1.0
+                    feedback_reward = (rating_value + 1.0) / 2.0
 
                     # Training Mode: KI lernt aus Feedback
                     training_service.on_feedback_received(trade_id, feedback_reward)
@@ -1291,7 +1266,8 @@ async def handle_websocket_commands(
                     await manager.broadcast({
                         'type': 'batch_feedback_saved',
                         'trade_id': trade_id,
-                        'overall_score': overall_score,
+                        'rating': rating,
+                        'rating_value': rating_value,
                         'feedback_reward': feedback_reward,
                         'batch_number': training_service.total_batches,
                         'message': f'Batch #{training_service.total_batches} Feedback gespeichert - Weiter mit nächsten 10 Trades!'

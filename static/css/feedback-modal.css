@@ -132,7 +132,182 @@
     padding: 24px;
 }
 
-/* Criteria Section */
+/* 3-Level Rating Buttons (Simplified from 6-Criteria) */
+.feedback-rating-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.rating-btn {
+    padding: 20px 24px;
+    background: #252525;
+    border: 2px solid #3d3d3d;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    text-align: center;
+}
+
+.rating-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.rating-btn:active {
+    transform: scale(0.98);
+}
+
+.rating-btn.active {
+    border-width: 3px;
+}
+
+.rating-icon {
+    font-size: 48px;
+    line-height: 1;
+    transition: all 0.3s ease;
+}
+
+.rating-label {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.rating-desc {
+    font-size: 13px;
+    color: #888;
+    font-weight: 400;
+}
+
+/* Very Good Button (Bright Green) */
+.rating-btn-very-good {
+    border-color: #00e676;
+}
+
+.rating-btn-very-good:hover {
+    background: rgba(0, 230, 118, 0.1);
+    border-color: #69f0ae;
+}
+
+.rating-btn-very-good.active {
+    background: linear-gradient(135deg, rgba(0, 230, 118, 0.2) 0%, rgba(0, 230, 118, 0.1) 100%);
+    border-color: #00e676;
+    box-shadow: 0 0 20px rgba(0, 230, 118, 0.5);
+}
+
+.rating-btn-very-good.active .rating-icon {
+    transform: scale(1.2);
+}
+
+.rating-btn-very-good .rating-label {
+    color: #00e676;
+}
+
+/* Good Button (Green) */
+.rating-btn-good {
+    border-color: #4caf50;
+}
+
+.rating-btn-good:hover {
+    background: rgba(76, 175, 80, 0.1);
+    border-color: #66bb6a;
+}
+
+.rating-btn-good.active {
+    background: linear-gradient(135deg, rgba(76, 175, 80, 0.2) 0%, rgba(76, 175, 80, 0.1) 100%);
+    border-color: #4caf50;
+    box-shadow: 0 0 20px rgba(76, 175, 80, 0.4);
+}
+
+.rating-btn-good.active .rating-icon {
+    transform: scale(1.2);
+}
+
+.rating-btn-good .rating-label {
+    color: #4caf50;
+}
+
+/* OK Button (Yellow/Neutral) */
+.rating-btn-ok {
+    border-color: #ff9800;
+}
+
+.rating-btn-ok:hover {
+    background: rgba(255, 152, 0, 0.1);
+    border-color: #ffa726;
+}
+
+.rating-btn-ok.active {
+    background: linear-gradient(135deg, rgba(255, 152, 0, 0.2) 0%, rgba(255, 152, 0, 0.1) 100%);
+    border-color: #ff9800;
+    box-shadow: 0 0 20px rgba(255, 152, 0, 0.4);
+}
+
+.rating-btn-ok.active .rating-icon {
+    transform: scale(1.2);
+}
+
+.rating-btn-ok .rating-label {
+    color: #ff9800;
+}
+
+/* Bad Button (Red) */
+.rating-btn-bad {
+    border-color: #f44336;
+}
+
+.rating-btn-bad:hover {
+    background: rgba(244, 67, 54, 0.1);
+    border-color: #ef5350;
+}
+
+.rating-btn-bad.active {
+    background: linear-gradient(135deg, rgba(244, 67, 54, 0.2) 0%, rgba(244, 67, 54, 0.1) 100%);
+    border-color: #f44336;
+    box-shadow: 0 0 20px rgba(244, 67, 54, 0.4);
+}
+
+.rating-btn-bad.active .rating-icon {
+    transform: scale(1.2);
+}
+
+.rating-btn-bad .rating-label {
+    color: #f44336;
+}
+
+/* Very Bad Button (Dark Red) */
+.rating-btn-very-bad {
+    border-color: #d32f2f;
+}
+
+.rating-btn-very-bad:hover {
+    background: rgba(211, 47, 47, 0.1);
+    border-color: #f44336;
+}
+
+.rating-btn-very-bad.active {
+    background: linear-gradient(135deg, rgba(211, 47, 47, 0.2) 0%, rgba(211, 47, 47, 0.1) 100%);
+    border-color: #d32f2f;
+    box-shadow: 0 0 20px rgba(211, 47, 47, 0.5);
+}
+
+.rating-btn-very-bad.active .rating-icon {
+    transform: scale(1.2);
+}
+
+.rating-btn-very-bad .rating-label {
+    color: #d32f2f;
+}
+
+/* OLD 6-CRITERIA SYSTEM (Deaktiviert - 2025-11-10) */
+/*
 .feedback-criteria {
     display: flex;
     flex-direction: column;
@@ -177,7 +352,6 @@
     padding-left: 30px;
 }
 
-/* Star Rating */
 .star-rating {
     display: flex;
     gap: 8px;
@@ -202,7 +376,6 @@
     transform: scale(0.95);
 }
 
-/* Hint Box */
 .criterion-hint {
     margin-top: 12px;
     padding: 10px 12px;
@@ -229,6 +402,7 @@
 .criterion-hint .icon {
     font-size: 14px;
 }
+*/
 
 /* Notes Section */
 .feedback-notes {

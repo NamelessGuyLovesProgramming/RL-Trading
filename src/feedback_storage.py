@@ -15,101 +15,50 @@ import numpy as np
 
 @dataclass
 class HumanEvaluation:
-    """6 Kriterien für Trade-Bewertung"""
-    entry_timing: float  # 0.0 - 1.0 (1 Stern = 0.2, 5 Sterne = 1.0)
-    pattern_recognition: float
-    sl_placement: float
-    tp_placement: float
-    liquidity_sweeps: float
-    volume_analysis: float
-    overall_score: float  # Durchschnitt
-    notes: str = ""
+    """5-Level Rating System: 👍👍 / 👍 / 😐 / 👎 / 👎👎"""
+    rating: str  # "very_good", "good", "ok", "bad", "very_bad"
+    rating_value: float  # +1.0, +0.5, 0.0, -0.5, -1.0
+    timestamp: str  # ISO format
 
     @property
-    def entry_timing_stars(self) -> int:
-        """Konvertiert Score zu Sternen"""
-        return int(self.entry_timing * 5)
-
-    @property
-    def pattern_stars(self) -> int:
-        return int(self.pattern_recognition * 5)
-
-    @property
-    def sl_stars(self) -> int:
-        return int(self.sl_placement * 5)
-
-    @property
-    def tp_stars(self) -> int:
-        return int(self.tp_placement * 5)
-
-    @property
-    def liquidity_stars(self) -> int:
-        return int(self.liquidity_sweeps * 5)
-
-    @property
-    def volume_stars(self) -> int:
-        return int(self.volume_analysis * 5)
+    def rating_label(self) -> str:
+        """Human-readable label"""
+        labels = {
+            'very_good': '👍👍 Sehr gut',
+            'good': '👍 Gut',
+            'ok': '😐 OK',
+            'bad': '👎 Schlecht',
+            'very_bad': '👎👎 Sehr schlecht'
+        }
+        return labels.get(self.rating, 'Unknown')
 
     @classmethod
-    def from_stars(cls,
-                   entry_timing_stars: int,
-                   pattern_stars: int,
-                   sl_stars: int,
-                   tp_stars: int,
-                   liquidity_stars: int,
-                   volume_stars: int,
-                   notes: str = "") -> 'HumanEvaluation':
-        """Erstellt Evaluation aus Sterne-Bewertung (1-5)"""
-        scores = [
-            entry_timing_stars / 5.0,
-            pattern_stars / 5.0,
-            sl_stars / 5.0,
-            tp_stars / 5.0,
-            liquidity_stars / 5.0,
-            volume_stars / 5.0
-        ]
-        overall = np.mean(scores)
+    def from_rating(cls, rating: str, timestamp: Optional[str] = None) -> 'HumanEvaluation':
+        """Erstellt Evaluation aus Rating-String"""
+        rating_values = {
+            'very_good': +1.0,
+            'good': +0.5,
+            'ok': 0.0,
+            'bad': -0.5,
+            'very_bad': -1.0
+        }
+
+        if rating not in rating_values:
+            raise ValueError(f"Invalid rating: {rating}. Must be one of: {list(rating_values.keys())}")
 
         return cls(
-            entry_timing=scores[0],
-            pattern_recognition=scores[1],
-            sl_placement=scores[2],
-            tp_placement=scores[3],
-            liquidity_sweeps=scores[4],
-            volume_analysis=scores[5],
-            overall_score=overall,
-            notes=notes
+            rating=rating,
+            rating_value=rating_values[rating],
+            timestamp=timestamp or datetime.now().isoformat()
         )
 
     def to_dict(self) -> Dict[str, Any]:
         """Konvertiert zu Dictionary für JSON"""
         return {
-            'entry_timing': {
-                'stars': self.entry_timing_stars,
-                'score': self.entry_timing
-            },
-            'pattern_recognition': {
-                'stars': self.pattern_stars,
-                'score': self.pattern_recognition
-            },
-            'sl_placement': {
-                'stars': self.sl_stars,
-                'score': self.sl_placement
-            },
-            'tp_placement': {
-                'stars': self.tp_stars,
-                'score': self.tp_placement
-            },
-            'liquidity_sweeps': {
-                'stars': self.liquidity_stars,
-                'score': self.liquidity_sweeps
-            },
-            'volume_analysis': {
-                'stars': self.volume_stars,
-                'score': self.volume_analysis
-            },
-            'overall_score': self.overall_score,
-            'notes': self.notes
+            'rating': self.rating,
+            'rating_value': self.rating_value,
+            'rating_label': self.rating_label,
+            'timestamp': self.timestamp
         }
 
 
