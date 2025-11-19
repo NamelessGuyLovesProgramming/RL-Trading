@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feedback History - RL Trading</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0e27;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            color: #4a9eff;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #888;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #161a2e;
+            padding: 20px 30px;
+            border-radius: 10px;
+            text-align: center;
+            border-left: 3px solid #4a9eff;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #4a9eff;
+        }
+
+        .stat-label {
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .feedback-list {
+            background: #131722;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .feedback-item {
+            background: #161a2e;
+            padding: 20px;
+            border-bottom: 1px solid #1e2236;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 20px;
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        .feedback-item:hover {
+            background: #1a1d2e;
+        }
+
+        .rating-badge {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: 100px;
+            padding: 10px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .rating-badge.very_good {
+            background: linear-gradient(135deg, #26a69a 0%, #1e8e86 100%);
+            color: white;
+        }
+
+        .rating-badge.good {
+            background: linear-gradient(135deg, #66bb6a 0%, #4caf50 100%);
+            color: white;
+        }
+
+        .rating-badge.ok {
+            background: linear-gradient(135deg, #ffa726 0%, #ff9800 100%);
+            color: white;
+        }
+
+        .rating-badge.bad {
+            background: linear-gradient(135deg, #ef5350 0%, #e53935 100%);
+            color: white;
+        }
+
+        .rating-badge.very_bad {
+            background: linear-gradient(135deg, #c62828 0%, #b71c1c 100%);
+            color: white;
+        }
+
+        .rating-icon {
+            font-size: 2rem;
+            margin-bottom: 5px;
+        }
+
+        .rating-text {
+            font-size: 0.85rem;
+        }
+
+        .trade-info {
+            flex: 1;
+        }
+
+        .trade-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .trade-id {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #4a9eff;
+        }
+
+        .trade-time {
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        .trade-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .detail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .detail-label {
+            font-size: 0.8rem;
+            color: #888;
+        }
+
+        .detail-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .detail-value.positive {
+            color: #26a69a;
+        }
+
+        .detail-value.negative {
+            color: #ef5350;
+        }
+
+        .action-badge {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .action-badge.long {
+            background: rgba(38, 166, 154, 0.2);
+            color: #26a69a;
+        }
+
+        .action-badge.short {
+            background: rgba(239, 83, 80, 0.2);
+            color: #ef5350;
+        }
+
+        .delete-btn {
+            padding: 10px 20px;
+            background: #ef5350;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .delete-btn:hover {
+            background: #c62828;
+            transform: scale(1.05);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #888;
+            font-size: 1.2rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #888;
+        }
+
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 24px;
+            background: #2962ff;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.2s;
+            margin-bottom: 20px;
+        }
+
+        .back-btn:hover {
+            background: #1e53e5;
+            transform: translateX(-5px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-btn">
+            ← Zurück zum Chart
+        </a>
+
+        <div class="header">
+            <h1>Feedback History</h1>
+            <p>Alle gespeicherten Trade-Bewertungen</p>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value" id="totalCount">-</div>
+                <div class="stat-label">Gesamt</div>
+            </div>
+        </div>
+
+        <div id="loading" class="loading">
+            Lade Feedbacks...
+        </div>
+
+        <div id="feedbackList" class="feedback-list" style="display: none;">
+            <!-- Wird dynamisch gefüllt -->
+        </div>
+
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">📝</div>
+            <h2>Noch keine Feedbacks</h2>
+            <p>Sobald du Trades bewertest, erscheinen sie hier.</p>
+        </div>
+    </div>
+
+    <script>
+        let feedbacks = [];
+
+        async function loadFeedbacks() {
+            try {
+                const response = await fetch('/api/feedback/list');
+                const data = await response.json();
+
+                if (!data.success) {
+                    alert('Fehler beim Laden: ' + data.error);
+                    return;
+                }
+
+                feedbacks = data.feedbacks;
+
+                // Hide loading
+                document.getElementById('loading').style.display = 'none';
+
+                // Update stats
+                document.getElementById('totalCount').textContent = data.total;
+
+                // Show list or empty state
+                if (feedbacks.length === 0) {
+                    document.getElementById('emptyState').style.display = 'block';
+                } else {
+                    document.getElementById('feedbackList').style.display = 'block';
+                    renderFeedbacks();
+                }
+
+            } catch (error) {
+                alert('Fehler: ' + error.message);
+            }
+        }
+
+        function renderFeedbacks() {
+            const container = document.getElementById('feedbackList');
+            container.innerHTML = '';
+
+            feedbacks.forEach(feedback => {
+                const item = createFeedbackItem(feedback);
+                container.appendChild(item);
+            });
+        }
+
+        function createFeedbackItem(feedback) {
+            const div = document.createElement('div');
+            div.className = 'feedback-item';
+
+            // Rating badge
+            const ratingBadge = document.createElement('div');
+            ratingBadge.className = `rating-badge ${feedback.rating || 'ok'}`;
+            ratingBadge.innerHTML = `
+                <div class="rating-icon">${getRatingIcon(feedback.rating)}</div>
+                <div class="rating-text">${getRatingText(feedback.rating)}</div>
+            `;
+
+            // Trade info
+            const tradeInfo = document.createElement('div');
+            tradeInfo.className = 'trade-info';
+
+            const timestamp = new Date(feedback.timestamp);
+            const pnl = feedback.pnl || 0;
+
+            tradeInfo.innerHTML = `
+                <div class="trade-header">
+                    <div class="trade-id">${feedback.trade_id}</div>
+                    <div class="trade-time">${timestamp.toLocaleString('de-DE')}</div>
+                </div>
+                <div class="trade-details">
+                    <div class="detail">
+                        <span class="detail-label">Aktion</span>
+                        <span class="detail-value">
+                            <span class="action-badge ${feedback.action}">${(feedback.action || 'unknown').toUpperCase()}</span>
+                        </span>
+                    </div>
+                    <div class="detail">
+                        <span class="detail-label">Entry</span>
+                        <span class="detail-value">$${(feedback.entry_price || 0).toFixed(2)}</span>
+                    </div>
+                    <div class="detail">
+                        <span class="detail-label">Exit</span>
+                        <span class="detail-value">$${(feedback.exit_price || 0).toFixed(2)}</span>
+                    </div>
+                    <div class="detail">
+                        <span class="detail-label">PnL</span>
+                        <span class="detail-value ${pnl >= 0 ? 'positive' : 'negative'}">
+                            ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
+                        </span>
+                    </div>
+                </div>
+            `;
+
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.textContent = '🗑️ Löschen';
+            deleteBtn.onclick = () => deleteFeedback(feedback.filename);
+
+            div.appendChild(ratingBadge);
+            div.appendChild(tradeInfo);
+            div.appendChild(deleteBtn);
+
+            return div;
+        }
+
+        function getRatingIcon(rating) {
+            const icons = {
+                'very_good': '👍👍',
+                'good': '👍',
+                'ok': '😐',
+                'bad': '👎',
+                'very_bad': '👎👎'
+            };
+            return icons[rating] || '😐';
+        }
+
+        function getRatingText(rating) {
+            const texts = {
+                'very_good': 'Sehr gut',
+                'good': 'Gut',
+                'ok': 'OK',
+                'bad': 'Schlecht',
+                'very_bad': 'Sehr schlecht'
+            };
+            return texts[rating] || 'OK';
+        }
+
+        async function deleteFeedback(filename) {
+            if (!confirm(`Feedback für ${filename} wirklich löschen?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/feedback/${encodeURIComponent(filename)}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Reload feedbacks
+                    loadFeedbacks();
+                } else {
+                    alert('Fehler beim Löschen: ' + data.message);
+                }
+
+            } catch (error) {
+                alert('Fehler: ' + error.message);
+            }
+        }
+
+        // Load on page load
+        loadFeedbacks();
+    </script>
+</body>
+</html>

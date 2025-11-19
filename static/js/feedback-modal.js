@@ -244,10 +244,10 @@ class FeedbackModal {
             isAI ? `🤖 KI Trade Bewertung - ${trade.trade_id}` : `⭐ Dein Trade - ${trade.trade_id}`;
 
         // Trade Info
-        document.getElementById('tradeAction').textContent = trade.action.toUpperCase();
-        document.getElementById('tradeAction').className = `trade-info-value ${trade.action}`;
+        document.getElementById('tradeAction').textContent = trade.action ? trade.action.toUpperCase() : '-';
+        document.getElementById('tradeAction').className = `trade-info-value ${trade.action || ''}`;
 
-        document.getElementById('tradeEntry').textContent = `$${trade.entry_price.toFixed(2)}`;
+        document.getElementById('tradeEntry').textContent = trade.entry_price ? `$${trade.entry_price.toFixed(2)}` : '-';
 
         // Entry Zeit (von entry_time oder timestamp)
         const entryTime = trade.entry_time || trade.timestamp || '-';
@@ -258,15 +258,20 @@ class FeedbackModal {
         const exitTime = trade.close_time || trade.exit_time || '-';
         document.getElementById('tradeExitTime').textContent = exitTime !== '-' ? new Date(exitTime).toLocaleString('de-DE') : '-';
 
-        document.getElementById('tradeSL').textContent = `$${trade.sl_price.toFixed(2)}`;
-        document.getElementById('tradeTP').textContent = `$${trade.tp_price.toFixed(2)}`;
+        document.getElementById('tradeSL').textContent = trade.sl_price ? `$${trade.sl_price.toFixed(2)}` : '-';
+        document.getElementById('tradeTP').textContent = trade.tp_price ? `$${trade.tp_price.toFixed(2)}` : '-';
 
         // Calculate R:R
-        const slDist = Math.abs(trade.entry_price - trade.sl_price);
-        const tpDist = Math.abs(trade.tp_price - trade.entry_price);
-        const rr = tpDist / slDist;
-        document.getElementById('tradeRR').textContent = `1:${rr.toFixed(1)}`;
-        document.getElementById('tradeRR').className = `trade-info-value ${rr >= 2 ? 'positive' : ''}`;
+        if (trade.entry_price && trade.sl_price && trade.tp_price) {
+            const slDist = Math.abs(trade.entry_price - trade.sl_price);
+            const tpDist = Math.abs(trade.tp_price - trade.entry_price);
+            const rr = slDist > 0 ? tpDist / slDist : 0;
+            document.getElementById('tradeRR').textContent = `1:${rr.toFixed(1)}`;
+            document.getElementById('tradeRR').className = `trade-info-value ${rr >= 2 ? 'positive' : ''}`;
+        } else {
+            document.getElementById('tradeRR').textContent = '-';
+            document.getElementById('tradeRR').className = 'trade-info-value';
+        }
 
         // Hints (if available)
         if (trade.hints) {

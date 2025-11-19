@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="/static/css/chart.css">
+    <link rel="stylesheet" href="/static/css/model-manager.css">
 </head>
 <body>
     <!-- Date-Picker Modal -->
@@ -461,6 +462,17 @@
     <div class="chart-toolbar-1">
         <!-- Debug-Controls (Links) -->
         <div class="debug-controls">
+            <!-- Go To Button with Hover Menu -->
+            <div class="goto-menu-container">
+                <button id="gotoBtn" class="debug-btn" title="Jump to next trading day">🕐 Go To</button>
+                <div class="goto-dropdown">
+                    <button class="goto-option" onclick="goToTime('08:00')">➡️ Nächster Tag 08:00</button>
+                    <button class="goto-option" onclick="goToTime('09:00')">➡️ Nächster Tag 09:00</button>
+                    <button class="goto-option" onclick="goToTime('14:30')">➡️ Nächster Tag 14:30</button>
+                    <button class="goto-option" onclick="goToTime('15:30')">➡️ Nächster Tag 15:30</button>
+                    <button class="goto-option" onclick="goToNextTradingDay()">➡️ Nächster Tag 08:00 (Default)</button>
+                </div>
+            </div>
             <button id="skipBtn" class="debug-btn" title="Skip +1min">⏭️</button>
             <button id="playPauseBtn" class="debug-btn" title="Play/Pause">▶️</button>
             <input type="range" id="speedSlider" class="debug-slider" min="0" max="8" value="3" title="Speed Control">
@@ -479,15 +491,15 @@
             <button id="goToDateBtn" class="nav-btn" title="Go To Date">📅 Go To</button>
             <button id="resetTimeBtn" class="nav-btn" title="Reset zum Datenende">🔄 Reset</button>
             <button id="settingsBtn" class="nav-btn" title="Settings" onclick="openSettingsModal()">⚙️ Settings</button>
+            <button class="nav-btn" title="Feedback History" onclick="window.open('/feedback-list', '_blank')">📝 Feedbacks</button>
 
             <!-- KI Modus Toggle (wird von training-mode.js hier eingefügt) -->
             <div id="aiModeToggleContainer" style="margin-left: 15px; padding-left: 15px; border-left: 1px solid #404040;"></div>
 
-            <!-- RL Vision Toggle -->
-            <button id="rlVisionToggleBtn" class="ai-mode-toggle-btn" style="margin-left: 10px;">
-                <span class="ai-icon">👁️</span>
-                <span class="ai-text">RL Vision</span>
-                <span class="ai-status">AN</span>
+            <!-- ML Model Manager Toggle -->
+            <button id="mlModelManagerToggleBtn" class="ai-mode-toggle-btn" style="margin-left: 10px;" onclick="document.getElementById('modelManagerPanel').style.display = 'block';">
+                <span class="ai-icon">🤖</span>
+                <span class="ai-text">Model Manager</span>
             </button>
         </div>
     </div>
@@ -592,6 +604,12 @@
                         <div class="account-value-label">Unrealized PnL</div>
                         <div class="account-value-amount neutral" id="user-unrealized">0€</div>
                     </div>
+                    <div class="account-value" style="border-top: 1px solid rgba(255,255,255,0.1); margin-top: 8px; padding-top: 8px;">
+                        <a href="/feedback-list" target="_blank" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: linear-gradient(135deg, #2962ff 0%, #1e53e5 100%); color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; box-shadow: 0 2px 8px rgba(41, 98, 255, 0.3);">
+                            <span>📝</span>
+                            <span>Feedback History</span>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -599,66 +617,13 @@
 
     <div id="status" class="status disconnected">Disconnected</div>
 
-    <!-- RL Agent Vision Monitor -->
-    <div id="rlVisionMonitor" class="rl-vision-monitor">
-        <div class="rl-vision-header">
-            <span class="rl-vision-title">🤖 RL Agent Vision</span>
-            <button id="toggleRLVision" class="rl-vision-toggle" title="Maximize">+</button>
-        </div>
-        <div class="rl-vision-content">
-            <!-- FVG Section -->
-            <div class="rl-vision-section">
-                <div class="rl-vision-label">📦 FVG</div>
-                <div class="rl-vision-value" id="vision-in-fvg">
-                    <span class="status-indicator">❌</span> Not in FVG
-                </div>
-            </div>
-
-            <!-- Session High/Low Section -->
-            <div class="rl-vision-section">
-                <div class="rl-vision-label">🎯 SESSION HIGH</div>
-                <div class="rl-vision-value" id="vision-high-broken">
-                    <span class="status-indicator">❌</span> Not broken
-                </div>
-            </div>
-
-            <div class="rl-vision-section">
-                <div class="rl-vision-label">🎯 SESSION LOW</div>
-                <div class="rl-vision-value" id="vision-low-broken">
-                    <span class="status-indicator">❌</span> Not broken
-                </div>
-            </div>
-
-            <!-- Volume Section -->
-            <div class="rl-vision-section">
-                <div class="rl-vision-label">📊 Volume</div>
-                <div class="rl-vision-value" id="vision-volume-spike">
-                    <span class="status-indicator">❌</span> No spike
-                </div>
-                <div class="rl-vision-detail" id="vision-volume-ratio">Ratio: 1.0x</div>
-            </div>
-
-            <!-- Session Info -->
-            <div class="rl-vision-section">
-                <div class="rl-vision-label">🕐 Session</div>
-                <div class="rl-vision-value" id="vision-session">Unknown</div>
-            </div>
-
-            <!-- Current Price -->
-            <div class="rl-vision-section">
-                <div class="rl-vision-label">💰 Price</div>
-                <div class="rl-vision-value" id="vision-price">--</div>
-            </div>
-        </div>
-    </div>
-
     <div id="chart_container"></div>
 
     <!-- Autoscale Toggle Button -->
     <button id="autoscaleBtn" class="active" title="Autoscale: ON">⚖️</button>
 
     <script src="/static/js/indicators.js?v=clean-logs-fvg"></script>
-    <script src="/static/js/chart.js?v=fvg-delete-fix"></script>
+    <script src="/static/js/chart.js?v=auto-pause-api"></script>
 
     <!-- Feedback Modal -->
     <link rel="stylesheet" href="/static/css/feedback-modal.css">
@@ -666,10 +631,10 @@
     <script src="/static/js/test-feedback.js"></script>
 
     <!-- Training Mode -->
-    <link rel="stylesheet" href="/static/css/training-mode.css">
-    <script src="/static/js/training-mode.js"></script>
+    <link rel="stylesheet" href="/static/css/training-mode.css?v=3">
+    <script src="/static/js/training-mode.js?v=3"></script>
 
-    <!-- RL Vision Toggle -->
-    <script src="/static/js/rl-vision-toggle.js"></script>
+    <!-- Model Manager -->
+    <script src="/static/js/model-manager.js?v=evaluate-fix"></script>
 </body>
 </html>
